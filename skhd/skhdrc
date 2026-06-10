@@ -1,0 +1,61 @@
+# open Warp terminal
+# cmd - return : open -a "Warp"
+
+# focus window
+cmd - h : yabai -m window --focus west
+cmd - j : yabai -m window --focus south
+cmd - k : yabai -m window --focus north
+cmd - l : yabai -m window --focus east
+
+# swap managed window
+shift + cmd - h : yabai -m window --swap west
+shift + cmd - j : yabai -m window --swap south
+shift + cmd - k : yabai -m window --swap north
+shift + cmd - l : yabai -m window --swap east
+
+# move managed window
+shift + cmd + ctrl - h : yabai -m window --warp west
+shift + cmd + ctrl - j : yabai -m window --warp south
+shift + cmd + ctrl - k : yabai -m window --warp north
+shift + cmd + ctrl - l : yabai -m window --warp east
+
+# toggle window fullscreen zoom
+alt - m : yabai -m window --toggle zoom-fullscreen
+
+# toggle space layout float/tiled
+alt - f : yabai -m space --layout float; /Users/vieites/.mac_config/yabai/scripts/notification.rs -m "Floating" -t "Space"
+alt - t : yabai -m space --layout bsp; /Users/vieites/.mac_config/yabai/scripts/notification.rs -m "Tiling" -t "Space"
+
+# get space information
+shift + alt - s : /Users/vieites/.mac_config/yabai/scripts/notification.rs notify -s
+
+# float / unfloat window and center on screen
+alt - c : yabai -m window --toggle float;\
+          yabai -m window --grid 8:5:1:1:3:6
+
+# float / unfloat window and center horizontaly on screen
+alt - v : yabai -m window --toggle float;\
+          yabai -m window --grid 1:5:1:0:3:1
+
+# toggle window split type
+alt - s : yabai -m window --toggle split
+
+# move window and focus desktop
+shift + cmd - 1 : yabai -m window --space 1
+shift + cmd - 2 : yabai -m window --space 2
+shift + cmd - 3 : yabai -m window --space 3
+shift + cmd - 4 : yabai -m window --space 4
+shift + cmd - 5 : yabai -m window --space 5
+shift + cmd - 6 : yabai -m window --space 6
+shift + cmd - 7 : yabai -m window --space 7
+shift + cmd - 8 : yabai -m window --space 8
+
+# send window to monitor and follow focus
+shift + alt - n : yabai -m window --display next; yabai -m display --focus next
+shift + alt - p : yabai -m window --display previous; yabai -m display --focus previous
+
+# # increase window size
+cmd + ctrl - k : /Users/vieites/.mac_config/yabai/scripts/resize.sh north
+cmd + ctrl - h : /Users/vieites/.mac_config/yabai/scripts/resize.sh west
+cmd + ctrl - j : /Users/vieites/.mac_config/yabai/scripts/resize.sh south
+cmd + ctrl - l : /Users/vieites/.mac_config/yabai/scripts/resize.sh east

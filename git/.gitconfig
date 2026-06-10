@@ -1,0 +1,18 @@
+# This is Git's per-user configuration file.
+[user]
+# Please adapt and uncomment the following lines:
+name = Daniel Vieites
+email = dvieitest@gmail.com
+[init]
+	defaultBranch = main
+
+[core]
+	pager = less --tabs=4 -RF
+
+[interactive]
+    diffFilter = diff-so-fancy --patch
+
+[pager]
+	diff = diff-so-fancy | less --tabs=4 -RF
+	show = diff-so-fancy | less --tabs=4 -RF
+	log = false

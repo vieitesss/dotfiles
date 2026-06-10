@@ -1,0 +1,126 @@
+# This is a demo config to showcase some of the most important commands.
+# It is meant to be changed and configured, as it is intentionally kept sparse.
+# For a (much) more advanced configuration example see my dotfiles:
+# https://github.com/FelixKratz/dotfiles
+
+PLUGIN_DIR="$CONFIG_DIR/plugins"
+
+##### Bar Appearance #####
+# Configuring the general appearance of the bar.
+# These are only some of the options available. For all options see:
+# https://felixkratz.github.io/SketchyBar/config/bar
+# If you are looking for other colors, see the color picker:
+# https://felixkratz.github.io/SketchyBar/config/tricks#color-picker
+
+sketchybar --bar position=top height=35 blur_radius=30 color=0x40000000
+
+##### Changing Defaults #####
+# We now change some default values, which are applied to all further items.
+# For a full list of all available item properties see:
+# https://felixkratz.github.io/SketchyBar/config/items
+
+##### theme #####
+PALETTE_BASE="0x33191724"
+PALETTE_TEXT="0xffe0def4"
+PALETTE_MALVE="0xffc4a7e7"
+PALETTE_GREEN="0xff9ccfd8"
+PALETTE_BLUE="0xff31748f"
+PALETTE_YELLOW="0xfff6c177"
+#################
+
+default=(
+  padding_left=5
+  padding_right=5
+  icon.font="BlexMono Nerd Font Mono:Bold:16.0"
+  label.font="BlexMono Nerd Font Mono:Semibold:15.0"
+  # icon.color=0xdd1e1e2e   # Dark
+  # label.color=0xdd1e1e2e
+  icon.color="$PALETTE_TEXT"     # Light
+  label.color="$PALETTE_TEXT"
+  icon.padding_left=4
+  icon.padding_right=4
+  label.padding_left=4
+  label.padding_right=4
+)
+sketchybar --default "${default[@]}"
+
+bar=(
+  height=33
+  color="$PALETTE_BASE"
+)
+sketchybar --bar "${bar[@]}"
+
+no_margin=(
+  icon.padding_left=0
+  background.padding_left=0
+  background.padding_right=0
+  icon.padding_right=0
+  label.padding_left=0
+  label.padding_right=0
+  label.font.size=15
+  icon.font.size=15
+)
+
+sketchybar --default "${default[@]}"
+
+sketchybar --add item front_app q \
+           --set front_app icon.drawing=off script="$PLUGIN_DIR/front_app.sh" \
+           --subscribe front_app front_app_switched
+
+##### Adding Mission Control Space Indicators #####
+# Let's add some mission control spaces:
+# https://felixkratz.github.io/SketchyBar/config/components#space----associate-mission-control-spaces-with-an-item
+# to indicate active and available mission control spaces.
+
+sketchybar --add event aerospace_workspace_change
+
+sketchybar --default "default[@]"
+
+##### Adding Left Items #####
+# We add some regular items to the left side of the bar, where
+# only the properties deviating from the current defaults need to be set
+
+##### Adding Right Items #####
+# In the same way as the left items we can add items to the right side.
+# Additional position (e.g. center) are available, see:
+# https://felixkratz.github.io/SketchyBar/config/items#adding-items-to-sketchybar
+
+# Some items refresh on a fixed cycle, e.g. the clock runs its script once
+# every 10s. Other items respond to events they subscribe to, e.g. the
+# volume.sh script is only executed once an actual change in system audio
+# volume is registered. More info about the event system can be found here:
+# https://felixkratz.github.io/SketchyBar/config/events
+
+sketchybar --add event change_keyboard_layout
+
+sketchybar --default icon.font.size=20
+
+sketchybar --add item clock right \
+        --set clock \
+                script="$PLUGIN_DIR/clock.sh" \
+                update_freq=10 \
+                icon= \
+                icon.padding_right=0 \
+        --add item keyboard right \
+        --set keyboard \
+                script="$PLUGIN_DIR/keyboard.sh" \
+                icon="" \
+                icon.padding_right=0 \
+        --subscribe keyboard change_keyboard_layout \
+        --add item battery right \
+        --set battery \
+                update_freq=120 \
+                script="$PLUGIN_DIR/battery.sh" \
+                icon.font.size=17 \
+                icon.padding_left=0 \
+                icon.padding_right=0 \
+        --subscribe battery system_woke \
+        --add item aerospace right \
+        --set aerospace \
+                script="$PLUGIN_DIR/space.sh" \
+                icon=󱓼 \
+                icon.padding_right=0 \
+                label.padding_right=5 \
+        --subscribe aerospace aerospace_workspace_change
+
+sketchybar --update

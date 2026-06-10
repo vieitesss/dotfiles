@@ -1,0 +1,32 @@
+# config-file = keybinds
+notify-on-command-finish = unfocused
+notify-on-command-finish-action = no-bell,notify
+notify-on-command-finish-after = 0s
+
+# font
+font-family = Terminess Nerd Font Mono
+font-size = 19
+font-thicken = true
+# window-inherit-font-size = false
+
+# window
+macos-titlebar-style = tabs
+mouse-hide-while-typing = true
+# window-save-state = always
+
+background-opacity = 0.9
+background-blur = true
+
+# theme
+# theme = umbraline
+theme = Cursor Dark
+
+# keybinds
+keybind = ctrl+1=goto_tab:1
+keybind = ctrl+2=goto_tab:2
+keybind = ctrl+3=goto_tab:3
+keybind = ctrl+4=goto_tab:4
+keybind = ctrl+5=goto_tab:5
+keybind = ctrl+6=goto_tab:6
+keybind = ctrl+7=goto_tab:7
+keybind = ctrl+8=goto_tab:8
