@@ -4,15 +4,11 @@
 name = Daniel Vieites
 email = dvieitest@gmail.com
 [init]
-	defaultBranch = main
+    defaultBranch = main
 
 [core]
-	pager = less --tabs=4 -RF
+    pager = diff-so-fancy | less --tabs=4 -RF
 
-[interactive]
-    diffFilter = diff-so-fancy --patch
-
-[pager]
-	diff = diff-so-fancy | less --tabs=4 -RF
-	show = diff-so-fancy | less --tabs=4 -RF
-	log = false
+[diff-so-fancy]
+    stripLeadingSymbols = false
+    shortHeaders = true

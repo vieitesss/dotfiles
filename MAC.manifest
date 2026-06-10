@@ -6,6 +6,8 @@ git/.gitconfig|~/.gitconfig
 tmux/.tmux.conf|~/.tmux.conf
 
 scripts/tmux-sessions|~/.local/bin/tmux-sessions
+scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
+scripts/lib|~/.local/bin/lib
 
 alacritty|~/.config/alacritty
 ghostty|~/.config/ghostty
