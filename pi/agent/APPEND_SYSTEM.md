@@ -1,0 +1,1 @@
+/Users/vieitesprefapp/.agents/skills/caveman/SKILL.md

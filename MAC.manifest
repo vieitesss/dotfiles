@@ -5,9 +5,7 @@ zsh/aliases|~/.aliases
 git/.gitconfig|~/.gitconfig
 tmux/.tmux.conf|~/.tmux.conf
 
-scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
 scripts/tmux-sessions|~/.local/bin/tmux-sessions
-scripts/lib|~/.local/bin/lib
 
 alacritty|~/.config/alacritty
 ghostty|~/.config/ghostty
@@ -18,4 +16,6 @@ aerospace/aerospace.toml|~/.aerospace.toml
 hammerspoon|~/.hammerspoon
 karabiner|~/.config/karabiner
 
-pi|~/.pi
+pi/agent/settings.json|~/.pi/agent/settings.json
+pi/agent/extensions|~/.pi/agent/extensions
+pi/agent/APPEND_SYSTEM.md|~/.pi/agent/APPEND_SYSTEM.md
