@@ -10,6 +10,8 @@ metadata:
 Inspect repo state, split changes into the smallest atomic groups by intent, and commit each group with a one-line Conventional Commit message.
 
 ## Rules
+- Only run this workflow after an explicit user request to commit changes.
+- Push changes only when the user explicitly requests a push.
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:` — scope optional
 - One logical change per commit; never mix unrelated changes
 - Split independent fixes, features, docs, tests, refactors — combine only when tightly coupled

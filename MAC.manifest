@@ -19,5 +19,6 @@ hammerspoon|~/.hammerspoon
 karabiner|~/.config/karabiner
 
 pi/agent/settings.json|~/.pi/agent/settings.json
+pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
 pi/agent/extensions|~/.pi/agent/extensions
 pi/agent/APPEND_SYSTEM.md|~/.pi/agent/APPEND_SYSTEM.md
