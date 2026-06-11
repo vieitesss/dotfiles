@@ -34,7 +34,7 @@ type AskUserQuestionResult = {
 };
 
 type AskUserBridgeResponse = {
-  id?: unknown;
+  id: string;
   result?: AskUserQuestionResult;
   error?: string;
 };
@@ -118,38 +118,21 @@ function isGitExecutable(word: string): boolean {
   return word === "git" || word.endsWith("/git");
 }
 
+function getGitGlobalOptionSize(word: string): number {
+  if (gitOptionsWithValue.has(word)) return 2;
+  if (gitOptionsWithoutValue.has(word)) return 1;
+  if ((word.startsWith("-C") || word.startsWith("-c")) && word.length > 2) return 1;
+  if (gitOptionsWithValuePrefixes.some((option) => word.startsWith(option))) return 1;
+  return 0;
+}
+
 function skipGitGlobalOptions(words: string[], gitIndex: number): number {
   let index = gitIndex + 1;
 
   while (index < words.length) {
-    const word = words[index];
-
-    if (gitOptionsWithValue.has(word)) {
-      index += 2;
-      continue;
-    }
-
-    if (word.startsWith("-C") && word.length > 2) {
-      index += 1;
-      continue;
-    }
-
-    if (word.startsWith("-c") && word.length > 2) {
-      index += 1;
-      continue;
-    }
-
-    if (gitOptionsWithValuePrefixes.some((option) => word.startsWith(option))) {
-      index += 1;
-      continue;
-    }
-
-    if (gitOptionsWithoutValue.has(word)) {
-      index += 1;
-      continue;
-    }
-
-    return index;
+    const size = getGitGlobalOptionSize(words[index]);
+    if (!size) return index;
+    index += size;
   }
 
   return index;
@@ -206,6 +189,10 @@ function buildApprovalQuestion(command: string, blockedCommand: string): AskUser
   };
 }
 
+function block(reason: string) {
+  return { block: true as const, reason };
+}
+
 async function askWithRpivBridge(
   pi: ExtensionAPI,
   command: string,
@@ -217,15 +204,12 @@ async function askWithRpivBridge(
   return new Promise((resolve) => {
     let settled = false;
     let accepted = false;
-    let acceptTimer: ReturnType<typeof setTimeout> | undefined;
-    let responseTimer: ReturnType<typeof setTimeout> | undefined;
-
+    const timers: Array<ReturnType<typeof setTimeout> | undefined> = [];
     const cleanupCallbacks: Array<() => void> = [];
     const finish = (value: boolean | undefined) => {
       if (settled) return;
       settled = true;
-      if (acceptTimer) clearTimeout(acceptTimer);
-      if (responseTimer) clearTimeout(responseTimer);
+      for (const timer of timers) if (timer) clearTimeout(timer);
       for (const cleanup of cleanupCallbacks) cleanup();
       resolve(value);
     };
@@ -234,12 +218,8 @@ async function askWithRpivBridge(
       pi.events.on(RPIV_ASK_USER_ACCEPTED_EVENT, (data) => {
         if (!isBridgeResponse(data, id)) return;
         accepted = true;
-        if (acceptTimer) clearTimeout(acceptTimer);
-        responseTimer = setTimeout(() => finish(false), RPIV_RESPONSE_TIMEOUT_MS);
-      })
-    );
-
-    cleanupCallbacks.push(
+        timers.push(setTimeout(() => finish(false), RPIV_RESPONSE_TIMEOUT_MS));
+      }),
       pi.events.on(RPIV_ASK_USER_RESPONSE_EVENT, (data) => {
         if (!isBridgeResponse(data, id)) return;
         const answer = data.result?.answers[0];
@@ -247,9 +227,11 @@ async function askWithRpivBridge(
       })
     );
 
-    acceptTimer = setTimeout(() => {
-      if (!accepted) finish(undefined);
-    }, RPIV_ACCEPT_TIMEOUT_MS);
+    timers.push(
+      setTimeout(() => {
+        if (!accepted) finish(undefined);
+      }, RPIV_ACCEPT_TIMEOUT_MS)
+    );
 
     pi.events.emit(RPIV_ASK_USER_REQUEST_EVENT, {
       id,
@@ -274,12 +256,7 @@ export default function (pi: ExtensionAPI) {
     const blockedCommand = findBlockedGitCommand(command);
     if (!blockedCommand) return undefined;
 
-    if (!ctx.hasUI) {
-      return {
-        block: true,
-        reason: `${blockedCommand} blocked: explicit user approval required`,
-      };
-    }
+    if (!ctx.hasUI) return block(`${blockedCommand} blocked: explicit user approval required`);
 
     pi.events.emit("unipi:approval:needed", {
       kind: "git",
@@ -289,16 +266,14 @@ export default function (pi: ExtensionAPI) {
 
     const bridgeChoice = await askWithRpivBridge(pi, command, blockedCommand);
     if (bridgeChoice === true) return undefined;
-    if (bridgeChoice === false) return { block: true, reason: `${blockedCommand} blocked by user` };
+    if (bridgeChoice === false) return block(`${blockedCommand} blocked by user`);
 
     const choice = await ctx.ui.select(
       `Git write command needs explicit approval.\n\n${command}\n\nAllow this ${blockedCommand} command once?`,
       ["Allow once", "Block"]
     );
 
-    if (choice !== "Allow once") {
-      return { block: true, reason: `${blockedCommand} blocked by user` };
-    }
+    if (choice !== "Allow once") return block(`${blockedCommand} blocked by user`);
 
     return undefined;
   });
