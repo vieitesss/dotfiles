@@ -4,6 +4,49 @@ type GitWriteGuardGlobalState = {
   token?: symbol;
 };
 
+type AskUserQuestionParams = {
+  questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{
+      label: string;
+      description: string;
+      preview?: string;
+    }>;
+    multiSelect?: boolean;
+  }>;
+};
+
+type AskUserQuestionAnswer = {
+  questionIndex: number;
+  question: string;
+  kind: "option" | "custom" | "chat" | "multi";
+  answer: string | null;
+  selected?: string[];
+  notes?: string;
+  preview?: string;
+};
+
+type AskUserQuestionResult = {
+  answers: AskUserQuestionAnswer[];
+  cancelled: boolean;
+  error?: string;
+};
+
+type AskUserBridgeResponse = {
+  id?: unknown;
+  result?: AskUserQuestionResult;
+  error?: string;
+};
+
+// Stable bridge target for rpiv-ask-user-question or a companion bridge extension.
+// If no provider accepts the request quickly, this guard falls back to ctx.ui.select().
+const RPIV_ASK_USER_REQUEST_EVENT = "rpiv:ask-user:request";
+const RPIV_ASK_USER_ACCEPTED_EVENT = "rpiv:ask-user:accepted";
+const RPIV_ASK_USER_RESPONSE_EVENT = "rpiv:ask-user:response";
+const RPIV_ACCEPT_TIMEOUT_MS = 100;
+const RPIV_RESPONSE_TIMEOUT_MS = 30 * 60 * 1000;
+
 const gitWriteGuardGlobal = globalThis as typeof globalThis & { __piGitWriteGuard?: GitWriteGuardGlobalState };
 const gitWriteGuardState = (gitWriteGuardGlobal.__piGitWriteGuard ??= {});
 
@@ -135,6 +178,87 @@ function findBlockedGitCommand(command: string): string | undefined {
   return undefined;
 }
 
+function isBridgeResponse(data: unknown, id: string): data is AskUserBridgeResponse {
+  return !!data && typeof data === "object" && (data as AskUserBridgeResponse).id === id;
+}
+
+function buildApprovalQuestion(command: string, blockedCommand: string): AskUserQuestionParams {
+  const preview = `\`\`\`sh\n${command}\n\`\`\``;
+  return {
+    questions: [
+      {
+        question: `Allow this ${blockedCommand} command once?`,
+        header: "Git write",
+        options: [
+          {
+            label: "Allow once",
+            description: "Run this git write command one time, then require approval again next time.",
+            preview,
+          },
+          {
+            label: "Block",
+            description: "Keep this git write command blocked.",
+            preview,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function askWithRpivBridge(
+  pi: ExtensionAPI,
+  command: string,
+  blockedCommand: string
+): Promise<boolean | undefined> {
+  const id = `git-write-guard-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const params = buildApprovalQuestion(command, blockedCommand);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let accepted = false;
+    let acceptTimer: ReturnType<typeof setTimeout> | undefined;
+    let responseTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanupCallbacks: Array<() => void> = [];
+    const finish = (value: boolean | undefined) => {
+      if (settled) return;
+      settled = true;
+      if (acceptTimer) clearTimeout(acceptTimer);
+      if (responseTimer) clearTimeout(responseTimer);
+      for (const cleanup of cleanupCallbacks) cleanup();
+      resolve(value);
+    };
+
+    cleanupCallbacks.push(
+      pi.events.on(RPIV_ASK_USER_ACCEPTED_EVENT, (data) => {
+        if (!isBridgeResponse(data, id)) return;
+        accepted = true;
+        if (acceptTimer) clearTimeout(acceptTimer);
+        responseTimer = setTimeout(() => finish(false), RPIV_RESPONSE_TIMEOUT_MS);
+      })
+    );
+
+    cleanupCallbacks.push(
+      pi.events.on(RPIV_ASK_USER_RESPONSE_EVENT, (data) => {
+        if (!isBridgeResponse(data, id)) return;
+        const answer = data.result?.answers[0];
+        finish(!data.result?.cancelled && answer?.kind === "option" && answer.answer === "Allow once");
+      })
+    );
+
+    acceptTimer = setTimeout(() => {
+      if (!accepted) finish(undefined);
+    }, RPIV_ACCEPT_TIMEOUT_MS);
+
+    pi.events.emit(RPIV_ASK_USER_REQUEST_EVENT, {
+      id,
+      source: "git-write-guard",
+      params,
+    });
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   const token = Symbol("pi-git-write-guard-load");
   gitWriteGuardState.token = token;
@@ -162,6 +286,10 @@ export default function (pi: ExtensionAPI) {
       command,
       blockedCommand,
     });
+
+    const bridgeChoice = await askWithRpivBridge(pi, command, blockedCommand);
+    if (bridgeChoice === true) return undefined;
+    if (bridgeChoice === false) return { block: true, reason: `${blockedCommand} blocked by user` };
 
     const choice = await ctx.ui.select(
       `Git write command needs explicit approval.\n\n${command}\n\nAllow this ${blockedCommand} command once?`,
