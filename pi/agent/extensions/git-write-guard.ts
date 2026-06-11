@@ -1,5 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+type GitWriteGuardGlobalState = {
+  token?: symbol;
+};
+
+const gitWriteGuardGlobal = globalThis as typeof globalThis & { __piGitWriteGuard?: GitWriteGuardGlobalState };
+const gitWriteGuardState = (gitWriteGuardGlobal.__piGitWriteGuard ??= {});
+
 const blockedGitCommands = new Set(["commit", "push"]);
 const gitOptionsWithValue = new Set([
   "-C",
@@ -129,7 +136,12 @@ function findBlockedGitCommand(command: string): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
+  const token = Symbol("pi-git-write-guard-load");
+  gitWriteGuardState.token = token;
+  const isCurrentLoad = () => gitWriteGuardState.token === token;
+
   pi.on("tool_call", async (event, ctx) => {
+    if (!isCurrentLoad()) return undefined;
     if (event.toolName !== "bash") return undefined;
 
     const command = event.input.command;
@@ -144,6 +156,12 @@ export default function (pi: ExtensionAPI) {
         reason: `${blockedCommand} blocked: explicit user approval required`,
       };
     }
+
+    pi.events.emit("unipi:approval:needed", {
+      kind: "git",
+      command,
+      blockedCommand,
+    });
 
     const choice = await ctx.ui.select(
       `Git write command needs explicit approval.\n\n${command}\n\nAllow this ${blockedCommand} command once?`,
