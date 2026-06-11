@@ -64,12 +64,6 @@ The install script should:
    - create the symlink only when the destination does not already exist
 4. Print clear actions as it runs.
 
-## Source control safety
-
-- Do not run `git commit`, `git push`, or commands that create commits or push branches/tags unless the user explicitly requests that action.
-- If the user explicitly requests a commit or push, that request is sufficient approval for the corresponding action.
-- Do not infer commit or push permission from broad requests like "finish", "save", "apply", "ship", or "clean up".
-
 ## Development guidelines
 
 - Keep scripts POSIX-shell friendly where practical.
