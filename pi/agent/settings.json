@@ -1,12 +1,11 @@
 {
-  "lastChangelogVersion": "0.79.1",
+  "lastChangelogVersion": "0.79.3",
   "hideThinkingBlock": true,
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "low",
+  "defaultThinkingLevel": "high",
   "packages": [
-    "npm:pi-opencode-theme",
     "npm:@juicesharp/rpiv-ask-user-question"
   ],
-  "theme": "opencode"
+  "theme": "gruber-darker"
 }
