@@ -3,9 +3,10 @@
   "hideThinkingBlock": true,
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "low",
   "packages": [
-    "npm:@juicesharp/rpiv-ask-user-question"
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "git:github.com/vieitesss/pi-theme-gruber-darker"
   ],
   "theme": "gruber-darker"
 }
