@@ -35,7 +35,6 @@ typeset -g IS_ARM_MAC=0
 [[ $IS_DARWIN -eq 1 && "$(uname -m)" == "arm64" ]] && IS_ARM_MAC=1
 
 # Keep inherited PATH and dedupe entries while preserving order.
-# This keeps nix-darwin/system paths injected before .zshrc.
 typeset -U path PATH
 
 # Locale settings
@@ -92,6 +91,13 @@ zinit ice compile'(pure|async).zsh' pick'async.zsh' src'pure.zsh'
 zinit light sindresorhus/pure
 
 _profile_phase "pure prompt"
+
+# ZVM config — use ZLE engine so standard bindkey multi-key sequences work
+# (NEX engine's prefix computation breaks on back-to-back escape sequences like \e\e)
+zvm_config() {
+  ZVM_READKEY_ENGINE=zle
+  ZVM_KEYTIMEOUT=0.15
+}
 
 zinit light jeffreytse/zsh-vi-mode
 
@@ -162,12 +168,13 @@ _bind_fzf_history_widget() {
 # to rewrite keybindings
 zvm_after_init () {
   # Edit line in vim with ctrl-e
-  autoload -z edit-command-line
+  autoload -Uz edit-command-line
   zle -N edit-command-line
 
   bindkey "^x^e" edit-command-line
   bindkey -M viins "^u" end-of-line
   _bind_fzf_history_widget
+
 }
 
 # Load fzf shell integration once keybindings, completion, and widgets are ready.
@@ -366,8 +373,20 @@ export LUA_PATH="$LUA_PATH;/usr/local/lib/lua/5.4/?.so"
 # NVM lazy loading for faster startup
 export NVM_DIR="$HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
-    # Add nvm's bin to PATH without loading nvm
-    export PATH="$NVM_DIR/versions/node/$(cat $NVM_DIR/alias/default 2>/dev/null || echo 'v20.0.0')/bin:$PATH"
+    # Add a real Node binary to PATH without loading nvm. This lets scripts with
+    # shebangs like `#!/usr/bin/env node` work before the lazy wrapper runs.
+    _nvm_lazy_version="$(cat "$NVM_DIR/alias/default" 2>/dev/null)"
+    if [[ -n "$_nvm_lazy_version" && ! -d "$NVM_DIR/versions/node/$_nvm_lazy_version" ]]; then
+        _nvm_lazy_version=""
+    fi
+    if [[ -z "$_nvm_lazy_version" ]]; then
+        _nvm_lazy_version="$(ls -1dt "$NVM_DIR"/versions/node/v* 2>/dev/null | head -n 1)"
+        _nvm_lazy_version="${_nvm_lazy_version:t}"
+    fi
+    if [[ -n "$_nvm_lazy_version" ]]; then
+        export PATH="$NVM_DIR/versions/node/$_nvm_lazy_version/bin:$PATH"
+    fi
+    unset _nvm_lazy_version
 
     _load_nvm() {
         unset -f nvm node npm npx _load_nvm
@@ -414,19 +433,6 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 _profile_phase "Lazy loaders configured"
-
-# Nix
-if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
-  # if PATH does *not* contain `~/.nix-profile/bin`
-  if [ -n "${PATH##*.nix-profile/bin*}" ]; then
-
-    # If this flag is set, `nix-daemon.sh` returns early
-    # https://github.com/NixOS/nix/issues/5298
-    unset __ETC_PROFILE_NIX_SOURCED
-    . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
-  fi
-fi
-# End Nix
 
 # Benchmarking - report startup time
 if [[ -n "${ZSH_BENCHMARK:-}" && -n "$_ZSH_START_TIME" ]]; then

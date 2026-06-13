@@ -4,8 +4,9 @@ notify-on-command-finish-action = no-bell,notify
 notify-on-command-finish-after = 0s
 
 # font
-font-family = Terminess Nerd Font Mono
-font-size = 19
+# font-family = Terminess Nerd Font Mono
+font-family = Iosevka Nerd Font Mono
+font-size = 18
 font-thicken = true
 # window-inherit-font-size = false
 

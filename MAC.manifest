@@ -17,7 +17,7 @@ kitty|~/.config/kitty
 wezterm|~/.config/wezterm
 
 aerospace/aerospace.toml|~/.aerospace.toml
-hammerspoon|~/.hammerspoon
+hammerspoon/init.lua|~/.hammerspoon/init.lua
 karabiner|~/.config/karabiner
 
 pi/agent/settings.json|~/.pi/agent/settings.json
