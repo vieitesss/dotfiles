@@ -6,7 +6,8 @@
   "defaultThinkingLevel": "low",
   "packages": [
     "npm:@juicesharp/rpiv-ask-user-question",
-    "git:github.com/vieitesss/pi-theme-gruber-darker"
+    "git:github.com/vieitesss/pi-theme-gruber-darker",
+    "git:github.com/DietrichGebert/ponytail"
   ],
   "theme": "gruber-darker"
 }
