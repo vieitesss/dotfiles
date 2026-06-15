@@ -15,6 +15,7 @@ alacritty|~/.config/alacritty
 ghostty|~/.config/ghostty
 kitty|~/.config/kitty
 wezterm|~/.config/wezterm
+ollama/homebrew.mxcl.ollama.plist.tmpl|~/Library/LaunchAgents/homebrew.mxcl.ollama.plist
 
 aerospace/aerospace.toml|~/.aerospace.toml
 hammerspoon/init.lua|~/.hammerspoon/init.lua

@@ -26,6 +26,14 @@ fi
 
 : "${HOME:?HOME is not set}"
 
+env_file="$repo_root/.env.local"
+if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$env_file"
+    set +a
+fi
+
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [application ...]
@@ -33,6 +41,9 @@ Usage: $(basename "$0") [application ...]
 Install all manifest entries when no applications are provided.
 When applications are provided, only install entries whose source starts with
 that top-level directory, for example: $(basename "$0") zsh git kitty
+
+Sources ending in .tmpl are rendered to regular files with {{ VAR }} values
+from the environment or .env.local.
 EOF
 }
 
@@ -87,6 +98,41 @@ expand_destination() {
             printf '%s\n' "$1"
             ;;
     esac
+}
+
+render_template() {
+    template_path=$1
+    dest_path=$2
+    tmp_path=$(mktemp "$dest_path.tmp.XXXXXX") || return 1
+
+    if awk '
+        {
+            line = $0
+            while (match(line, /\{\{[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\}\}/)) {
+                token = substr(line, RSTART, RLENGTH)
+                name = token
+                sub(/^\{\{[[:space:]]*/, "", name)
+                sub(/[[:space:]]*\}\}$/, "", name)
+
+                if (!(name in ENVIRON)) {
+                    printf "WARN: missing template variable: %s\n", name > "/dev/stderr"
+                    missing = 1
+                    value = ""
+                } else {
+                    value = ENVIRON[name]
+                }
+
+                line = substr(line, 1, RSTART - 1) value substr(line, RSTART + RLENGTH)
+            }
+            print line
+        }
+        END { exit missing ? 1 : 0 }
+    ' "$template_path" > "$tmp_path"; then
+        mv "$tmp_path" "$dest_path"
+    else
+        rm -f "$tmp_path"
+        return 1
+    fi
 }
 
 echo "Using manifest: $manifest"
@@ -144,11 +190,22 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     parent_dir=$(dirname "$dest_path")
     mkdir -p "$parent_dir"
 
-    if ln -s "$source_path" "$dest_path"; then
-        echo "LINK: $dest_path -> $source_path"
-    else
-        echo "WARN: failed to link $dest_path" >&2
-    fi
+    case "$source_entry" in
+        *.tmpl)
+            if render_template "$source_path" "$dest_path"; then
+                echo "RENDER: $dest_path <- $source_path"
+            else
+                echo "WARN: failed to render $dest_path" >&2
+            fi
+            ;;
+        *)
+            if ln -s "$source_path" "$dest_path"; then
+                echo "LINK: $dest_path -> $source_path"
+            else
+                echo "WARN: failed to link $dest_path" >&2
+            fi
+            ;;
+    esac
 done < "$manifest"
 
 for requested_app in "${requested_apps[@]}"; do
