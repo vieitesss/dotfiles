@@ -1,1 +1,1 @@
-/Users/vieitesprefapp/.agents/skills/caveman/SKILL.md
+/home/vieitesrpi/.agents/skills/caveman/SKILL.md

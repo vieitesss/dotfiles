@@ -222,6 +222,7 @@ async function askWithRpivBridge(
       }),
       pi.events.on(RPIV_ASK_USER_RESPONSE_EVENT, (data) => {
         if (!isBridgeResponse(data, id)) return;
+        if (data.error || data.result?.error) return finish(undefined);
         const answer = data.result?.answers[0];
         finish(!data.result?.cancelled && answer?.kind === "option" && answer.answer === "Allow once");
       })
