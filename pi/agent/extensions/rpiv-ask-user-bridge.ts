@@ -1,6 +1,7 @@
+import { homedir } from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const RPIV_PACKAGE_ROOT = "/Users/vieitesprefapp/.pi/agent/npm/node_modules/@juicesharp/rpiv-ask-user-question";
+const RPIV_PACKAGE_ROOT = `${homedir()}/.pi/agent/npm/node_modules/@juicesharp/rpiv-ask-user-question`;
 const RPIV_ASK_USER_REQUEST_EVENT = "rpiv:ask-user:request";
 const RPIV_ASK_USER_ACCEPTED_EVENT = "rpiv:ask-user:accepted";
 const RPIV_ASK_USER_RESPONSE_EVENT = "rpiv:ask-user:response";

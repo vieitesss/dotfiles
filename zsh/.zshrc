@@ -111,7 +111,7 @@ zinit ice lucid light-mode blockf atpull'zinit creinstall -q .'
 zinit light zsh-users/zsh-completions
 
 autoload -Uz compinit
-compinit -C -d ~/.zcompdump
+compinit -C -d "$HOME/.zcompdump"
 
 _defer_fzf_tab_plugin() {
     zinit ice lucid light-mode
@@ -200,7 +200,7 @@ _profile_phase "Plugins loaded"
 # OPTIONS #
 ###########
 
-HISTFILE=~/.histfile
+HISTFILE="$HOME/.histfile"
 HISTSIZE=1000
 SAVEHIST=$HISTSIZE
 HIISTDUP=erase
@@ -236,12 +236,12 @@ if [[ -d "$OBSIDIAN/terminal/scripts" ]]; then
     add-to-path "OBSIDIAN_SCRIPTS" "$OBSIDIAN/terminal/scripts"
 fi
 
-if [[ ! -f ~/.local/bin/fd ]] && (( $+commands[fdfind] )); then
-    ln -s "${commands[fdfind]}" ~/.local/bin/fd 2>/dev/null || true
+if [[ ! -f "$HOME/.local/bin/fd" ]] && (( $+commands[fdfind] )); then
+    ln -s "${commands[fdfind]}" "$HOME/.local/bin/fd" 2>/dev/null || true
 fi
 
-if [[ ! -f ~/.local/bin/bat ]] && (( $+commands[batcat] )); then
-    ln -s "${commands[batcat]}" ~/.local/bin/bat 2>/dev/null || true
+if [[ ! -f "$HOME/.local/bin/bat" ]] && (( $+commands[batcat] )); then
+    ln -s "${commands[batcat]}" "$HOME/.local/bin/bat" 2>/dev/null || true
 fi
 
 # Platform-specific homebrew paths
@@ -282,7 +282,7 @@ fi
 
 # go path depending on machine
 if [[ $IS_DARWIN -eq 1 ]]; then
-    add-to-path "GOPATH" "/Users/$USER/go/bin"
+    add-to-path "GOPATH" "$HOME/go/bin"
 else
     add-to-path "GOPATH" "/usr/local/go/bin"
 fi
@@ -365,7 +365,7 @@ _luarocks_init() {
 }
 luarocks() { _luarocks_init && luarocks "$@"; }
 
-export KUBECONFIG=~/.kube/config
+export KUBECONFIG="$HOME/.kube/config"
 
 export LUA_PATH="$LUA_PATH;/usr/local/lib/lua/5.4/?.so"
 

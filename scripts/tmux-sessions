@@ -2,19 +2,19 @@
 
 # List of potential directories
 potential_dirs=(
-    ~/personal
-    ~/.config
-    ~/opt
-    ~/work/firestartr-ia
-    ~/work/firestartr-e2e
-    ~/work/firestartr-lumeia
-    ~/work/firestartr-pro
-    ~/work/firestartr-demo
-    ~/work/firestartr-pre
-    ~/work/firestartr-test
-    ~/work/councilbox
-    ~/work/prefapp
-    ~/work/pre-vieitesss
+    "$HOME/personal"
+    "$HOME/.config"
+    "$HOME/opt"
+    "$HOME/work/firestartr-ia"
+    "$HOME/work/firestartr-e2e"
+    "$HOME/work/firestartr-lumeia"
+    "$HOME/work/firestartr-pro"
+    "$HOME/work/firestartr-demo"
+    "$HOME/work/firestartr-pre"
+    "$HOME/work/firestartr-test"
+    "$HOME/work/councilbox"
+    "$HOME/work/prefapp"
+    "$HOME/work/pre-vieitesss"
 )
 
 # Filter to only existing directories

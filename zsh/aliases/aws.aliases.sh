@@ -37,7 +37,7 @@ prefapp() {
 
 _prefapp_complete() {
     local -a profiles
-    profiles=($(grep '^\[profile ' ~/.aws/config | sed -E 's/^\[profile ([^]]+)\]/\1/'))
+    profiles=($(grep '^\[profile ' "$HOME/.aws/config" | sed -E 's/^\[profile ([^]]+)\]/\1/'))
     compadd "$@" -- $profiles
 }
 

@@ -75,8 +75,8 @@ core () {
 alias remove="sudo apt remove"
 alias purge="sudo apt purge"
 alias dot="cd \$DOTFILES"
-alias obs="cd ~/obsidian"
-alias pro="cd ~/projects/"
+alias obs='cd "$HOME/obsidian"'
+alias pro='cd "$HOME/projects"'
 
 # bat
 alias bat="bat --decorations=never --paging=never"
@@ -84,12 +84,12 @@ alias batn="bat -n"
 alias batnl="bat -p"
 
 # Shortcuts to edit startup files
-alias vbrc="vim ~/.bashrc"
-alias vrc="vim ~/.config/nvim/init.lua"
-alias nvd="cd ~/.config/nvim/"
+alias vbrc='vim "$HOME/.bashrc"'
+alias vrc='vim "$HOME/.config/nvim/init.lua"'
+alias nvd='cd "$HOME/.config/nvim"'
 
 # c makefile
-alias makec="make -f ~/.mac_config/makefiles/c/Makefile"
+alias makec='make -f "$HOME/.mac_config/makefiles/c/Makefile"'
 
 # convert png to jpg
 convertToJpg() {
@@ -110,7 +110,7 @@ alias falias="alias | fzf"
 alias ovftool="/usr/bin/vmware-ovftool/ovftool"
 
 #source
-alias s="source ~/.zshrc"
+alias s='source "$HOME/.zshrc"'
 
 # theme
 dark() {
