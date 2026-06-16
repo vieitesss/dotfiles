@@ -43,7 +43,6 @@ export LC_ALL=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 
 export EDITOR="nvim"
-export NVIM_APPNAME="nvim-new"
 DOTFILES="$HOME/dotfiles"
 OBSIDIAN="$HOME/personal/obsidian"
 HOSTNAME="${HOST:-${HOSTNAME:-unknown}}"
