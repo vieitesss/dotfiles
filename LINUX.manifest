@@ -23,5 +23,4 @@ agents/skills|~/.agents/skills
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
 pi/agent/extensions|~/.pi/agent/extensions
-pi/agent/themes|~/.pi/agent/themes
 pi/agent/APPEND_SYSTEM.md|~/.pi/agent/APPEND_SYSTEM.md
