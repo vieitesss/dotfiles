@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Replicate tmux's prefix+!: move the current Herdr pane into a new tab named after the next tab number.
+set -euo pipefail
+
+current=$(herdr pane current --current)
+pane_id=$(printf '%s' "$current" | jq -r '.result.pane.pane_id')
+workspace_id=$(printf '%s' "$current" | jq -r '.result.pane.workspace_id')
+label=$(herdr tab list --workspace "$workspace_id" | jq '.result.tabs | length + 1')
+
+herdr pane move "$pane_id" --new-tab --workspace "$workspace_id" --label "$label" --focus
