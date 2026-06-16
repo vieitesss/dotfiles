@@ -5,8 +5,10 @@ zsh/aliases|~/.aliases
 git/.gitconfig|~/.gitconfig
 
 tmux/.tmux.conf|~/.tmux.conf
+herdr/config.toml|~/.config/herdr/config.toml
 
 scripts/tmux-sessions|~/.local/bin/tmux-sessions
+scripts/herdr-spaces|~/.local/bin/herdr-spaces
 scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
 scripts/lib|~/.local/bin/lib
 

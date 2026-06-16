@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+# List of potential directories
+potential_dirs=(
+    "$HOME/personal"
+    "$HOME/.config"
+    "$HOME/opt"
+    "$HOME/work/firestartr-ia"
+    "$HOME/work/firestartr-e2e"
+    "$HOME/work/firestartr-lumeia"
+    "$HOME/work/firestartr-pro"
+    "$HOME/work/firestartr-demo"
+    "$HOME/work/firestartr-pre"
+    "$HOME/work/firestartr-test"
+    "$HOME/work/councilbox"
+    "$HOME/work/prefapp"
+    "$HOME/work/pre-vieitesss"
+)
+
+if ! command -v herdr >/dev/null 2>&1; then
+    echo "herdr not found" >&2
+    exit 1
+fi
+
+# Filter to only existing directories
+existing_dirs=()
+for dir in "${potential_dirs[@]}"; do
+    if [[ -d "$dir" ]]; then
+        existing_dirs+=("$dir")
+    fi
+done
+
+# Only run find if we have existing directories
+if [[ ${#existing_dirs[@]} -gt 0 ]]; then
+    dirs=$(find -L "${existing_dirs[@]}" -mindepth 1 -maxdepth 1 -type d)
+else
+    dirs=""
+fi
+
+if command -v fd >/dev/null 2>&1; then
+    git_projects=$(fd -H -d 2 -E "Library" -t d "^\.git$" "$HOME" | sed -E 's#/[.]git/?$##')
+else
+    git_projects=""
+fi
+
+selected=$(
+    {
+        printf '%s\n' "$dirs"
+        printf '%s\n' "$git_projects"
+    } | awk 'NF && !seen[$0]++' | fzf --layout=reverse --preview-window down --preview 'eza --color=always -l {} 2>/dev/null || ls -la {}'
+)
+
+if [[ -z "$selected" ]]; then
+    exit 0
+fi
+
+selected=$(cd "$selected" 2>/dev/null && pwd -P)
+if [[ -z "$selected" ]]; then
+    exit 1
+fi
+
+# Create unique workspace name with smart parent directory handling
+base_name=$(basename "$selected" | tr '.' '_')
+parent_path=$(dirname "$selected")
+parent_dir=$(basename "$parent_path" | tr '.' '_')
+
+# Only include parent dir if:
+# 1. Parent is not the home directory itself
+# 2. Parent is not directly under home (second level check)
+if [[ "$parent_path" != "$HOME" ]]; then
+    # Check if parent is a direct child of HOME
+    parent_of_parent=$(dirname "$parent_path")
+    if [[ "$parent_of_parent" == "$HOME" ]]; then
+        # Direct child of HOME - include parent if it's not the username
+        if [[ "$parent_dir" != "$(whoami)" ]]; then
+            workspace_name="${parent_dir}_${base_name}"
+        else
+            workspace_name="$base_name"
+        fi
+    else
+        # Deeper than second level - always include parent
+        workspace_name="${parent_dir}_${base_name}"
+    fi
+else
+    workspace_name="$base_name"
+fi
+
+workspace_id=$(herdr pane list | python3 -c '
+import json, sys
+cwd = sys.argv[1]
+for pane in json.load(sys.stdin).get("result", {}).get("panes", []):
+    if pane.get("cwd") == cwd or pane.get("foreground_cwd") == cwd:
+        print(pane.get("workspace_id", ""))
+        break
+' "$selected")
+
+if [[ -z "$workspace_id" ]]; then
+    workspace_id=$(herdr workspace list | python3 -c '
+import json, sys
+label = sys.argv[1]
+for ws in json.load(sys.stdin).get("result", {}).get("workspaces", []):
+    if ws.get("label") == label:
+        print(ws.get("workspace_id", ""))
+        break
+' "$workspace_name")
+fi
+
+if [[ -n "$workspace_id" ]]; then
+    herdr workspace focus "$workspace_id"
+else
+    herdr workspace create --cwd "$selected" --label "$workspace_name" --focus
+fi
