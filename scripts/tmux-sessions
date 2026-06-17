@@ -5,16 +5,7 @@ potential_dirs=(
     "$HOME/personal"
     "$HOME/.config"
     "$HOME/opt"
-    "$HOME/work/firestartr-ia"
-    "$HOME/work/firestartr-e2e"
-    "$HOME/work/firestartr-lumeia"
-    "$HOME/work/firestartr-pro"
-    "$HOME/work/firestartr-demo"
-    "$HOME/work/firestartr-pre"
-    "$HOME/work/firestartr-test"
-    "$HOME/work/councilbox"
-    "$HOME/work/prefapp"
-    "$HOME/work/pre-vieitesss"
+    "$HOME/work"/*
 )
 
 # Filter to only existing directories
