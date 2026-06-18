@@ -139,26 +139,6 @@ Run the helper directly so target selection, engine choice, structured validatio
 
 ## Helper
 
-OpenClaw repo-local helper:
-
-```bash
-.agents/skills/autoreview/scripts/autoreview --help
-```
-
-`agent-scripts` checkout helper:
-
-```bash
-skills/autoreview/scripts/autoreview --help
-```
-
-Global helper from `agent-scripts`:
-
-```bash
-~/.codex/skills/agent-scripts/autoreview/scripts/autoreview --help
-```
-
-If installed from `agent-scripts`, path is:
-
 ```bash
 $HOME/.agents/skills/autoreview/scripts/autoreview --help
 ```
