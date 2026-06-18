@@ -1,9 +1,9 @@
 {
-  "lastChangelogVersion": "0.79.5",
+  "lastChangelogVersion": "0.79.6",
   "hideThinkingBlock": false,
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "low",
+  "defaultThinkingLevel": "high",
   "packages": [
     "npm:@juicesharp/rpiv-ask-user-question",
     "git:github.com/vieitesss/pi-theme-gruber-darker",

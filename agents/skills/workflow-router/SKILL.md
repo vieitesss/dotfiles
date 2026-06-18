@@ -1,6 +1,6 @@
 ---
 name: workflow-router
-description: Repository workflow router. Use before non-trivial repo work: features, bug fixes, refactors, architecture review, or design work. Chooses company SDD when a `specs/` directory contains documentation, lightweight workflow when `CONTEXT.md` exists, otherwise asks the user.
+description: Repository workflow router. Use before non-trivial repo work (features, bug fixes, refactors, architecture review, or design work). Chooses company SDD when a `specs/` directory contains documentation, lightweight workflow when `CONTEXT.md` exists, otherwise asks the user.
 ---
 
 # Workflow Router
