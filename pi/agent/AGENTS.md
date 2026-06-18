@@ -8,3 +8,12 @@
 - If a commit or push attempt is blocked, cancelled, or rejected by a guard or user action, treat the approval as revoked and ask again before retrying.
 - Do not bypass git-write guards, hooks, aliases, approval prompts, or safety extensions to commit or push.
 - Do not infer commit or push permission from broad requests like "finish", "save", "apply", "ship", or "clean up".
+
+## Workflow routing
+
+Before non-trivial repository work, use `workflow-router`.
+
+- `specs/` directory with documentation files -> SDD workflow.
+- Else root `CONTEXT.md` -> lightweight development workflow.
+- Else ask user which workflow to use.
+- If lightweight is chosen in an unmarked repo, create root `CONTEXT.md`.
