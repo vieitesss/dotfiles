@@ -1,6 +1,7 @@
 ---
 name: implement
-description: Implement a piece of work based a set of issues, sdd or tdd workflow. Use when the user asks to "implement" anything, unless trivial.
+description: Implement a piece of work based on a set of issues or specs.
+disable-model-invocation: true
 ---
 
 Implement the work described by the user by:
