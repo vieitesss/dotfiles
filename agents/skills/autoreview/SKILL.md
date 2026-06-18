@@ -85,7 +85,7 @@ Committed single change:
 or with the helper:
 
 ```bash
-/Users/steipete/Projects/agent-scripts/skills/autoreview/scripts/autoreview --mode commit --commit HEAD
+$HOME/.agents/skills/autoreview/scripts/autoreview --mode commit --commit HEAD
 ```
 
 Use commit review for already-landed or already-pushed work on `main`. Reviewing
@@ -160,7 +160,7 @@ Global helper from `agent-scripts`:
 If installed from `agent-scripts`, path is:
 
 ```bash
-/Users/steipete/Projects/agent-scripts/skills/autoreview/scripts/autoreview --help
+$HOME/.agents/skills/autoreview/scripts/autoreview --help
 ```
 
 The helper:
