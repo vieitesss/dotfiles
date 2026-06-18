@@ -5,63 +5,48 @@ description: Lightweight project context and ADR maintenance. Use when creating 
 
 # Context Modeling
 
-Maintain lightweight project memory. Not specs. Not domain maps.
+Actively build and sharpen the project's context model as you design. This is the *active* discipline — challenging terms, inventing edge-case scenarios, and writing the glossary and decisions down the moment they crystallise. (Merely *reading* `CONTEXT.md` for vocabulary is not this skill — that's a one-line habit any skill can do. This skill is for when you're changing the model, not just consuming it.)
 
-## CONTEXT.md
+## File structure
 
-Root `CONTEXT.md` shape:
-
-```md
-# Project Context
-
-## Purpose
-- What this repo is for.
-
-## Vocabulary
-- **Term**: Meaning. Avoid: wrong/old names.
-
-## Commands
-- Test:
-- Lint:
-- Run:
-
-## Pitfalls
-- Things agents often get wrong.
-
-## ADRs
-Design decisions live in [docs/adr/](docs/adr/).
+```
+/
+├── CONTEXT.md
+├── docs/
+│   └── adr/
+│       ├── event-sourced-orders.md
+│       └── postgres-for-write-model.md
+└── src/
 ```
 
-Keep it short. Prune stale bullets. Do not list every ADR path.
+Create files lazily — only when you have something to write. If no `CONTEXT.md` exists, create one when the first term is resolved. If no `docs/adr/` exists, create it when the first ADR is needed.
 
-## ADRs
+## During the session
 
-ADRs live in `docs/adr/0001-slug.md`.
+### Sharpen fuzzy language
 
-Write ADRs for design choices:
+When the user uses vague or overloaded terms, propose a precise canonical term. "You're saying 'account' — do you mean the Customer or the User? Those are different things."
 
-- module shape
-- seam/interface placement
-- data ownership
-- dependency/technology choice
-- persistent tradeoff
-- rejected design direction with load-bearing reason
+### Discuss concrete scenarios
 
-Skip ADRs for implementation details:
+Invent scenarios that probe edge cases and force the user to be precise about the boundaries between concepts.
 
-- renamed function
-- moved file
-- obvious bug fix
-- local refactor with no design tradeoff
+### Cross-reference with code
 
-Format:
+When the user states how something works, check whether the code agrees. If you find a contradiction, surface it: "Your code cancels entire Orders, but you just said partial cancellation is possible — which is right?"
 
-```md
-# Short decision title
+### Update CONTEXT.md inline
 
-We decided X because Y. Main tradeoff: Z.
-```
+When a term is resolved, update `CONTEXT.md` right there. Don't batch these up — capture them as they happen. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).
 
-1-3 paragraphs. No rich template unless useful.
+`CONTEXT.md` should be totally devoid of implementation details. Do not treat `CONTEXT.md` as a spec, a scratch pad, or a repository for implementation decisions. It is a glossary and nothing else.
 
-Write/update docs as decisions happen. If implementation changes the design, patch the ADR/context immediately.
+### Offer ADRs sparingly
+
+Only offer to create an ADR when all three are true:
+
+1. **Hard to reverse** — the cost of changing your mind later is meaningful
+2. **Surprising without context** — a future reader will wonder "why did they do it this way?"
+3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons
+
+If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
