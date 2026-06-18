@@ -82,12 +82,12 @@ Choose one decision per point:
 
 Reject comments when they are speculative, purely stylistic without local support, based on outdated code, or would expand the PR beyond its purpose.
 
-### 6. Implement accepted comments when asked
+### 6. Implement accepted comments
 
+- By default, convert each `fix` decision into a concrete code change and implement it.
 - If the user asked only for review or triage, do not edit code.
-- If the user asked to apply accepted feedback, convert each `fix` decision into a concrete code change and implement it.
 - Re-read the relevant file sections before editing so the implementation matches the current code, not only the reviewer wording.
-- Make the smallest correct change that addresses the review point without expanding the PR unnecessarily.
+- Use `/coding` to make the smallest correct change that addresses the review point without expanding the PR unnecessarily.
 - If multiple accepted comments overlap, implement them together in one coherent change instead of stacking redundant edits.
 - Add or update tests when the accepted comment changes behavior, fixes a bug, or closes a missing coverage gap.
 - Do not perform unrelated refactors while implementing accepted comments.
@@ -121,6 +121,20 @@ Use a concise structure like this:
 ## Verification
 - `test command` - result
 ```
+
+### 8. Resolve GitHub comments
+
+Only resolve GitHub threads when the user has already asked to commit and push the changes, or when they explicitly ask you to do so.
+
+For each thread:
+
+- If fixed, reply with the commit SHA that contains the fix and a one-line summary.
+- If not fixed, reply with the brief reason of why it was rejected/deferred/stale/out of scope/already handled.
+- Keep each reply very brief: two lines at most.
+- Post the reply before resolving the thread so the closure records why it was closed.
+- Resolve only threads you have reviewed in the current run; do not bulk-resolve unrelated comments.
+
+Use `references/github-queries.md` for commands to identify thread IDs, post the final reply, and resolve the thread.
 
 ## Decision Rules
 
