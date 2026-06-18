@@ -2,19 +2,15 @@
 
 Use these commands when you need fresh PR review data from GitHub.
 
-## Resolve the repository and PR
+## Fetch reviews and review threads
+
+Use this query to collect review summaries, inline comments, whether the thread is resolved, whether the thread is outdated, and what the latest reviewer comment says now.
 
 ```bash
 OWNER=$(gh repo view --json owner --jq '.owner.login')
 REPO=$(gh repo view --json name --jq '.name')
 PR=$(gh pr view --json number --jq '.number')
-```
 
-## Fetch top-level review summaries
-
-Use this query to collect review summaries such as approval notes, change requests, or long-form bot summaries.
-
-```bash
 gh api graphql \
   -F owner="$OWNER" \
   -F repo="$REPO" \
@@ -32,23 +28,6 @@ gh api graphql \
             url
           }
         }
-      }
-    }
-  }'
-```
-
-## Fetch review threads and current thread state
-
-Use this query to inspect inline comments, whether the thread is resolved, whether the thread is outdated, and what the latest reviewer comment says now.
-
-```bash
-gh api graphql \
-  -F owner="$OWNER" \
-  -F repo="$REPO" \
-  -F pr="$PR" \
-  -f query='query($owner:String!, $repo:String!, $pr:Int!) {
-    repository(owner:$owner, name:$repo) {
-      pullRequest(number:$pr) {
         reviewThreads(first:100) {
           nodes {
             isResolved
@@ -56,7 +35,6 @@ gh api graphql \
             path
             line
             originalLine
-            updatedAt
             comments(last:20) {
               nodes {
                 author { login }
