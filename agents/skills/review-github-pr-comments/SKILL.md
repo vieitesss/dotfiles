@@ -1,6 +1,6 @@
 ---
 name: review-github-pr-comments
-description: Review GitHub pull request review summaries, inline review comments, and bot feedback, then decide whether each reviewer point should be fixed, rejected, deferred, or marked already handled based on the PR goal, current code, and repository conventions. Apply accepted reviewer suggestions when asked. Use when the user asks to review GitHub comments, PR reviewer feedback, CodeRabbit or Qodo comments, review summaries, or whether reviewer suggestions should be acted on.
+description: Review PR comments and bot feedback, then decide whether each point should be fixed, rejected, deferred, or already handled. Apply accepted suggestions when asked.
 ---
 
 # Review GitHub PR Comments
