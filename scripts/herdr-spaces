@@ -50,6 +50,14 @@ if [[ -z "$selected" ]]; then
     exit 1
 fi
 
+current_workspace=$(herdr workspace list | python3 -c '
+import json, sys
+for ws in json.load(sys.stdin).get("result", {}).get("workspaces", []):
+    if ws.get("focused"):
+        print(ws.get("workspace_id", ""))
+        break
+')
+
 # Create unique workspace name with smart parent directory handling
 base_name=$(basename "$selected" | tr '.' '_')
 parent_path=$(dirname "$selected")
@@ -94,6 +102,12 @@ for ws in json.load(sys.stdin).get("result", {}).get("workspaces", []):
         print(ws.get("workspace_id", ""))
         break
 ' "$workspace_name")
+fi
+
+if [[ -n "$current_workspace" && "$current_workspace" != "$workspace_id" ]]; then
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr"
+    mkdir -p "$state_dir"
+    printf '%s\n' "$current_workspace" > "$state_dir/last-workspace"
 fi
 
 if [[ -n "$workspace_id" ]]; then

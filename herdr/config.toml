@@ -59,7 +59,7 @@ prefix = "ctrl+space"
 # settings = "prefix+s"
 # detach = "prefix+q"
 # reload_config = "prefix+shift+r"
-open_notification_target = "prefix+n"
+open_notification_target = "prefix+shift+u"
 # workspace_picker = "prefix+w"
 # goto = "prefix+g"
 # new_workspace = "prefix+shift+n"
@@ -117,6 +117,11 @@ command = "zsh"
 key = "prefix+o"
 type = "pane"
 command = "herdr-spaces"
+
+[[keys.command]]
+key = "prefix+n"
+type = "shell"
+command = "herdr-last-space"
 
 [[keys.command]]
 key = "prefix+!"

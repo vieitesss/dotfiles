@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v herdr >/dev/null 2>&1; then
+    echo "herdr not found" >&2
+    exit 1
+fi
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr"
+last_file="$state_dir/last-workspace"
+
+if [[ ! -s "$last_file" ]]; then
+    echo "No previous herdr workspace recorded" >&2
+    exit 1
+fi
+
+current=$(herdr workspace list | python3 -c '
+import json, sys
+for ws in json.load(sys.stdin).get("result", {}).get("workspaces", []):
+    if ws.get("focused"):
+        print(ws.get("workspace_id", ""))
+        break
+')
+
+previous=$(<"$last_file")
+if [[ -z "$current" || -z "$previous" || "$current" == "$previous" ]]; then
+    exit 0
+fi
+
+mkdir -p "$state_dir"
+printf '%s\n' "$current" > "$last_file"
+herdr workspace focus "$previous"
