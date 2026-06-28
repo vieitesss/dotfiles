@@ -431,6 +431,12 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
+# Pi
+export PATH="$HOME/.local/share/pi-node/node-v22.22.3-linux-arm64/bin:$PATH"
+
+# Local bin
+export PATH="/usr/local/bin:$PATH"
+
 _profile_phase "Lazy loaders configured"
 
 # Benchmarking - report startup time
@@ -456,6 +462,3 @@ if [[ -n "${ZSH_BENCHMARK:-}" && -n "$_ZSH_START_TIME" ]]; then
     unset _ZSH_PHASE_LABELS
     unset _ZSH_PHASE_TIMES
 fi
-
-# Pi
-export PATH="$HOME/.local/share/pi-node/node-v22.22.3-linux-arm64/bin:$PATH"
