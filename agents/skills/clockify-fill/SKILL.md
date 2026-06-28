@@ -1,7 +1,6 @@
 ---
 name: clockify-fill
 description: Fill Clockify time entries by gathering GitHub activity (commits, PRs, issues) and daily pad entries, then previewing and committing entries via clockify-cli. Use when the user asks to fill clockify, log time, track hours, update clockify, or submit time entries. Also use when the user mentions "clockify", "time tracking", or "fill my hours".
-disable-model-invocation: true
 ---
 
 # Clockify Fill
