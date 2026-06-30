@@ -55,16 +55,9 @@ latest_copilot_comment_ts() {
 }
 
 count_copilot_comments_after() {
-  local baseline="$1"
   gh api --paginate "repos/${NWO}/pulls/${PR_NUMBER}/comments?per_page=100" \
     --jq '.[] | select(.user.login | test("copilot"; "i")) | .created_at' \
-    2>/dev/null | awk -v baseline="$baseline" '$0 > baseline { n++ } END { print n + 0 }'
-}
-
-has_new_copilot_activity() {
-  local review_ts="$1" baseline_review_ts="$2" comment_ts="$3" baseline_comment_ts="$4"
-  [[ -n "$review_ts" && "$review_ts" > "$baseline_review_ts" ]] \
-    || [[ -n "$comment_ts" && "$comment_ts" > "$baseline_comment_ts" ]]
+    2>/dev/null | awk -v baseline="$1" '$0 > baseline { n++ } END { print n + 0 }'
 }
 
 request_copilot_review() {
@@ -86,7 +79,8 @@ poll_new_copilot_activity() {
     local review_ts comment_ts
     review_ts=$(latest_copilot_ts)
     comment_ts=$(latest_copilot_comment_ts)
-    if has_new_copilot_activity "$review_ts" "$baseline_review_ts" "$comment_ts" "$baseline_comment_ts"; then
+    if [[ ( -n "$review_ts" && "$review_ts" > "$baseline_review_ts" ) \
+      || ( -n "$comment_ts" && "$comment_ts" > "$baseline_comment_ts" ) ]]; then
       log "New Copilot activity (review: ${review_ts:-none}, comment: ${comment_ts:-none})."
       return 0
     fi
@@ -146,7 +140,8 @@ self_check() {
   fi
 
   # Copilot can add comments without a newer review timestamp.
-  if has_new_copilot_activity "2025-01-01T00:00:00Z" "2025-01-01T00:00:00Z" "2025-01-01T00:01:00Z" "2025-01-01T00:00:00Z"; then
+  local cts="2025-01-01T00:01:00Z" bcts="2025-01-01T00:00:00Z"
+  if [[ -n "$cts" && "$cts" > "$bcts" ]]; then
     echo "PASS: comment-only Copilot activity"
   else
     echo "FAIL: comment-only Copilot activity"; failed=1
@@ -235,8 +230,7 @@ Review only Copilot's comments (author login matches 'copilot', case-insensitive
 Commit+push for this PR branch is explicitly authorised for the life of this loop —
 commit and push all accepted fixes, then reply to + resolve every triaged thread
 per the skill's §8 (fix → include the commit SHA; reject/defer → one-line reason)." 2>&1 | tee "$_pi_tmp"
-  _pi_exit=${PIPESTATUS[0]}
-  log "pi agent finished (exit: ${_pi_exit})."
+  log "pi agent finished."
 
   PI_OUTPUT=$(cat "$_pi_tmp")
   rm -f "$_pi_tmp"
@@ -273,8 +267,17 @@ per the skill's §8 (fix → include the commit SHA; reject/defer → one-line r
   }
 
   # Step 5 — termination check
+  # Double-check: Copilot posts its review event before all inline comments arrive.
+  # If we see zero, wait 15 s and recheck once before calling it clean.
   INLINE_COUNT=$(count_copilot_comments_after "$BASELINE_COMMENT_TS")
   log "New Copilot inline code comments this cycle: ${INLINE_COUNT}"
+
+  if (( INLINE_COUNT == 0 )); then
+    log "No code comments yet — waiting 15s and rechecking…"
+    sleep 15
+    INLINE_COUNT=$(count_copilot_comments_after "$BASELINE_COMMENT_TS")
+    log "Recheck: ${INLINE_COUNT} code comments."
+  fi
 
   if (( INLINE_COUNT == 0 )); then
     FINAL_STATE="CLEAN — Copilot has no more code comments"
