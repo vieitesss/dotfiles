@@ -1,16 +1,7 @@
 ---
 name: coding
 description: Behavioral guidelines to reduce common LLM coding mistakes. Use when writing, reviewing, or refactoring code to avoid overcomplication, make surgical changes, surface assumptions, and define verifiable success criteria.
-license: MIT
 ---
-
-# When to use this Skill
-
-You will use this Skill whenever you have to write any kind of code.
-
-# What is this Skill
-
-Behavioral guidelines to reduce common LLM coding mistakes.
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
