@@ -12,12 +12,52 @@ set -uo pipefail
 MAX_CYCLES=5
 POLL_INTERVAL=20          # seconds between Copilot-review polls
 POLL_TIMEOUT=600          # 10 min per cycle before aborting
-PI_MODEL=${PR_COPILOT_LOOP_PI_MODEL:-openai-codex/gpt-5.5}
-PI_THINKING=${PR_COPILOT_LOOP_PI_THINKING:-high}
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 log()  { echo "[loop] $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+
+# ── Backend / env config ─────────────────────────────────────────────────────
+# Optional committed config file; the script also runs fine on the defaults below.
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pr-copilot-review-loop.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a; source "$ENV_FILE"; set +a
+else
+  log "WARN: no ${ENV_FILE##*/} found — using built-in defaults."
+fi
+
+AGENT=${PR_COPILOT_LOOP_AGENT:-pi}                       # pi | opencode
+PI_MODEL=${PR_COPILOT_LOOP_PI_MODEL:-openai-codex/gpt-5.5}
+OPENCODE_MODEL=${PR_COPILOT_LOOP_OPENCODE_MODEL:-}       # mandatory when AGENT=opencode
+MODEL_THINKING=${PR_COPILOT_LOOP_MODEL_THINKING:-high}   # pi --thinking / opencode --variant
+
+# Populate AGENT_CMD[] with the backend invocation for the given prompt.
+build_agent_cmd() {
+  local prompt="$1"
+  if [[ "$AGENT" == opencode ]]; then
+    AGENT_CMD=(opencode run --pure --dangerously-skip-permissions
+      --model "$OPENCODE_MODEL" --variant "$MODEL_THINKING" --prompt "$prompt")
+  else
+    AGENT_CMD=(pi --no-extensions
+      --model "$PI_MODEL" --thinking "$MODEL_THINKING" -p "$prompt")
+  fi
+}
+
+# Run the configured agent on the prompt, merging stderr into stdout for capture.
+run_agent() {
+  build_agent_cmd "$1"
+  "${AGENT_CMD[@]}" 2>&1
+}
+
+validate_backend() {
+  case "$AGENT" in
+    pi|opencode) ;;
+    *) die "Unknown PR_COPILOT_LOOP_AGENT: '${AGENT}' (expected 'pi' or 'opencode')." ;;
+  esac
+  if [[ "$AGENT" == opencode && -z "$OPENCODE_MODEL" ]]; then
+    die "AGENT=opencode requires PR_COPILOT_LOOP_OPENCODE_MODEL (no default). Run 'opencode models' to pick one."
+  fi
+}
 
 # ── GitHub helpers ───────────────────────────────────────────────────────────
 
@@ -170,6 +210,22 @@ self_check() {
     echo "FAIL: cycle cap"; failed=1
   fi
 
+  # Backend command assembly (offline)
+  AGENT=opencode OPENCODE_MODEL="prov/mdl" MODEL_THINKING=high build_agent_cmd "hi"
+  if [[ "${AGENT_CMD[0]}" == opencode && " ${AGENT_CMD[*]} " == *" --pure "* \
+     && " ${AGENT_CMD[*]} " == *" --variant high "* && " ${AGENT_CMD[*]} " == *" --dangerously-skip-permissions "* ]]; then
+    echo "PASS: opencode command assembly"
+  else
+    echo "FAIL: opencode command assembly (${AGENT_CMD[*]})"; failed=1
+  fi
+  AGENT=pi PI_MODEL="prov/mdl" MODEL_THINKING=high build_agent_cmd "hi"
+  if [[ "${AGENT_CMD[0]}" == pi && " ${AGENT_CMD[*]} " == *" --no-extensions "* \
+     && " ${AGENT_CMD[*]} " == *" --thinking high "* ]]; then
+    echo "PASS: pi command assembly"
+  else
+    echo "FAIL: pi command assembly (${AGENT_CMD[*]})"; failed=1
+  fi
+
   if (( failed == 0 )); then
     echo "All checks passed."; exit 0
   else
@@ -179,6 +235,8 @@ self_check() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 [[ "${1:-}" == "--self-check" ]] && self_check
+
+validate_backend
 
 # Resolve PR and context
 PR_ARG="${1:-}"
@@ -234,13 +292,13 @@ while (( CYCLE < MAX_CYCLES )); do
   SHA_BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "")
 
   _pi_tmp=$(mktemp)
-  log "Running pi agent…"
-  pi --no-extensions --model "$PI_MODEL" --thinking "$PI_THINKING" -p "Use the review-github-pr-comments skill. ${PI_PR_CONTEXT}
+  log "Running ${AGENT} agent…"
+  run_agent "Use the review-github-pr-comments skill. ${PI_PR_CONTEXT}
 Review only Copilot's comments (author login matches 'copilot', case-insensitive).
 Commit+push for this PR branch is explicitly authorised for the life of this loop —
 commit and push all accepted fixes, then reply to + resolve every triaged thread
-per the skill's §8 (fix → include the commit SHA; reject/defer → one-line reason)." 2>&1 | tee "$_pi_tmp"
-  log "pi agent finished."
+per the skill's §8 (fix → include the commit SHA; reject/defer → one-line reason)." | tee "$_pi_tmp"
+  log "${AGENT} agent finished."
 
   PI_OUTPUT=$(cat "$_pi_tmp")
   rm -f "$_pi_tmp"
