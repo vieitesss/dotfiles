@@ -19,7 +19,14 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 # ── Backend / env config ─────────────────────────────────────────────────────
 # Optional committed config file; the script also runs fine on the defaults below.
-ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pr-copilot-review-loop.env"
+# Resolve symlinks so the .env is found next to the real script, not the symlink.
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir=$(cd -P "$(dirname "$_src")" && pwd)
+  _src=$(readlink "$_src")
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+ENV_FILE="$(cd -P "$(dirname "$_src")" && pwd)/pr-copilot-review-loop.env"
 if [[ -f "$ENV_FILE" ]]; then
   set -a; source "$ENV_FILE"; set +a
 else
