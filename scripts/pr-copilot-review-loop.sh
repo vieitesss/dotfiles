@@ -12,6 +12,8 @@ set -uo pipefail
 MAX_CYCLES=5
 POLL_INTERVAL=20          # seconds between Copilot-review polls
 POLL_TIMEOUT=600          # 10 min per cycle before aborting
+PI_MODEL=${PR_COPILOT_LOOP_PI_MODEL:-openai-codex/gpt-5.5}
+PI_THINKING=${PR_COPILOT_LOOP_PI_THINKING:-high}
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 log()  { echo "[loop] $*" >&2; }
@@ -209,6 +211,14 @@ if [[ -z "$BASELINE_REVIEW_TS" && -z "$BASELINE_COMMENT_TS" ]]; then
   }
 fi
 
+INITIAL_INLINE_COUNT=$(count_copilot_comments_after "")
+log "Copilot inline code comments found: ${INITIAL_INLINE_COUNT}"
+if (( INITIAL_INLINE_COUNT == 0 )); then
+  FINAL_STATE="CLEAN — Copilot has no code comments"
+  print_brief
+  exit 0
+fi
+
 # ── Loop ─────────────────────────────────────────────────────────────────────
 while (( CYCLE < MAX_CYCLES )); do
   CYCLE=$(( CYCLE + 1 ))
@@ -225,7 +235,7 @@ while (( CYCLE < MAX_CYCLES )); do
 
   _pi_tmp=$(mktemp)
   log "Running pi agent…"
-  pi --no-extensions -p "Use the review-github-pr-comments skill. ${PI_PR_CONTEXT}
+  pi --no-extensions --model "$PI_MODEL" --thinking "$PI_THINKING" -p "Use the review-github-pr-comments skill. ${PI_PR_CONTEXT}
 Review only Copilot's comments (author login matches 'copilot', case-insensitive).
 Commit+push for this PR branch is explicitly authorised for the life of this loop —
 commit and push all accepted fixes, then reply to + resolve every triaged thread
