@@ -14,6 +14,7 @@ scripts/herdr-last-space|~/.local/bin/herdr-last-space
 scripts/herdr-break-pane|~/.local/bin/herdr-break-pane
 scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
 scripts/pr-copilot-review-loop.sh|~/.local/bin/pr-copilot-review-loop
+scripts/tmux-pi-sessions.sh|~/.local/bin/tmux-pi-sessions
 scripts/lib|~/.local/bin/lib
 
 alacritty|~/.config/alacritty
