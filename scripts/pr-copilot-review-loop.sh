@@ -43,7 +43,7 @@ build_agent_cmd() {
   local prompt="$1"
   if [[ "$AGENT" == opencode ]]; then
     AGENT_CMD=(opencode run --pure --dangerously-skip-permissions
-      --model "$OPENCODE_MODEL" --variant "$MODEL_THINKING" --prompt "$prompt")
+      --model "$OPENCODE_MODEL" --variant "$MODEL_THINKING" "$prompt")
   else
     AGENT_CMD=(pi --no-extensions
       --model "$PI_MODEL" --thinking "$MODEL_THINKING" -p "$prompt")
@@ -220,7 +220,8 @@ self_check() {
   # Backend command assembly (offline)
   AGENT=opencode OPENCODE_MODEL="prov/mdl" MODEL_THINKING=high build_agent_cmd "hi"
   if [[ "${AGENT_CMD[0]}" == opencode && " ${AGENT_CMD[*]} " == *" --pure "* \
-     && " ${AGENT_CMD[*]} " == *" --variant high "* && " ${AGENT_CMD[*]} " == *" --dangerously-skip-permissions "* ]]; then
+     && " ${AGENT_CMD[*]} " == *" --variant high "* && " ${AGENT_CMD[*]} " == *" --dangerously-skip-permissions "* \
+     && " ${AGENT_CMD[*]} " != *" --prompt "* && "${AGENT_CMD[-1]}" == "hi" ]]; then
     echo "PASS: opencode command assembly"
   else
     echo "FAIL: opencode command assembly (${AGENT_CMD[*]})"; failed=1
