@@ -1,11 +1,12 @@
 ---
 name: clockify-fill
-description: Fill Clockify time entries by gathering GitHub activity (commits, PRs, issues) and daily pad entries, then previewing and committing entries via clockify-cli. Use when the user asks to fill clockify, log time, track hours, update clockify, or submit time entries. Also use when the user mentions "clockify", "time tracking", or "fill my hours".
+description: Fill Clockify time entries by gathering GitHub activity (commits, PRs, issues), then previewing and committing entries via clockify-cli.
+disable-model-invocation: true
 ---
 
 # Clockify Fill
 
-Gather GitHub activity and daily pad entries for a user, build Clockify time entries, preview them, and commit after user confirmation.
+Gather GitHub activity for a user, build Clockify time entries, preview them, and commit after user confirmation.
 
 ## Prerequisites
 
@@ -17,13 +18,13 @@ clockify-cli me
 
 If it errors, tell the user to run `clockify-cli config init` and stop.
 
-Verify `pad` and `gh` CLIs are available. If not, inform the user.
+Verify `gh` CLI is available. If not, inform the user.
 
 ## Configuration
 
-- **GitHub user**: `vieitesss`
-- **Repos to search**: all repos under the `pre-vieitesss` org, plus `prefapp/{gitops-k8s,daggerverse,daggerverse-private,tfm,claims,features}`, plus any extra repos the user mentions
-- **Workweek**: Monday through Friday
+- **GitHub user**: `vieitesss`.
+- **Repos to search**: all repos under the `~/work` path in this machine. First level are organization names, and second level are repositories names (`~/work/<organization>/<repository>`).
+- **Workweek**: Monday through Friday.
 
 ## Workflow
 
@@ -37,39 +38,28 @@ If the user provides explicit dates, use those instead.
 
 Run all of these in parallel for the determined date range:
 
-#### 2a. Pad entries
+#### 2a. GitHub activity
 
-For each workday in the range, fetch pad content:
+First derive the owners to search from the org directories under `~/work`, then build the `--owner` flags:
 
 ```bash
-pad show --date YYYY-MM-DD
+owners=$(ls -d ~/work/*/ | xargs -n1 basename | sed 's/^/--owner=/' | tr '\n' ' ')
 ```
 
-Parse the "What did you do yesterday?" and "What will you do today?" sections. These contain GitHub issue/PR links and free-text descriptions of work done each day.
-
-#### 2b. GitHub activity
-
-Search commits, PRs, and issues across the configured repos:
+Search commits, PRs, and issues across those owners:
 
 ```bash
 # Commits by user in date range
-gh search commits --author=vieitesss --committer-date=YYYY-MM-DD..YYYY-MM-DD --owner=pre-vieitesss --owner=prefapp --json repository,sha,commit --limit 100
+gh search commits --author=vieitesss --committer-date=YYYY-MM-DD..YYYY-MM-DD $owners --json repository,sha,commit --limit 100
 
 # PRs authored/reviewed
-gh search prs --author=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD --owner=pre-vieitesss --owner=prefapp --json title,repository,url,createdAt --limit 100
+gh search prs --author=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD $owners --json title,repository,url,createdAt --limit 100
 
 # Issues assigned or mentioned
-gh search issues --assignee=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD --owner=pre-vieitesss --owner=prefapp --json title,repository,url,createdAt --limit 100
+gh search issues --assignee=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD $owners --json title,repository,url,createdAt --limit 100
 ```
 
-For any issue/PR URLs found in pad entries, fetch their titles if not already known:
-
-```bash
-gh issue view <URL> --json title,repository
-gh pr view <URL> --json title,repository
-```
-
-#### 2c. Clockify projects
+#### 2b. Clockify projects
 
 Fetch the available project list to map work to correct projects:
 
@@ -104,7 +94,7 @@ If the user does not provide images, fall back to the default 8h/day (08:00–16
 
 For each workday in the range:
 
-1. Cross-reference pad entries, commits, PRs, and issues to identify distinct work items
+1. Cross-reference commits, PRs, and issues to identify distinct work items
 2. Group related activity (e.g. multiple commits to the same issue/PR = one entry)
 3. Map each work item to a Clockify project based on the repo/client relationship
 4. Fit entries into the **actual work sessions** from Step 2.5 (or default 8h/day if not provided)
@@ -115,7 +105,6 @@ For each workday in the range:
 - Total hours per day = actual worked hours from Step 2.5
 - Split time proportionally across identified work items
 - Entries must not overlap with lunch breaks — create separate entries for morning and afternoon sessions when needed
-- If pad mentions a specific task for a full day, assign more time to it
 - Minimum entry size: 30 minutes
 - Round to nearest 30-minute block
 
@@ -178,7 +167,6 @@ Show the final report to the user.
 
 - If `clockify-cli me` fails: tell user to run `clockify-cli config init`
 - If a project name is not found: list available projects and ask the user which one to use
-- If `pad show` returns no data for a day: rely on GitHub activity alone, flag the day
 - If no activity found for a day: ask the user what they worked on that day
 - If `gh` commands fail: check authentication with `gh auth status`
 

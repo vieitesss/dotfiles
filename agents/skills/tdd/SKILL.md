@@ -51,6 +51,7 @@ When exploring the codebase, read `CONTEXT.md` (if it exists) so that test names
 Before writing any code:
 
 - [ ] Confirm with user what interface changes are needed
+- [ ] Name the **seams** under test — the public boundaries where you observe behavior without reaching inside — and confirm them with the user; no test is written at an unconfirmed seam
 - [ ] Confirm with user which behaviors to test (prioritize)
 - [ ] Identify opportunities for deep modules (small interface, deep implementation) — run the `/codebase-design` skill for the vocabulary and the testability checks
 - [ ] List the behaviors to test (not implementation steps)
@@ -58,7 +59,7 @@ Before writing any code:
 
 Ask: "What should the public interface look like? Which behaviors are most important to test?"
 
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
+**You can't test everything.** Agreeing the seams up front is how testing effort lands on critical paths and complex logic instead of every possible edge case. Confirm with the user exactly which behaviors matter most.
 
 ### 2. Tracer Bullet
 
