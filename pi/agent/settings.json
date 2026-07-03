@@ -1,13 +1,15 @@
 {
-  "lastChangelogVersion": "0.79.6",
-  "hideThinkingBlock": false,
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "high",
+  "lastChangelogVersion": "0.80.3",
+  "hideThinkingBlock": true,
+  "defaultProvider": "github-copilot",
+  "defaultModel": "claude-opus-4.8",
+  "defaultThinkingLevel": "medium",
   "packages": [
-    "npm:@juicesharp/rpiv-ask-user-question",
     "git:github.com/vieitesss/pi-theme-gruber-darker",
-    "git:github.com/DietrichGebert/ponytail"
+    "git:github.com/DietrichGebert/ponytail",
+    "npm:pi-subagents",
+    "npm:pi-prompt-template-model",
+    "npm:pi-intercom"
   ],
   "theme": "gruber-darker"
 }
