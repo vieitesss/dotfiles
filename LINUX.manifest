@@ -12,7 +12,6 @@ scripts/herdr-spaces|~/.local/bin/herdr-spaces
 scripts/herdr-last-space|~/.local/bin/herdr-last-space
 scripts/herdr-break-pane|~/.local/bin/herdr-break-pane
 scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
-scripts/tmux-pi-sessions.sh|~/.local/bin/tmux-pi-sessions
 scripts/lib|~/.local/bin/lib
 
 alacritty|~/.config/alacritty
