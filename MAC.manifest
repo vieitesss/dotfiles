@@ -1,4 +1,5 @@
-agents/skills|~/.agents/skills/personal
+# agents/skills/workflow|~/.agents/skills/workflow
+agents/skills/mine|~/.agents/skills/mine
 
 zsh/.zshrc|~/.zshrc
 zsh/.zsh_functions|~/.zsh_functions
