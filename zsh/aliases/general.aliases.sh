@@ -88,6 +88,9 @@ alias vbrc='vim "$HOME/.bashrc"'
 alias vrc='vim "$HOME/.config/nvim/init.lua"'
 alias nvd='cd "$HOME/.config/nvim"'
 
+# pi
+alias pia='pi -e npm:pi-subagents'
+
 # c makefile
 alias makec='make -f "$HOME/.mac_config/makefiles/c/Makefile"'
 

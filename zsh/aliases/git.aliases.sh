@@ -178,6 +178,12 @@ alias gstsm="git stash push -m"
 # submodules
 alias gsu="git submodule update --init --recursive"
 
+# worktrees
+alias gwa="git worktree add"
+alias gwl="git worktree list"
+alias gwr="git worktree remove"
+alias gwrf="git worktree remove --force"
+
 # switch
 # these aliases requires git v2.23+
 alias gsw="git switch"
