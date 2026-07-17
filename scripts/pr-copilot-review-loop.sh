@@ -5,6 +5,7 @@
 # Usage:
 #   pr-copilot-review-loop.sh [<pr-number-or-url>]   run the loop
 #   pr-copilot-review-loop.sh --self-check            verify core logic (no network)
+#   pr-copilot-review-loop.sh --config               print current configuration
 
 set -uo pipefail
 
@@ -170,6 +171,17 @@ print_brief() {
   echo "════════════════════════════════════════════"
 }
 
+# ── Config (--config) ───────────────────────────────────────────────────────────
+show_config() {
+  local model
+  [[ "$AGENT" == opencode ]] && model="${OPENCODE_MODEL:-<unset>}" || model="$PI_MODEL"
+  echo "agent:   $AGENT"
+  echo "model:   $model"
+  echo "effort:  $MODEL_THINKING"
+  echo "env:     ${ENV_FILE} $([ -f "$ENV_FILE" ] && echo '(loaded)' || echo '(not found — using defaults)')"
+  echo "cycles:  max ${MAX_CYCLES}, poll every ${POLL_INTERVAL}s, timeout ${POLL_TIMEOUT}s"
+}
+
 # ── Self-check (--self-check) ─────────────────────────────────────────────────
 self_check() {
   local failed=0
@@ -243,8 +255,13 @@ self_check() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 [[ "${1:-}" == "--self-check" ]] && self_check
+[[ "${1:-}" == "--config" ]] && { show_config; exit 0; }
 
 validate_backend
+
+# Show startup banner
+_start_model="$( [[ "$AGENT" == opencode ]] && echo "${OPENCODE_MODEL:-<unset>}" || echo "$PI_MODEL" )"
+echo "[loop] starting — agent: ${AGENT}  model: ${_start_model}  effort: ${MODEL_THINKING}"
 
 # Resolve PR and context
 PR_ARG="${1:-}"
