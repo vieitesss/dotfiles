@@ -1,15 +1,14 @@
 {
-  "lastChangelogVersion": "0.80.6",
+  "lastChangelogVersion": "0.82.1",
   "hideThinkingBlock": true,
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "medium",
+  "defaultProvider": "github-copilot",
+  "defaultModel": "claude-sonnet-5",
+  "defaultThinkingLevel": "high",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
     "git:github.com/DietrichGebert/ponytail",
-    "npm:pi-subagents",
-    "npm:pi-prompt-template-model",
-    "npm:pi-intercom"
+    "npm:@ff-labs/pi-fff",
+    "npm:pi-web-extension"
   ],
-  "theme": "gruber-darker"
+  "theme": "gruber-lighter"
 }
