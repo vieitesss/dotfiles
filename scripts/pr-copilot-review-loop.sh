@@ -3,9 +3,9 @@
 # Spec: ~/.agents/skills/loop-me/workflows/pr-copilot-review-loop.md
 #
 # Usage:
-#   pr-copilot-review-loop.sh [<pr-number-or-url>]   run the loop
+#   pr-copilot-review-loop.sh [--model <model>] [--thinking <level>] [<pr-number-or-url>]
 #   pr-copilot-review-loop.sh --self-check            verify core logic (no network)
-#   pr-copilot-review-loop.sh --config               print current configuration
+#   pr-copilot-review-loop.sh --config                print current configuration
 
 set -uo pipefail
 
@@ -65,6 +65,33 @@ validate_backend() {
   if [[ "$AGENT" == opencode && -z "$OPENCODE_MODEL" ]]; then
     die "AGENT=opencode requires PR_COPILOT_LOOP_OPENCODE_MODEL (no default). Run 'opencode models' to pick one."
   fi
+}
+
+parse_args() {
+  MODE=run
+  PR_ARG=""
+  while (( $# )); do
+    case "$1" in
+      --model)
+        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--model requires a value."
+        [[ "$AGENT" == opencode ]] && OPENCODE_MODEL="$2" || PI_MODEL="$2"
+        shift 2
+        ;;
+      --thinking)
+        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--thinking requires a value."
+        MODEL_THINKING="$2"
+        shift 2
+        ;;
+      --self-check) MODE=self-check; shift ;;
+      --config) MODE=config; shift ;;
+      -*) die "Unknown option: $1" ;;
+      *)
+        [[ -z "$PR_ARG" ]] || die "Only one PR number or URL may be provided."
+        PR_ARG="$1"
+        shift
+        ;;
+    esac
+  done
 }
 
 # ── GitHub helpers ───────────────────────────────────────────────────────────
@@ -246,6 +273,13 @@ self_check() {
     echo "FAIL: pi command assembly (${AGENT_CMD[*]})"; failed=1
   fi
 
+  parse_args --model "cli/model" --thinking low 123
+  if [[ "$PI_MODEL" == "cli/model" && "$MODEL_THINKING" == low && "$PR_ARG" == 123 ]]; then
+    echo "PASS: command-line overrides"
+  else
+    echo "FAIL: command-line overrides"; failed=1
+  fi
+
   if (( failed == 0 )); then
     echo "All checks passed."; exit 0
   else
@@ -254,8 +288,9 @@ self_check() {
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-[[ "${1:-}" == "--self-check" ]] && self_check
-[[ "${1:-}" == "--config" ]] && { show_config; exit 0; }
+parse_args "$@"
+[[ "$MODE" == self-check ]] && self_check
+[[ "$MODE" == config ]] && { show_config; exit 0; }
 
 validate_backend
 
@@ -264,7 +299,6 @@ _start_model="$( [[ "$AGENT" == opencode ]] && echo "${OPENCODE_MODEL:-<unset>}"
 echo "[loop] starting — agent: ${AGENT}  model: ${_start_model}  effort: ${MODEL_THINKING}"
 
 # Resolve PR and context
-PR_ARG="${1:-}"
 NWO=$(get_nwo)
 PR_NUMBER=$(resolve_pr_number "$PR_ARG")
 PR_URL=$(get_pr_url)
