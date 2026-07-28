@@ -125,33 +125,19 @@ After the table, show:
 - Total hours for the full range
 - Any days with no activity found (flag for user attention)
 
+**This full entry table is the table that gets committed.** Never substitute it with an hours-per-day summary — the per-day/per-range totals are an addition to the table, not a replacement for it. Whenever entries change (user-requested edits, retries after failures) or the table is shown again for any reason, re-render the complete table with every entry, not a summary.
+
 **CRITICAL: Do NOT proceed to commit entries until the user explicitly confirms the preview is correct.** Ask the user to review and confirm. The user may request changes (adjust times, change projects, add/remove entries).
 
 ### Step 5: Commit entries
 
-Only after user confirmation, create each entry using:
+Only after user confirmation, write the confirmed table to a temp file, one line per entry, pipe-separated as `START|END|PROJECT|DESCRIPTION` (`START`/`END` as `YYYY-MM-DD HH:MM`), then commit it with the skill's script:
 
 ```bash
-clockify-cli manual \
-  --allow-name-for-id \
-  -i=0 \
-  -b \
-  -p "<project-name>" \
-  -d "<description>" \
-  -s "YYYY-MM-DD HH:MM" \
-  -e "YYYY-MM-DD HH:MM"
+agents/skills/mine/clockify-fill/commit-entries.sh /path/to/entries-file
 ```
 
-Key flags:
-- `--allow-name-for-id`: use project names instead of IDs
-- `-i=0`: disable interactive mode (critical for automation)
-- `-b`: mark entry as billable (always include)
-- `-p`: project name
-- `-d`: description
-- `-s`: start time
-- `-e`: end time
-
-Process entries sequentially. If any entry fails, report the error and continue with the remaining entries. At the end, show a summary of successfully created vs failed entries.
+The script calls `clockify-cli manual --allow-name-for-id -i=0 -b` for each line, prints `OK`/`FAILED` per entry, and ends with a `SUMMARY: N succeeded, M failed` line. If any entry fails, its error is printed; report it and continue — the script already processes the rest sequentially. Never hand-roll this loop inline; always invoke the script.
 
 ### Step 6: Verify
 
@@ -176,3 +162,5 @@ Show the final report to the user.
 - Always use `--allow-name-for-id` to make project matching by name possible
 - Descriptions should be concise: `repo#number: brief summary`
 - If the user provides additional context about what they worked on, incorporate it
+- Commit entries only via `commit-entries.sh` (see Step 5), resolved relative to this SKILL.md's directory
+- Always show the full entries table (never an hours-only summary) whenever entries are presented or re-presented
