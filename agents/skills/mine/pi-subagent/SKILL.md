@@ -19,7 +19,18 @@ Resolve `scripts/pi-subagent.sh` relative to this `SKILL.md` and invoke it from 
 
 2. Write a self-contained prompt file. Include the task, relevant conversational context, constraints, expected output, and whether the child may edit. The child starts with fresh conversational context plus normal `AGENTS.md`/`CLAUDE.md` discovery.
 
-   The default model profile is `openai-codex/gpt-5.6-luna` with `max` effort. Apply it without asking. An explicit override must provide both `--model` and `--effort`; ask for the missing member of a partial override.
+   Match the task to a profile below and apply it without asking; anything else uses the default row.
+
+   | Type | Purpose | Model | Effort |
+   |---|---|---|---|
+   | researcher | Web/docs research with sources: official docs, specs, benchmarks, recent changes, and a concise research brief. | `github-copilot/claude-sonnet-5` | `high` |
+   | planner | A concrete implementation plan from existing context. Read and plan, not edit code. | `github-copilot/claude-sonnet-5` | `high` |
+   | scout | Fast local codebase recon: relevant files, entry points, data flow, risks, and where another agent should start. | `openai-codex/gpt-5.6-luna` | `max` |
+   | (default) | Anything not matching a type above. | `openai-codex/gpt-5.6-luna` | `max` |
+
+   Scout is two-tier: try `openai-codex/gpt-5.6-luna`/`max` first; if that `start` invocation fails (non-zero exit, no session produced), retry once with `github-copilot/claude-sonnet-5`/`high`.
+
+   An explicit override must provide both `--model` and `--effort`; ask for the missing member of a partial override.
 
    Add explicitly requested skills with repeated `--skill PATH` options. Repeat them on each later turn that needs them.
 
@@ -31,7 +42,7 @@ Resolve `scripts/pi-subagent.sh` relative to this `SKILL.md` and invoke it from 
    "$helper" start [--async] [--model MODEL --effort LEVEL] [--skill PATH] PROMPT_FILE
    ```
 
-   The helper returns the session ID and exact session, prompt, result, stderr, and exit-code paths. This step is complete when those values are captured.
+   The helper returns the session ID and exact session, prompt, result, stderr, and exit-code paths. The child launches with the parent session's `PI_SESSION_ID`/`PI_MODEL`/etc. bash-tool metadata stripped, so it never inherits stale state from the parent. This step is complete when those values are captured.
 
 4. Consume the result artifact only after successful completion.
    - Foreground: check the command exit status, then read the returned result path.
