@@ -96,7 +96,11 @@ run_turn() {
 
     child=
     trap '[ -z "$child" ] || kill "$child" 2>/dev/null || :' HUP INT TERM
-    "$pi_command" "$@" > "$partial" 2> "$stderr" &
+    # Strip the parent Pi session's bash-tool metadata (docs/environment-variables.md)
+    # so the child never inherits a stale PI_SESSION_ID/PI_MODEL/etc. from a
+    # different session.
+    env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL \
+        "$pi_command" "$@" > "$partial" 2> "$stderr" &
     child=$!
     pid_tmp=$run_dir/.turn-$turn.pid.$$
     printf '%s\n' "$child" > "$pid_tmp"

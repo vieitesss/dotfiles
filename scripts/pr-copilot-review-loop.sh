@@ -51,10 +51,15 @@ build_agent_cmd() {
   fi
 }
 
+# Vars Pi injects into bash-tool commands for *this* (parent) session — see
+# pi.dev docs/environment-variables.md. The child agent below is an unrelated
+# Pi/opencode process; it must not inherit stale parent-session metadata.
+STRIP_PI_ENV=(env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL)
+
 # Run the configured agent on the prompt, merging stderr into stdout for capture.
 run_agent() {
   build_agent_cmd "$1"
-  "${AGENT_CMD[@]}" 2>&1
+  "${STRIP_PI_ENV[@]}" "${AGENT_CMD[@]}" 2>&1
 }
 
 validate_backend() {
@@ -278,6 +283,15 @@ self_check() {
     echo "PASS: command-line overrides"
   else
     echo "FAIL: command-line overrides"; failed=1
+  fi
+
+  # Parent Pi session env must not leak into the child agent process
+  local isolation_out
+  isolation_out=$(PI_SESSION_ID=parent-sess PI_MODEL=parent-model "${STRIP_PI_ENV[@]}" env)
+  if ! grep -q '^PI_SESSION_ID=' <<<"$isolation_out" && ! grep -q '^PI_MODEL=' <<<"$isolation_out"; then
+    echo "PASS: parent Pi session env stripped from child"
+  else
+    echo "FAIL: parent Pi session env leaked to child"; failed=1
   fi
 
   if (( failed == 0 )); then
