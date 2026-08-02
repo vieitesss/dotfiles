@@ -81,4 +81,7 @@ hs.hotkey.bind({ "alt", "shift" }, "N", function()
 	local nextIndex = (currentIndex % #validWindows) + 1
 	validWindows[nextIndex]:focus()
 end)
+
+require("keyboard-layout")
+
 hs.alert.show("Config loaded")

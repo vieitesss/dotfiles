@@ -25,6 +25,7 @@ ollama/homebrew.mxcl.ollama.plist.tmpl|~/Library/LaunchAgents/homebrew.mxcl.olla
 
 aerospace/aerospace.toml|~/.aerospace.toml
 hammerspoon/init.lua|~/.hammerspoon/init.lua
+hammerspoon/keyboard-layout.lua|~/.hammerspoon/keyboard-layout.lua
 karabiner|~/.config/karabiner
 
 pi/agent/settings.json|~/.pi/agent/settings.json
