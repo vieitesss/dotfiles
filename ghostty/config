@@ -15,12 +15,13 @@ macos-titlebar-style = tabs
 mouse-hide-while-typing = true
 # window-save-state = always
 
-background-opacity = 1
-background-blur = true
+background-opacity = 0.80
+background-blur = false
 
 # theme
 # theme = umbraline
-theme = Cursor Dark
+# theme = Cursor Dark
+theme = gruber-lighter
 
 # keybinds
 keybind = ctrl+1=goto_tab:1
