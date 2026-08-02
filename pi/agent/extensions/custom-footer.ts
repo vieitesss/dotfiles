@@ -3,6 +3,8 @@ import { isAbsolute, relative, resolve, sep as pathSep } from "node:path";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const MAX_BRANCH_WIDTH = 30;
+
 function formatTokens(count: number | null | undefined): string {
   if (count == null) return "?";
   if (count < 1000) return String(count);
@@ -47,7 +49,7 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setFooter((_tui, theme): Component => ({
       render(width: number): string[] {
         const cwd = formatCwd(ctx.cwd);
-        const branch = gitBranch(ctx.cwd);
+        const branchName = gitBranch(ctx.cwd);
         const sep = "";
 
         const usage = ctx.getContextUsage();
@@ -57,14 +59,27 @@ export default function (pi: ExtensionAPI) {
           theme.fg("mdHeading", amount),
           theme.fg("dim", percent),
         ].join(` ${theme.fg("dim", sep)} `);
-        const middle = [
-          theme.fg("dim", cwd),
-          branch ? theme.fg("dim", branch) : "",
-        ].filter(Boolean).join(` ${theme.fg("dim", sep)} `);
 
         const modelName = model?.id ?? "no-model";
         const effort = model?.reasoning ? thinking || "off" : "off";
         const right = theme.fg("dim", `${modelName} ${sep} ${effort}`);
+        const cwdLabel = theme.fg("dim", cwd);
+        const middleSep = ` ${theme.fg("dim", sep)} `;
+        const availableBranchWidth = Math.max(
+          0,
+          width -
+            visibleWidth(left) -
+            visibleWidth(right) -
+            visibleWidth(cwdLabel) -
+            visibleWidth(middleSep) -
+            2,
+        );
+        const branch = branchName
+          ? truncateToWidth(branchName, Math.min(MAX_BRANCH_WIDTH, availableBranchWidth), "…")
+          : "";
+        const middle = [cwdLabel, branch ? theme.fg("dim", branch) : ""]
+          .filter(Boolean)
+          .join(middleSep);
         const leftWidth = visibleWidth(left);
         const middleWidth = visibleWidth(middle);
         const rightWidth = visibleWidth(right);

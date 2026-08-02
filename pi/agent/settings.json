@@ -1,12 +1,11 @@
 {
-  "lastChangelogVersion": "0.82.1",
+  "lastChangelogVersion": "0.83.0",
   "hideThinkingBlock": true,
   "defaultProvider": "github-copilot",
-  "defaultModel": "claude-sonnet-5",
+  "defaultModel": "kimi-k2.7-code",
   "defaultThinkingLevel": "high",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
-    "git:github.com/DietrichGebert/ponytail",
     "npm:@ff-labs/pi-fff",
     "npm:pi-web-extension"
   ],
