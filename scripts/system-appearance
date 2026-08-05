@@ -2,6 +2,12 @@
 
 set -eu
 
+# GUI launchers such as Hammerspoon inherit macOS's minimal PATH rather than
+# the interactive shell's PATH. Include managed and Homebrew binaries so live
+# tmux and Neovim reloads work identically from the keyboard shortcut.
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+export PATH
+
 usage() {
     echo "Usage: $(basename "$0") light|dark|toggle" >&2
 }
