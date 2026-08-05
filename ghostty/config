@@ -19,9 +19,7 @@ background-opacity = 0.80
 background-blur = false
 
 # theme
-# theme = umbraline
-# theme = Cursor Dark
-theme = gruber-lighter
+theme = light:gruber-lighter,dark:gruber-darker
 
 # keybinds
 keybind = ctrl+1=goto_tab:1
