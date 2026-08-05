@@ -20,7 +20,7 @@ local LOCAL_LAYOUT = "Real Spanish"
 
 -- ponytail: external keyboard detected by USB product-name keywords;
 -- add your device's name here if it is not detected (e.g. "Keychron").
-local EXTERNAL_KEYWORDS = { "keyboard" }
+local EXTERNAL_KEYWORDS = { "keyboard", "voyager" }
 
 -- Ignore the MacBook's own internal keyboard/touchpad if it shows up as a
 -- USB device.
