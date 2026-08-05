@@ -41,6 +41,10 @@ hs.hotkey.bind({ "alt", "ctrl", "shift" }, "R", function()
 	hs.reload()
 end)
 
+hs.hotkey.bind({ "alt", "shift" }, "D", function()
+	hs.task.new(os.getenv("HOME") .. "/.local/bin/system-appearance", nil, { "toggle" }):start()
+end)
+
 -- Bind Command + ` (Backtick) to cycle windows of the same app
 hs.hotkey.bind({ "alt", "shift" }, "N", function()
 	local win = hs.window.focusedWindow()

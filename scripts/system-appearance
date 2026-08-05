@@ -1,0 +1,154 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+    echo "Usage: $(basename "$0") light|dark|toggle" >&2
+}
+
+if [ "$(uname -s)" != Darwin ]; then
+    echo "system-appearance currently supports macOS only" >&2
+    exit 1
+fi
+
+case "${1:-}" in
+    light|dark)
+        mode=$1
+        ;;
+    toggle)
+        if osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode' | grep -q true; then
+            mode=light
+        else
+            mode=dark
+        fi
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+
+if [ "$mode" = dark ]; then
+    dark_mode=true
+    brightness=0.7
+    wallpaper="$HOME/Pictures/astronaut_umbraline.png"
+else
+    dark_mode=false
+    brightness=0.4
+    wallpaper="$HOME/Pictures/astronaut_light.png"
+fi
+
+if [ ! -f "$wallpaper" ]; then
+    echo "Wallpaper not found: $wallpaper" >&2
+    exit 1
+fi
+
+# MonitorControl manages brightness for the external display. Its accessible
+# slider accepts a normalized value without opening the menu bar popover.
+if [ -d /Applications/MonitorControl.app ]; then
+    if ! pgrep -x MonitorControl >/dev/null 2>&1; then
+        open -gja MonitorControl
+        sleep 1
+    fi
+    if ! osascript - "$brightness" <<'APPLESCRIPT'
+on run argv
+    set brightnessValue to item 1 of argv as real
+    tell application "System Events"
+        tell process "MonitorControl"
+            set brightnessSlider to slider 1 of menu item 1 of menu 1 of menu bar item 1 of menu bar 1
+            set value of brightnessSlider to brightnessValue
+        end tell
+    end tell
+end run
+APPLESCRIPT
+    then
+        echo "WARN: Could not set display brightness with MonitorControl" >&2
+    fi
+else
+    echo "WARN: MonitorControl is not installed; skipped display brightness" >&2
+fi
+
+osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark_mode"
+osascript - "$wallpaper" <<'APPLESCRIPT'
+on run argv
+    set wallpaperFile to POSIX file (item 1 of argv)
+    tell application "System Events"
+        repeat with desktopItem in desktops
+            set picture of desktopItem to wallpaperFile
+        end repeat
+    end tell
+end run
+APPLESCRIPT
+
+# Ghostty's paired theme follows the system appearance after a config reload.
+if pgrep -x ghostty >/dev/null 2>&1; then
+    pkill -USR2 -x ghostty
+    sleep 0.2
+fi
+
+# Reload tmux after Ghostty, passing the target mode explicitly so the config
+# cannot race macOS while its appearance preference is still propagating.
+if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
+    tmux set-environment -g SYSTEM_APPEARANCE "$mode"
+    tmux source-file "$HOME/.tmux.conf"
+    tmux set-environment -gu SYSTEM_APPEARANCE
+
+    # source-file updates tmux's palette, but an externally triggered reload
+    # does not always repaint attached clients. Force each client to redraw.
+    tmux list-clients -F '#{client_tty}' | while IFS= read -r client; do
+        [ -n "$client" ] || continue
+        tmux refresh-client -t "$client" -S
+    done
+fi
+
+# Make the selected colorscheme persistent for new Neovim instances, then
+# source it in every running instance through Neovim's built-in RPC sockets.
+nvim_theme_dir="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/after/plugin"
+nvim_theme_file="$nvim_theme_dir/system-appearance.lua"
+mkdir -p "$nvim_theme_dir"
+if [ "$mode" = dark ]; then
+    cat > "$nvim_theme_file" <<'EOF'
+if vim.v.servername == "" then
+    vim.fn.serverstart()
+end
+vim.opt.background = "dark"
+vim.cmd("packadd gruber-darker.nvim")
+vim.cmd.colorscheme("gruber-darker")
+vim.cmd.redraw()
+EOF
+else
+    cat > "$nvim_theme_file" <<'EOF'
+if vim.v.servername == "" then
+    vim.fn.serverstart()
+end
+vim.opt.background = "light"
+vim.cmd.colorscheme("gruber-lighter")
+vim.cmd.redraw()
+EOF
+fi
+
+if command -v nvim >/dev/null 2>&1; then
+    nvim_socket_root="${TMPDIR:-/tmp}/nvim.${USER}"
+    for socket in "$nvim_socket_root"/*/nvim.*.*; do
+        [ -S "$socket" ] || continue
+        nvim --server "$socket" --remote-expr \
+            "execute('source ' . fnameescape('$nvim_theme_file'))" >/dev/null 2>&1 || true
+    done
+fi
+
+# Pi hot-reloads the active custom theme file. Build that stable file from the
+# installed Gruber package so running and future sessions use the same name.
+pi_package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
+pi_source="$pi_package/themes/gruber-${mode}er.json"
+pi_theme_dir="$HOME/.pi/agent/themes"
+pi_theme_file="$pi_theme_dir/gruber-system.json"
+if [ -f "$pi_source" ]; then
+    mkdir -p "$pi_theme_dir"
+    pi_tmp="$pi_theme_file.tmp.$$"
+    sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$pi_source" > "$pi_tmp"
+    mv "$pi_tmp" "$pi_theme_file"
+else
+    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
+fi
+
+printf 'System appearance: %s\n' "$mode"
