@@ -462,3 +462,11 @@ if [[ -n "${ZSH_BENCHMARK:-}" && -n "$_ZSH_START_TIME" ]]; then
     unset _ZSH_PHASE_LABELS
     unset _ZSH_PHASE_TIMES
 fi
+
+# pnpm
+export PNPM_HOME="/Users/vieitesprefapp/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME/bin:"*) ;;
+  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
+esac
+# pnpm end
