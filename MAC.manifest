@@ -10,6 +10,7 @@ tmux/.tmux.conf|~/.tmux.conf
 herdr/config.toml|~/.config/herdr/config.toml
 
 scripts/tmux-sessions|~/.local/bin/tmux-sessions
+scripts/ask-ai|~/.local/bin/ask-ai
 scripts/herdr-spaces|~/.local/bin/herdr-spaces
 scripts/herdr-last-space|~/.local/bin/herdr-last-space
 scripts/herdr-break-pane|~/.local/bin/herdr-break-pane
@@ -31,5 +32,6 @@ karabiner|~/.config/karabiner
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
+pi/agent/ask-ai-web-loader.js|~/.pi/agent/ask-ai-web-loader.js
 pi/agent/extensions|~/.pi/agent/extensions
 pi/agent/APPEND_SYSTEM.md|~/.pi/agent/APPEND_SYSTEM.md

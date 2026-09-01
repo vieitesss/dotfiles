@@ -1,0 +1,76 @@
+#!/bin/sh
+
+set -eu
+
+# GUI launchers such as Hammerspoon inherit macOS's minimal PATH rather than
+# the interactive shell's PATH. Include managed and npm-global binaries so the
+# keyboard shortcut finds the same pi as an interactive shell.
+PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+export PATH
+
+usage() {
+    echo "Usage: $(basename "$0") [--resume]" >&2
+}
+
+if [ "$(uname -s)" != Darwin ]; then
+    echo "ask-ai currently supports macOS only" >&2
+    exit 1
+fi
+
+case "${1:-}" in
+    "")
+        set --
+        ;;
+    --resume)
+        set -- --continue
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+
+ask_dir="$HOME/personal/me"
+if [ ! -d "$ask_dir" ]; then
+    echo "Ask directory not found: $ask_dir" >&2
+    exit 1
+fi
+
+web_loader="$HOME/.pi/agent/ask-ai-web-loader.js"
+if [ ! -f "$web_loader" ]; then
+    echo "Ask-AI web loader not found: $web_loader" >&2
+    exit 1
+fi
+
+web_extension="$HOME/.pi/agent/npm/node_modules/pi-web-extension/index.ts"
+if [ ! -f "$web_extension" ]; then
+    echo "Pi web extension not found: $web_extension" >&2
+    echo "Install it with: pi install npm:pi-web-extension" >&2
+    exit 1
+fi
+
+cd "$ask_dir"
+
+# Avoid pi's startup-only catalog, update, and telemetry requests. This does
+# not disable the web extension's runtime websearch/webfetch requests.
+PI_OFFLINE=1
+export PI_OFFLINE
+
+# Vanilla pi: no context files, skills, prompt templates, or discovered
+# extensions beyond the explicitly loaded web loader. The loader activates the
+# web extension only when a prompt needs it. The tool surface is read plus web
+# search/fetch (webfetch reads fetched pages through read).
+# --exclude-tools is used instead of --tools because pi applies an allowlist
+# after extension startup, which blocks the web tools' per-turn activation.
+exec pi \
+    --no-context-files \
+    --no-extensions \
+    --no-skills \
+    --no-prompt-templates \
+    --extension "$web_loader" \
+    --exclude-tools bash,edit,write,grep,find,ls \
+    "$@"
