@@ -90,6 +90,22 @@ Messages may include relative timestamps like "Yesterday" or "Mon" — resolve t
 
 If the user does not provide images, fall back to the default 8h/day (08:00–16:00) assumption.
 
+**Relative time statements in chat:**
+
+The user may also report a work event conversationally, as a duration relative to *now* (e.g. "salí hace 30 min", "he vuelto hace 10 minutos", "empecé hace 2 horas", "llevo media hora comiendo"), instead of or on top of screenshots. Watch for this pattern in any message during the conversation, not only when the schedule is first requested. The same verbs map to the same events as the screenshots:
+
+- "empecé" / "buenas" → **start of workday** (login)
+- "paro a comer" / "me voy a comer" → **lunch break start** (logout)
+- "he vuelto" / "de vuelta" → **back from lunch** (login)
+- "salí" / "hasta mañana" → **end of workday** (logout)
+
+To resolve a relative statement:
+1. Get the current real time (e.g. `date "+%Y-%m-%d %H:%M"`) — never guess "now" from context.
+2. Subtract the stated duration from the current time to get the absolute event time.
+3. Assume the event belongs to today unless the user says otherwise.
+4. Apply the same rounding rule as "Processing the images" step 3 above (round down when logging in, round up when logging out).
+5. Update that day's schedule with the resolved time. If entries were already built or previewed from the old schedule, rebuild and re-present the affected entries before continuing.
+
 ### Step 3: Correlate and build entries
 
 For each workday in the range:
