@@ -13,7 +13,10 @@
 
 Before non-trivial repository work, use `workflow-router`.
 
-- `specs/` directory with documentation files -> SDD workflow.
-- Else root `CONTEXT.md` -> lightweight development workflow.
-- Else ask user which workflow to use.
+- Root `CONTEXT.md` -> lightweight development workflow.
+- Root `CONTEXT_MAP.md` -> monorepo; map to other `CONTEXT.md` files in the repo.
 - If lightweight is chosen in an unmarked repo, create root `CONTEXT.md`.
+
+## Delegation routing
+
+Multi-step delegated work defaults to the `pi-subagent` arc: `plan` -> `work` node-by-node -> `critique`, report back once critique passes. Trivial single-shot delegation uses `start` directly. Apply the arc whenever delegated work has more than one step; do not ask which to use. When launching `plan`, tell the planner to produce a plan only — do not implement anything.
