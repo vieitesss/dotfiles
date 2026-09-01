@@ -1,13 +1,16 @@
 {
-  "lastChangelogVersion": "0.83.0",
+  "lastChangelogVersion": "0.84.4",
   "hideThinkingBlock": true,
   "defaultProvider": "github-copilot",
-  "defaultModel": "kimi-k2.7-code",
-  "defaultThinkingLevel": "high",
+  "defaultModel": "kimi-k3",
+  "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
     "npm:@ff-labs/pi-fff",
-    "npm:pi-web-extension"
+    "npm:pi-web-extension",
+    "npm:pi-intercom"
   ],
-  "theme": "gruber-lighter"
+  "theme": "gruber-system",
+  "fullscreenScrollbar": "auto",
+  "tuiMode": "regular"
 }
