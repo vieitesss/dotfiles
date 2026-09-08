@@ -19,4 +19,4 @@ Before non-trivial repository work, use `workflow-router`.
 
 ## Delegation routing
 
-Multi-step delegated work defaults to the `pi-subagent` arc: `plan` -> `work` node-by-node -> `critique`, report back once critique passes. Trivial single-shot delegation uses `start` directly. Apply the arc whenever delegated work has more than one step; do not ask which to use. When launching `plan`, tell the planner to produce a plan only — do not implement anything.
+Classify each user task as research, implement, or write and spawn it via `pi-subagent` — the child does that work. After implement, spawn reviewer and wait for PASS before write. Multi-step implement uses the arc; trivial implement is `start` then reviewer. Details live in the pi-subagent skill.
