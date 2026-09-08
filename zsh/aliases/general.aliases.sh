@@ -68,13 +68,13 @@ copy () {
 alias justc="just --choose"
 
 core () {
-	cmd="just -f $HOME/.mac_config/justfile"
+	cmd="just -f $DOTFILES/justfile"
 	test "$#" -gt 0 && cmd="$cmd ${@:1}"
 	bash -c "$cmd"
 }
 alias remove="sudo apt remove"
 alias purge="sudo apt purge"
-alias dot="cd \$DOTFILES"
+alias dot="cd $DOTFILES"
 alias obs='cd "$HOME/obsidian"'
 alias pro='cd "$HOME/projects"'
 
