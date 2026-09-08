@@ -2,13 +2,13 @@
 set -u
 umask 077
 
-DEFAULT_MODEL=github-copilot/gpt-5.6-luna
-DEFAULT_EFFORT=max
-DEFAULT_AGENT=worker
+DEFAULT_MODEL=github-copilot/grok-4.6
+DEFAULT_EFFORT=xhigh
+DEFAULT_AGENT=implementer
 PLANNER_MODEL=github-copilot/grok-4.6
 PLANNER_EFFORT=xhigh
-CRITIC_MODEL=$PLANNER_MODEL
-CRITIC_EFFORT=$PLANNER_EFFORT
+CRITIC_MODEL=github-copilot/kimi-k3
+CRITIC_EFFORT=high
 WATCH_WINDOW=subagents
 SUPERVISOR_BLOCK='If you have the contact_supervisor tool, keep the supervisor informed through it:
 - Blocked, need approval, or facing a scope/API/product fork: contact_supervisor({ reason: "need_decision", message: "<question>" }) - continue only after the reply arrives.
@@ -54,6 +54,7 @@ esac
 self_dir=$(CDPATH='' cd -- "$(dirname "$self")" && pwd -P)
 watch_exit=$self_dir/pi-subagent-watch-exit.ts
 extract_script=$self_dir/session-final.js
+tmux_helper=$self_dir/pi-subagent-tmux.sh
 
 die() {
     printf 'error: %s\n' "$*" >&2
@@ -155,10 +156,13 @@ finish_turn() {
     if [ "$code" -eq 0 ]; then
         mv "$partial" "$result"
     fi
-    rm -rf "$run_dir/busy"
+    # Marker before busy removal: every observer checks the marker first, so
+    # publishing completion before dropping the busy flag leaves no gap in
+    # which a turn looks neither running nor finished.
     marker=$run_dir/.turn-$turn.exit-code.$$
     printf '%s\n' "$code" > "$marker"
     mv "$marker" "$run_dir/turn-$turn.exit-code"
+    rm -rf "$run_dir/busy"
 }
 
 run_turn() {
@@ -311,7 +315,6 @@ emit_paths() {
     printf 'result=%s/turn-%s.result.md\n' "$run_dir" "$turn"
     printf 'stderr=%s/turn-%s.stderr.log\n' "$run_dir" "$turn"
     printf 'exit_code=%s/turn-%s.exit-code\n' "$run_dir" "$turn"
-    printf 'window=%s\n' "$WATCH_WINDOW"
 }
 
 boundary_for() {
@@ -336,69 +339,62 @@ prepare_turn() {
     mv "$skills_tmp" "$run_dir/turn-$turn.skills"
 }
 
-resolve_win() {
-    win=
-    session=
-    if [ -n "${TMUX:-}" ]; then
-        session=$(tmux display-message -p -t "${TMUX_PANE:-}" '#{session_name}' 2>/dev/null) || session=
-        [ -n "$session" ] || session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || session=
-    else
-        # Outside tmux, the watch window is pinned to a dedicated session.
-        session=$WATCH_WINDOW
-    fi
-    [ -n "$session" ] && win=$(tmux list-windows -t "$session" -F '#{window_id} #{window_name}' 2>/dev/null | awk -v name="$WATCH_WINDOW" '$2 == name { print $1; exit }')
-}
-
-sweep_dead_panes() {
-    # A dead pane (remain-on-exit) means its subagent turn already finished -
-    # the wrapping __run script only exits after writing the turn's exit
-    # code. Close it so the watch window doesn't accumulate finished panes;
-    # tmux removes a window itself once its last pane is gone.
-    tmux list-panes -t "$1" -F '#{pane_id} #{pane_dead}' 2>/dev/null |
-        while IFS=' ' read -r dead_pane_id dead_pane_flag; do
-            [ "$dead_pane_flag" = 1 ] && tmux kill-pane -t "$dead_pane_id" >/dev/null 2>&1
-        done
-}
-
+# Watch backend selection. tmux is the only backend, used solely when tmux
+# is installed and the supervisor sits inside a live tmux session; otherwise
+# the turn runs headless with an explicit watch=none reason. All tmux work
+# lives in pi-subagent-tmux.sh (invoked, never sourced). A future
+# skill-level using-herdr routing decision would branch here and delegate
+# to that backend's module — this selector must not grow a plugin
+# framework, and no branch here may invent a dedicated session: without a
+# supervisor session there is nothing to watch in.
 watch_launch() {
     run_dir=$1
     turn=$2
-    if ! command -v tmux >/dev/null 2>&1; then
-        printf 'notice: tmux not found; subagent runs headless\n' >&2
-        return 1
+    # Contract: print exactly one watch line, then (tmux only) the pane pid
+    # on the next line. launch_turn replays the first line to stdout and
+    # keeps the pid for its wait/poll. NOTE: this function runs inside a
+    # command substitution, so it must only return a status — the fail-hard
+    # die() for a failed tmux setup happens in launch_turn (main shell),
+    # keyed off the watch=failed line. A die() here would exit just the
+    # subshell and silently fall back to headless.
+    if detect_out=$("$tmux_helper" detect); then
+        launch_turn_tmux "$run_dir" "$turn"
+        return $?
     fi
-    if ! tmux has-session >/dev/null 2>&1; then
-        printf 'notice: no running tmux server; subagent runs headless\n' >&2
-        return 1
-    fi
+    watch_reason=$(printf '%s\n' "$detect_out" | sed -n 's/^reason=//p' | head -n 1)
+    [ -n "$watch_reason" ] || watch_reason=not-inside-tmux
+    printf 'watch=none reason=%s\n' "$watch_reason"
+    return 1
+}
+
+launch_turn_tmux() {
+    run_dir=$1
+    turn=$2
     cmd="$(shell_quote "$self") __run $(shell_quote "$run_dir") $(shell_quote "$turn") pane"
     cwd=$(pwd -P)
     title="$(child_name_for "$run_dir") turn-$turn"
-    # The tmux server spawns pane commands with its own environment, not the
-    # caller's, so forward the knobs the runner needs via -e.
-    set --
-    [ -n "${PI_SUBAGENT_PI:-}" ] && set -- "$@" -e "PI_SUBAGENT_PI=$PI_SUBAGENT_PI"
-    [ -n "${PI_SUBAGENT_INTERCOM_EXTENSION:-}" ] && set -- "$@" -e "PI_SUBAGENT_INTERCOM_EXTENSION=$PI_SUBAGENT_INTERCOM_EXTENSION"
-    resolve_win
-    # Close out any siblings that already finished before adding a new pane.
-    [ -n "$win" ] && sweep_dead_panes "$win"
-    pane_info=
-    if [ -n "$win" ]; then
-        pane_info=$(tmux split-window "$@" -P -F '#{pane_id} #{pane_pid}' -t "$win" -c "$cwd" "$cmd") || return 1
-        tmux select-layout -t "$win" tiled >/dev/null 2>&1 || :
-    elif [ -n "${TMUX:-}" ]; then
-        pane_info=$(tmux new-window "$@" -P -F '#{pane_id} #{pane_pid}' -n "$WATCH_WINDOW" -c "$cwd" "$cmd") || return 1
+    launch_err=$run_dir/.watch-launch.$$.err
+    if watch_out=$("$tmux_helper" launch "$WATCH_WINDOW" "$title" "$cwd" -- "$cmd" 2>"$launch_err"); then
+        rm -f "$launch_err"
     else
-        # Outside tmux, pin the watch window to a dedicated session.
-        pane_info=$(tmux new-session -d "$@" -P -F '#{pane_id} #{pane_pid}' -s "$WATCH_WINDOW" -n "$WATCH_WINDOW" -c "$cwd" "$cmd") || return 1
+        launch_code=$?
+        [ -f "$launch_err" ] && cat "$launch_err" >&2
+        rm -f "$launch_err" "$run_dir/turn-$turn.pid"
+        rm -rf "$run_dir/busy"
+        printf 'watch=failed reason=tmux-setup code=%s\n' "$launch_code"
+        return 1
     fi
-    pane_id=${pane_info%% *}
-    pane_pid=${pane_info#* }
-    pane_win=$(tmux display-message -p -t "$pane_id" '#{window_id}' 2>/dev/null) || pane_win=
-    [ -n "$pane_win" ] && tmux set-option -w -t "$pane_win" remain-on-exit on >/dev/null 2>&1
-    tmux select-pane -t "$pane_id" -T "$title" >/dev/null 2>&1 || :
-    printf 'watching in tmux session %s, pane %s\n' "$session" "$pane_id" >&2
-    printf '%s\n' "$pane_pid"
+    watch_pane=$(printf '%s\n' "$watch_out" | sed -n 's/^pane=//p' | head -n 1)
+    watch_pid=$(printf '%s\n' "$watch_out" | sed -n 's/^pid=//p' | head -n 1)
+    watch_session_name=$(printf '%s\n' "$watch_out" | sed -n 's/^session=//p' | head -n 1)
+    if [ -z "$watch_pane" ] || [ -z "$watch_pid" ] || [ -z "$watch_session_name" ]; then
+        rm -rf "$run_dir/busy"
+        printf 'watch=failed reason=tmux-setup code=unusable\n'
+        return 1
+    fi
+    printf 'watch=tmux tmux_session=%s window=%s pane=%s\n' "$watch_session_name" "$WATCH_WINDOW" "$watch_pane"
+    printf 'watching in tmux session %s, pane %s\n' "$watch_session_name" "$watch_pane" >&2
+    printf '%s\n' "$watch_pid"
 }
 
 process_is_running() {
@@ -410,8 +406,8 @@ turn_processes() {
     turn=$2
     pid=
     runner=
-    [ ! -f "$run_dir/turn-$turn.pid" ] || pid=$(cat "$run_dir/turn-$turn.pid")
-    [ ! -f "$run_dir/busy/runner-pid" ] || runner=$(cat "$run_dir/busy/runner-pid")
+    [ ! -f "$run_dir/turn-$turn.pid" ] || pid=$(cat "$run_dir/turn-$turn.pid" 2>/dev/null) || pid=
+    [ ! -f "$run_dir/busy/runner-pid" ] || runner=$(cat "$run_dir/busy/runner-pid" 2>/dev/null) || runner=
 }
 
 poll_turn_exit() {
@@ -451,7 +447,10 @@ launch_turn() {
     run_dir=$1
     turn=$2
     emit_paths "$run_dir" "$turn"
-    runner=$(watch_launch "$run_dir" "$turn") && {
+    [ -x "$tmux_helper" ] || die "watch helper missing: $tmux_helper"
+    if watch_out=$(watch_launch "$run_dir" "$turn"); then
+        printf '%s\n' "$watch_out" | head -n 1
+        runner=$(printf '%s\n' "$watch_out" | tail -n 1)
         if [ "$async" = true ]; then
             while [ ! -e "$run_dir/turn-$turn.pid" ] && [ ! -e "$run_dir/turn-$turn.exit-code" ]; do
                 kill -0 "$runner" 2>/dev/null || break
@@ -461,7 +460,13 @@ launch_turn() {
         fi
         poll_turn_exit "$run_dir" "$turn" "$runner"
         return $?
-    }
+    fi
+    watch_line=$(printf '%s\n' "$watch_out" | head -n 1)
+    printf '%s\n' "$watch_line"
+    case $watch_line in
+        'watch=none reason='*) : ;;
+        *) die "tmux watch setup failed for turn $turn; not falling back to headless" ;;
+    esac
     if [ "$async" = true ]; then
         nohup "$self" __run "$run_dir" "$turn" headless </dev/null >/dev/null 2>&1 &
         runner=$!
@@ -541,8 +546,8 @@ work_run() {
     if { [ -n "$work_model" ] && [ -z "$work_effort" ]; } || { [ -z "$work_model" ] && [ -n "$work_effort" ]; }; then
         die 'model overrides require both --model and --effort'
     fi
-    # Work defaults to the ordinary worker profile and agent label regardless
-    # of what the planner used, so the commodity model carries execution by
+    # Work defaults to the implementer profile and agent label regardless
+    # of what the planner used, so the implementer model carries execution by
     # default and pane titles/reports reflect the current stage; pass
     # --model/--effort/--agent to use something else for this turn.
     [ -n "$work_model" ] || work_model=$DEFAULT_MODEL
@@ -579,7 +584,7 @@ critique_run() {
     parse_launch_options "$@" "$arc_prompt"
     [ -n "$model" ] || model=$CRITIC_MODEL
     [ -n "$effort" ] || effort=$CRITIC_EFFORT
-    [ -n "$agent" ] || agent=critic
+    [ -n "$agent" ] || agent=reviewer
     start_body
 }
 
@@ -657,11 +662,18 @@ wait_for_session() {
     [ -d "$run_dir" ] || die "subagent session not found: $id"
     turn=$(latest_turn "$run_dir") || die "subagent session has no turns: $id"
     marker=$run_dir/turn-$turn.exit-code
+    grace=0
     while [ ! -e "$marker" ]; do
         [ -d "$run_dir/busy" ] || die "turn $turn is incomplete and has no busy marker"
         turn_processes "$run_dir" "$turn"
-        if ! process_is_running "$pid" && ! process_is_running "$runner"; then
-            die "turn $turn is incomplete and no process is running"
+        if process_is_running "$pid" || process_is_running "$runner"; then
+            grace=0
+        else
+            # Busy but no observed process: the runner may be finalizing
+            # (result extraction runs after the child exits), so allow a
+            # bounded grace period before calling the turn stuck.
+            grace=$((grace + 1))
+            [ "$grace" -gt 30 ] && die "turn $turn is incomplete and no process is running"
         fi
         sleep 1
     done
@@ -672,9 +684,8 @@ wait_for_session() {
 
 list_sessions() {
     [ "$#" -eq 0 ] || usage
-    if command -v tmux >/dev/null 2>&1 && tmux has-session >/dev/null 2>&1; then
-        resolve_win
-        [ -n "$win" ] && sweep_dead_panes "$win"
+    if [ -x "$tmux_helper" ]; then
+        "$tmux_helper" cleanup "$WATCH_WINDOW" >/dev/null 2>&1 || :
     fi
     [ -d "$root" ] || return 0
     for run_dir in "$root"/*; do
