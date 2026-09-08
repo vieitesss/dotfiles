@@ -1,38 +1,35 @@
 ---
 name: clockify-fill
-description: Fill Clockify time entries by gathering GitHub activity (commits, PRs, issues), then previewing and committing entries via clockify-cli.
+description: Fill Clockify from GitHub activity and Google Chat hours via gog, then preview and commit via clockify-cli.
 disable-model-invocation: true
 ---
 
 # Clockify Fill
 
-Gather GitHub activity for a user, build Clockify time entries, preview them, and commit after user confirmation.
-
-## Prerequisites
-
-Check that `clockify-cli` is configured by running:
-
-```bash
-clockify-cli me
-```
-
-If it errors, tell the user to run `clockify-cli config init` and stop.
-
-Verify `gh` CLI is available. If not, inform the user.
+Gather GitHub activity, read work-hour messages from Google Chat with `gog`, build Clockify time entries, preview them, and commit after user confirmation.
 
 ## Configuration
 
 - **GitHub user**: `vieitesss`.
 - **Repos to search**: all repos under the `~/work` path in this machine. First level are organization names, and second level are repositories names (`~/work/<organization>/<repository>`).
 - **Workweek**: Monday through Friday.
+- **Timezone**: `Europe/Madrid`.
+- **Chat account**: `daniel.vieites@prefapp.es`.
+- **Chat space**: `spaces/AAAAoS6q0wc` (General).
+- **Chat sender**: `users/102872558289962052911`.
 
 ## Workflow
 
 ### Step 1: Determine the date range
 
-Run `clockify-cli report last-day` to find the last day with entries. The date range to fill starts the day after the last entry through today (or through the user-specified end date).
+Run `clockify-cli report last-day` to find the last day with entries.
 
-If the user provides explicit dates, use those instead.
+- **Fill range**: the day after that last entry through today (or through the user-specified end date).
+- **Chat range**: that last filled day (inclusive, 00:00 `Europe/Madrid`) through now.
+
+If the user provides explicit dates, those dates are both the fill range and the Chat range.
+
+Done when both ranges are concrete `YYYY-MM-DD` bounds.
 
 ### Step 2: Gather activity
 
@@ -67,32 +64,41 @@ Fetch the available project list to map work to correct projects:
 clockify-cli project list
 ```
 
-### Step 2.5: Gather actual work hours
+### Step 2.5: Work hours from Chat
 
-Ask the user for the times they started working, took lunch breaks, and stopped working each day. The user typically provides this as **screenshots of a group chat** (e.g. Slack, Teams) where they post messages like:
+Pull the user's own messages from General with `gog`, from the Chat range in Step 1. Those timestamps are the workday schedule.
 
-- "buenas" / greeting → **start of workday**
-- "paro a comer" → **lunch break start**
-- "de vuelta" → **back from lunch**
-- "hasta mañana" / "buen finde!" → **end of workday**
+```bash
+gog --account daniel.vieites@prefapp.es --readonly chat messages list spaces/AAAAoS6q0wc \
+  --order 'createTime desc' --json --max 100
+```
 
-Messages may include relative timestamps like "Yesterday" or "Mon" — resolve these relative to today's date.
+Paginate with `--page <nextPageToken>` until `createTime` is before the Chat-range start. Keep messages whose `sender` is `users/102872558289962052911`. Convert `createTime` to `Europe/Madrid`.
 
-**Processing the images:**
-1. Read all messages chronologically, mapping each to its absolute date
-2. For each workday, extract the work sessions (start→lunch, back→end)
+Map message text to events:
+
+- "buenas" / greeting → **start of workday** (login)
+- "paro a comer" → **lunch break start** (logout)
+- "de vuelta" → **back from lunch** (login)
+- "hasta mañana" / "buen finde!" → **end of workday** (logout)
+
+Then:
+1. Read kept messages chronologically.
+2. For each workday in the **fill range**, extract the work sessions (start→lunch, back→end).
 3. Round every time to a **multiple of 5 minutes**, with special rounding for minutes ending in 3 or 7:
-   - If the user is **logging in** (start of day or back from lunch): round **down** (e.g. 8:03→8:00, 15:27→15:25)
-   - If the user is **logging out** (lunch break or end of day): round **up** (e.g. 14:33→14:35, 17:07→17:10)
+   - **logging in** (start of day or back from lunch): round **down** (e.g. 8:03→8:00, 15:27→15:25)
+   - **logging out** (lunch break or end of day): round **up** (e.g. 14:33→14:35, 17:07→17:10)
    - All other minutes: round to the **nearest** multiple of 5
-4. Calculate total worked hours per day
-5. Present the parsed schedule to the user for confirmation before building entries
+4. Calculate total worked hours per day.
+5. Present the parsed schedule to the user for confirmation before building entries.
 
-If the user does not provide images, fall back to the default 8h/day (08:00–16:00) assumption.
+A fill-range day with no Chat events uses the default 8h/day (08:00–16:00).
 
-**Relative time statements in chat:**
+Done when every own General message in the Chat range is in hand, the fill-range schedule is rounded, and that schedule has been shown to the user.
 
-The user may also report a work event conversationally, as a duration relative to *now* (e.g. "salí hace 30 min", "he vuelto hace 10 minutos", "empecé hace 2 horas", "llevo media hora comiendo"), instead of or on top of screenshots. Watch for this pattern in any message during the conversation, not only when the schedule is first requested. The same verbs map to the same events as the screenshots:
+**Relative time statements in conversation:**
+
+The user may also report a work event conversationally, as a duration relative to *now* (e.g. "salí hace 30 min", "he vuelto hace 10 minutos", "empecé hace 2 horas", "llevo media hora comiendo"), on top of the Chat fetch. Watch for this pattern in any message during the conversation, not only when the schedule is first requested. The same verbs map to the same events:
 
 - "empecé" / "buenas" → **start of workday** (login)
 - "paro a comer" / "me voy a comer" → **lunch break start** (logout)
@@ -103,7 +109,7 @@ To resolve a relative statement:
 1. Get the current real time (e.g. `date "+%Y-%m-%d %H:%M"`) — never guess "now" from context.
 2. Subtract the stated duration from the current time to get the absolute event time.
 3. Assume the event belongs to today unless the user says otherwise.
-4. Apply the same rounding rule as "Processing the images" step 3 above (round down when logging in, round up when logging out).
+4. Apply the same rounding rule as Step 2.5 item 3 (round down when logging in, round up when logging out).
 5. Update that day's schedule with the resolved time. If entries were already built or previewed from the old schedule, rebuild and re-present the affected entries before continuing.
 
 ### Step 3: Correlate and build entries
@@ -113,7 +119,7 @@ For each workday in the range:
 1. Cross-reference commits, PRs, and issues to identify distinct work items
 2. Group related activity (e.g. multiple commits to the same issue/PR = one entry)
 3. Map each work item to a Clockify project based on the repo/client relationship
-4. Fit entries into the **actual work sessions** from Step 2.5 (or default 8h/day if not provided)
+4. Fit entries into the **actual work sessions** from Step 2.5 (or default 8h/day for a day with no Chat events)
 5. Split time proportionally across work items within the real time blocks
 6. Build a description for each entry summarizing the work (repo, issue/PR number, brief description)
 
@@ -167,10 +173,8 @@ Show the final report to the user.
 
 ## Error Handling
 
-- If `clockify-cli me` fails: tell user to run `clockify-cli config init`
 - If a project name is not found: list available projects and ask the user which one to use
 - If no activity found for a day: ask the user what they worked on that day
-- If `gh` commands fail: check authentication with `gh auth status`
 
 ## Notes
 
