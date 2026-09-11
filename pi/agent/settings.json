@@ -16,6 +16,14 @@
   "tuiMode": "regular",
   "modelThinkingLevels": {
     "openai-codex/gpt-6-astra": "minimal",
-    "openai-codex/gpt-5.6-sol": "high"
+    "openai-codex/gpt-5.6-sol": "high",
+    "github-copilot/grok-4.6": "medium"
+  },
+  "enableInstallTelemetry": false,
+  "quietStartup": false,
+  "collapseChangelog": true,
+  "showCacheMissNotices": true,
+  "markdown": {
+    "mermaid": "streaming"
   }
 }
