@@ -109,7 +109,12 @@ command = "zsh"
 [[keys.command]]
 key = "prefix+o"
 type = "pane"
-command = "herdr-spaces"
+command = "contx --multiplexer herdr"
+
+[[keys.command]]
+key = "prefix+u"
+type = "pane"
+command = "contx --multiplexer herdr"
 
 [[keys.command]]
 key = "prefix+n"
