@@ -520,7 +520,7 @@ follow_output=$(PATH="$tmp/bin:$PATH" "$helper" follow-up "$id" follow-up.md)
 [ "$(value session "$follow_output")" = "$session" ] || fail 'follow-up changed the session path'
 [ "$(wc -l < "$session.meta" | tr -d ' ')" = 2 ] || fail 'follow-up did not reuse the session'
 [ "$(cut -d '|' -f 1,2 "$session.meta" | uniq | wc -l | tr -d ' ')" = 1 ] || fail 'follow-up did not reuse the model profile'
-[ "$(cut -d '|' -f 1,2 "$session.meta" | head -n 1)" = 'opencode/muse-spark-1.3-contributor-free|xhigh' ] || fail 'default model profile was not used'
+[ "$(cut -d '|' -f 1,2 "$session.meta" | head -n 1)" = 'opencode-go/deepseek-v4.1-flash|max' ] || fail 'default model profile was not used'
 # Fast exit keeps its pane: this foreground child finished in milliseconds,
 # yet retention was set before it started, so the pane stays as dead.
 watch_win=$(win_in '$1' subagents)
@@ -737,7 +737,7 @@ work_output=$(PATH="$tmp/bin:$PATH" "$helper" work "$plan_id")
 grep -q 'WORKER stage' ".pi-subagent-runs/$plan_id/turn-002.prompt.md" || fail 'work turn did not use the worker boundary'
 grep -q '^- \[x\] 1\.' "$plan_file" || fail 'worker did not tick the first node'
 grep -q 'agent=implementer' "$tmp/pi-env.log" || fail 'work did not relabel the child as the implementer agent'
-[ "$(tail -n 1 "$plan_session.meta" | cut -d '|' -f 1,2)" = 'opencode/muse-spark-1.3-contributor-free|xhigh' ] || fail 'work did not default to the implementer profile'
+[ "$(tail -n 1 "$plan_session.meta" | cut -d '|' -f 1,2)" = 'opencode-go/deepseek-v4.1-flash|max' ] || fail 'work did not default to the implementer profile'
 PATH="$tmp/bin:$PATH" "$helper" status "$plan_id" | grep -q 'plan=1/2' || fail 'plan progress did not advance after work'
 [ "$(grep -c 'exclude_tools=edit,write' "$tmp/pi-env.log")" = 1 ] || fail 'worker turn was incorrectly restricted to read-only tools'
 PATH="$tmp/bin:$PATH" "$helper" work "$plan_id" >/dev/null
@@ -757,7 +757,7 @@ grep -q 'CRITIC stage' "$critique_prompt_file" || fail 'critique turn did not us
 grep -q "Plan: .*$plan_id/plan.md" "$critique_prompt_file" || fail 'critique prompt did not name the plan file'
 critique_session=$(value session "$critique_output")
 grep -q 'agent=reviewer' "$tmp/pi-env.log" || fail 'critique child did not get the reviewer agent name'
-[ "$(tail -n 1 "$critique_session.meta" | cut -d '|' -f 1,2)" = 'github-copilot/grok-4.6|xhigh' ] || fail 'critique did not default to the frontier critic profile'
+[ "$(tail -n 1 "$critique_session.meta" | cut -d '|' -f 1,2)" = 'github-copilot/kimi-k3|high' ] || fail 'critique did not default to the frontier critic profile'
 [ "$(grep -c 'exclude_tools=edit,write' "$tmp/pi-env.log")" = 2 ] || fail 'critic child was not restricted to read-only tools'
 grep -q '^PASS' "$(value result "$critique_output")" || fail 'critic did not PASS a completed plan'
 

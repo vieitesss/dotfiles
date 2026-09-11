@@ -2,8 +2,8 @@
 set -u
 umask 077
 
-DEFAULT_MODEL=github-copilot/grok-4.6
-DEFAULT_EFFORT=xhigh
+DEFAULT_MODEL=opencode-go/deepseek-v4.1-flash
+DEFAULT_EFFORT=max
 DEFAULT_AGENT=implementer
 PLANNER_MODEL=github-copilot/grok-4.6
 PLANNER_EFFORT=xhigh

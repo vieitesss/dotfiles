@@ -32,7 +32,7 @@ Classify, spawn, sequence, and talk to the user. Grill or clarify freely. Answer
 | Session | Purpose | Model | Effort | When | Skill |
 |---|---|---|---|---|---|
 | researcher | Repo recon: relevant files, entry points, data flow, risks, and where to start. | `github-copilot/gpt-5.6-luna` | `max` | user kind = research | none |
-| implementer | Change code, not standalone documentation. | `github-copilot/grok-4.6` | `xhigh` | user kind = implement (default) | `implement` only if the repo has a test runner |
+| implementer | Change code, not standalone documentation. | `opencode-go/deepseek-v4.1-flash` | `max` | user kind = implement (default) | `implement` only if the repo has a test runner |
 | writer | Standalone documentation. | `github-copilot/grok-4.6` | `xhigh` | user kind = write | `writing-for-agents` only for skills / AGENTS.md / CLAUDE.md |
 | reviewer | Judge an implementer's work after that implementer finishes. | `github-copilot/kimi-k3` | `high` | after every implementer finish | none |
 | planner | A concrete implementation plan from existing context. Read and plan, not edit. | `github-copilot/grok-4.6` | `xhigh` | multi-step implement only | none |
