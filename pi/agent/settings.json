@@ -8,9 +8,10 @@
     "git:github.com/vieitesss/pi-theme-gruber-darker",
     "npm:@ff-labs/pi-fff",
     "npm:pi-web-extension",
-    "npm:pi-intercom"
+    "npm:pi-intercom",
+    "npm:@inobit/pi-themes"
   ],
-  "theme": "gruber-system",
+  "theme": "rosepine-system",
   "fullscreenScrollbar": "auto",
   "tuiMode": "regular",
   "modelThinkingLevels": {

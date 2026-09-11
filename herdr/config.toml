@@ -12,17 +12,10 @@ onboarding = false
 #                  vesper
 # name = "gruvbox"
 
-# Override individual color tokens on top of the base theme.
-# Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
-[theme.custom]
-panel_bg = "#181818"
-accent = "#ffdd33"
-surface_dim = "#282828"
-mauve = "#9e95c7"
-green = "#73d936"
-yellow = "#ffdd33"
-red = "#f43841"
-peach = "#cc8c3c"
+# Follow host terminal light/dark appearance and switch Herdr UI themes.
+auto_switch = true
+dark_name = "rose-pine"
+light_name = "rose-pine-dawn"
 
 [terminal]
 # Executable used for new interactive panes.
