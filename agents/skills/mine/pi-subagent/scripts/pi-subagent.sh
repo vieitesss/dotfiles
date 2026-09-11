@@ -61,11 +61,24 @@ die() {
     exit 2
 }
 
+# Close only the pane this process claimed in __run. Inherited
+# PI_SUBAGENT_HERDR_PANE is not ownership; status/list/wait/stop must not
+# close a parent pane. Always return 0 so the EXIT trap can restore $rc.
+herdr_owned_pane=
+herdr_close_watch_pane() {
+    pane=${herdr_owned_pane:-}
+    [ -n "$pane" ] || return 0
+    herdr_owned_pane=
+    herdr pane close "$pane" >/dev/null || printf 'warning: herdr pane close failed for %s; turn result left unchanged\n' "$pane" >&2
+    return 0
+}
+
 cleanup() {
     [ -z "${skills_tmp:-}" ] || rm -f "$skills_tmp"
     [ -z "${arc_prompt:-}" ] || rm -f "$arc_prompt"
+    herdr_close_watch_pane
 }
-trap cleanup 0
+trap 'rc=$?; cleanup; exit $rc' EXIT
 
 usage() {
     cat >&2 <<'EOF'
@@ -222,13 +235,16 @@ run_turn() {
     # Strip the parent Pi session's bash-tool metadata (docs/environment-variables.md)
     # so the child never inherits a stale PI_SESSION_ID/PI_MODEL/etc. from a
     # different session, then layer on the intercom bridge metadata.
+    # Drop PI_SUBAGENT_HERDR_PANE so a nested helper spawned from this Pi
+    # cannot close this watch pane; keep PI_SUBAGENT_HERDR_INNER so a nested
+    # launch cannot re-enter herdr_launch.
     if [ "$mode" = pane ]; then
         # The child is the real pi TUI writing straight to the pane tty, so
         # there is no stdout pipe to tee. After it exits (watch extension
         # shuts it down once the agent settles), recover the final assistant
         # text and outcome from the session file for the artifacts.
         # shellcheck disable=SC2086 # $bridge_env expands to separate VAR=value words
-        env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL \
+        env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL -u PI_SUBAGENT_HERDR_PANE \
             $bridge_env PI_SUBAGENT_INTERCOM_SESSION_NAME="$child_name" \
             "$pi_command" "$@" 2> "$stderr" &
         child=$!
@@ -248,7 +264,7 @@ run_turn() {
         tail -n 20 "$partial" 2>/dev/null
     else
         # shellcheck disable=SC2086 # $bridge_env expands to separate VAR=value words
-        env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL \
+        env -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL -u PI_SUBAGENT_HERDR_PANE \
             $bridge_env PI_SUBAGENT_INTERCOM_SESSION_NAME="$child_name" \
             "$pi_command" "$@" > "$partial" 2> "$stderr" &
         child=$!
@@ -260,6 +276,8 @@ run_turn() {
     fi
     trap - HUP INT TERM
     finish_turn "$run_dir" "$turn" "$code"
+    # Pane close is the EXIT trap (herdr_close_watch_pane): after finalize
+    # on this path, and also on early die(), without replacing $code.
     exit "$code"
 }
 
@@ -339,14 +357,14 @@ prepare_turn() {
     mv "$skills_tmp" "$run_dir/turn-$turn.skills"
 }
 
-# Watch backend selection. tmux is the only backend, used solely when tmux
-# is installed and the supervisor sits inside a live tmux session; otherwise
-# the turn runs headless with an explicit watch=none reason. All tmux work
-# lives in pi-subagent-tmux.sh (invoked, never sourced). A future
-# skill-level using-herdr routing decision would branch here and delegate
-# to that backend's module — this selector must not grow a plugin
-# framework, and no branch here may invent a dedicated session: without a
-# supervisor session there is nothing to watch in.
+# Watch backend selection for the non-Herdr path. tmux is the only backend,
+# used solely when tmux is installed and the supervisor sits inside a live
+# tmux session; otherwise the turn runs headless with an explicit watch=none
+# reason. All tmux work lives in pi-subagent-tmux.sh (invoked, never sourced).
+# Herdr spawn is chosen in launch_turn when HERDR_ENV=1 (outer only), not
+# here. This selector must not grow a plugin framework, and no branch here
+# may invent a dedicated session: without a supervisor session there is
+# nothing to watch in.
 watch_launch() {
     run_dir=$1
     turn=$2
@@ -397,6 +415,129 @@ launch_turn_tmux() {
     printf '%s\n' "$watch_pid"
 }
 
+herdr_die() {
+    [ -z "${run_dir:-}" ] || rm -rf "$run_dir/busy"
+    die "$*"
+}
+
+herdr_json_str() {
+    python3 -c '
+import json, sys
+path = sys.argv[1].split(".")
+data = json.load(sys.stdin)
+for key in path:
+    if not isinstance(data, dict) or key not in data:
+        sys.exit(1)
+    data = data[key]
+if isinstance(data, (dict, list)) or data is None:
+    sys.exit(1)
+print(data)
+' "$1"
+}
+
+herdr_tab_ids_labeled() {
+    python3 -c '
+import json, sys
+label = sys.argv[1]
+data = json.load(sys.stdin)
+for tab in data.get("result", {}).get("tabs") or []:
+    if tab.get("label") == label and tab.get("tab_id"):
+        print(tab["tab_id"])
+' "$1"
+}
+
+herdr_pane_ids_in_tab() {
+    python3 -c '
+import json, sys
+tab_id = sys.argv[1]
+data = json.load(sys.stdin)
+for pane in data.get("result", {}).get("panes") or []:
+    if pane.get("tab_id") == tab_id and pane.get("pane_id"):
+        print(pane["pane_id"])
+' "$1"
+}
+
+# Allocate one unfocused pane in this workspace's subagents tab. Sets
+# herdr_workspace, herdr_tab, herdr_pane. Fail-hard: never tmux/headless.
+herdr_allocate_pane() {
+    cwd=$(pwd -P)
+    current=$(herdr pane current --current) || herdr_die "herdr pane current --current failed; not falling back to tmux or headless"
+    herdr_workspace=$(printf '%s' "$current" | herdr_json_str result.pane.workspace_id) || herdr_die "herdr pane current JSON missing workspace_id; not falling back to tmux or headless"
+    supervisor_pane=$(printf '%s' "$current" | herdr_json_str result.pane.pane_id) || herdr_die "herdr pane current JSON missing pane_id; not falling back to tmux or headless"
+    supervisor_tab=$(printf '%s' "$current" | herdr_json_str result.pane.tab_id) || herdr_die "herdr pane current JSON missing tab_id; not falling back to tmux or headless"
+
+    tab_list=$(herdr tab list --workspace "$herdr_workspace") || herdr_die "herdr tab list failed; not falling back to tmux or headless"
+    subagent_tabs=$(printf '%s' "$tab_list" | herdr_tab_ids_labeled subagents) || herdr_die "herdr tab list JSON unreadable; not falling back to tmux or headless"
+    n_tabs=0
+    herdr_tab=
+    while IFS= read -r tid; do
+        [ -n "$tid" ] || continue
+        n_tabs=$((n_tabs + 1))
+        herdr_tab=$tid
+    done <<EOF
+$subagent_tabs
+EOF
+
+    case $n_tabs in
+        0)
+            created=$(herdr tab create --workspace "$herdr_workspace" --label subagents --cwd "$cwd" --no-focus) || herdr_die "herdr tab create failed; not falling back to tmux or headless"
+            herdr_tab=$(printf '%s' "$created" | herdr_json_str result.tab.tab_id) || herdr_die "herdr tab create JSON missing tab_id; not falling back to tmux or headless"
+            herdr_pane=$(printf '%s' "$created" | herdr_json_str result.root_pane.pane_id) || herdr_die "herdr tab create JSON missing root_pane.pane_id; not falling back to tmux or headless"
+            ;;
+        1)
+            panes=$(herdr pane list --workspace "$herdr_workspace") || herdr_die "herdr pane list failed; not falling back to tmux or headless"
+            tab_panes=$(printf '%s' "$panes" | herdr_pane_ids_in_tab "$herdr_tab") || herdr_die "herdr pane list JSON unreadable; not falling back to tmux or headless"
+            split_target=
+            while IFS= read -r pid; do
+                [ -n "$pid" ] || continue
+                if [ "$pid" != "$supervisor_pane" ]; then
+                    split_target=$pid
+                    break
+                fi
+            done <<EOF
+$tab_panes
+EOF
+            if [ -z "$split_target" ]; then
+                [ "$supervisor_tab" = "$herdr_tab" ] || herdr_die "subagents tab has no pane to split; not falling back to tmux or headless"
+                split_target=$supervisor_pane
+            fi
+            # Live CLI requires --direction; omitting it fails the split.
+            split_json=$(herdr pane split "$split_target" --direction down --no-focus --cwd "$cwd")
+            split_st=$?
+            if [ "$split_st" -ne 0 ]; then
+                [ -n "$split_json" ] && printf '%s\n' "$split_json" >&2
+                herdr_die "herdr pane split failed; not falling back to tmux or headless"
+            fi
+            herdr_pane=$(printf '%s' "$split_json" | herdr_json_str result.pane.pane_id) || herdr_die "herdr pane split JSON missing pane_id; not falling back to tmux or headless"
+            ;;
+        *)
+            herdr_die "duplicate subagents tabs in workspace $herdr_workspace; not falling back to tmux or headless"
+            ;;
+    esac
+    [ -n "$herdr_workspace" ] && [ -n "$herdr_tab" ] && [ -n "$herdr_pane" ] || herdr_die "herdr allocation produced empty ids; not falling back to tmux or headless"
+}
+
+# Outer Herdr spawn: allocate a pane, then pane-run inner __run (never start).
+# Inner __run does not call launch_turn, so HERDR_ENV=1 cannot recurse.
+# Orchestrator target is persisted by the outer process before this runs;
+# inner run_turn only reads run_dir/orchestrator-target. --async is outer-only:
+# the pane command is always __run ... pane so the Herdr pane keeps a real TUI.
+herdr_launch() {
+    run_dir=$1
+    turn=$2
+    herdr_shell_pid=
+    command -v herdr >/dev/null 2>&1 || herdr_die "herdr not found; not falling back to tmux or headless"
+    command -v python3 >/dev/null 2>&1 || herdr_die "python3 not found; not falling back to tmux or headless"
+    herdr_allocate_pane
+    cmd="env -u TMUX -u TMUX_PANE -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=$(shell_quote "$herdr_pane") $(shell_quote "$self") __run $(shell_quote "$run_dir") $(shell_quote "$turn") pane"
+    herdr pane run "$herdr_pane" "$cmd" || herdr_die "herdr pane run failed; not falling back to tmux or headless"
+    if proc=$(herdr pane process-info --pane "$herdr_pane" 2>/dev/null); then
+        herdr_shell_pid=$(printf '%s' "$proc" | herdr_json_str result.process_info.shell_pid) || herdr_shell_pid=
+    fi
+    printf 'watch=herdr workspace=%s tab=%s pane=%s\n' "$herdr_workspace" "$herdr_tab" "$herdr_pane"
+    printf 'watching in herdr workspace %s, tab %s, pane %s\n' "$herdr_workspace" "$herdr_tab" "$herdr_pane" >&2
+}
+
 process_is_running() {
     [ -n "$1" ] && kill -0 "$1" 2>/dev/null
 }
@@ -436,6 +577,15 @@ poll_turn_exit() {
             sleep 1
             continue
         fi
+        if [ -z "$pane_pid" ]; then
+            # Herdr process-info can fail or omit shell_pid right after
+            # pane run. Do not fabricate 143 while busy; wait for the inner
+            # helper to publish pid/exit.
+            grace=$((grace + 1))
+            [ "$grace" -gt 60 ] && break
+            sleep 1
+            continue
+        fi
         break
     done
     [ -e "$exit_marker" ] || finish_turn "$run_dir" "$turn" 143
@@ -447,6 +597,23 @@ launch_turn() {
     run_dir=$1
     turn=$2
     emit_paths "$run_dir" "$turn"
+    if [ "${HERDR_ENV:-}" = 1 ] && [ -z "${PI_SUBAGENT_HERDR_INNER:-}" ]; then
+        herdr_launch "$run_dir" "$turn"
+        if [ "$async" = true ]; then
+            grace=0
+            while [ ! -e "$run_dir/turn-$turn.pid" ] && [ ! -e "$run_dir/turn-$turn.exit-code" ]; do
+                grace=$((grace + 1))
+                [ "$grace" -gt 60 ] && break
+                sleep 1
+            done
+            return 0
+        fi
+        poll_turn_exit "$run_dir" "$turn" "${herdr_shell_pid:-}"
+        return $?
+    fi
+    # Nested/non-Herdr launches must not inherit a parent watch pane id.
+    # Keep PI_SUBAGENT_HERDR_INNER so we still skip herdr_launch.
+    unset PI_SUBAGENT_HERDR_PANE
     [ -x "$tmux_helper" ] || die "watch helper missing: $tmux_helper"
     if watch_out=$(watch_launch "$run_dir" "$turn"); then
         printf '%s\n' "$watch_out" | head -n 1
@@ -476,7 +643,13 @@ launch_turn() {
         done
         return 0
     fi
-    run_turn "$run_dir" "$turn" headless
+    if [ -t 1 ]; then
+        # Already on this tty: real pi TUI, same as a tmux watch pane. Not a
+        # herdr watch backend; outer Herdr spawn never reaches this branch.
+        run_turn "$run_dir" "$turn" pane
+    else
+        run_turn "$run_dir" "$turn" headless
+    fi
 }
 
 start_body() {
@@ -490,6 +663,8 @@ start_body() {
     printf '%s\n%s\n' "$model" "$effort" > "$run_dir/profile"
     printf '%s\n' "$agent" > "$run_dir/agent"
     printf '%s\n' "$child_index" > "$run_dir/index"
+    # Persist before launch_turn: Herdr inner __run has no PI_SESSION_ID and
+    # only reads this file. Named --orchestrator-target is stored verbatim.
     resolve_orchestrator_target ""
     if [ -n "$orchestrator_target" ]; then
         printf '%s\n' "$orchestrator_target" > "$run_dir/orchestrator-target"
@@ -539,6 +714,7 @@ work_run() {
             --model) [ "$#" -ge 2 ] || die '--model requires a value'; work_model=$2; shift 2 ;;
             --effort) [ "$#" -ge 2 ] || die '--effort requires a value'; work_effort=$2; shift 2 ;;
             --agent) [ "$#" -ge 2 ] || die '--agent requires a value'; work_agent=$2; shift 2 ;;
+            --orchestrator-target) die 'work does not accept --orchestrator-target; it reuses the session file' ;;
             --*) die "unknown option for work: $1" ;;
             *) nodes="$nodes $1"; shift ;;
         esac
@@ -609,6 +785,8 @@ follow_up() {
         printf '%s\n' "$agent" > "$agent_tmp"
         mv "$agent_tmp" "$run_dir/agent"
     fi
+    # Same persist-before-launch as start: work/follow-up reuse the session
+    # file (work rejects --orchestrator-target) unless this turn overrides.
     resolve_orchestrator_target "$(cat "$run_dir/orchestrator-target" 2>/dev/null)"
     if [ -n "$orchestrator_target" ]; then
         target_tmp=$run_dir/.orchestrator-target.$$
@@ -730,6 +908,15 @@ case $command in
     wait) wait_for_session "$@" ;;
     list) list_sessions "$@" ;;
     stop) stop_session "$@" ;;
-    __run) [ "$#" -eq 3 ] || exit 2; run_turn "$1" "$2" "$3" ;;
+    __run)
+        # Only this inner pane turn owns cleanup. Capture then drop the env
+        # var so later commands in this process cannot treat it as inherited.
+        if [ -n "${PI_SUBAGENT_HERDR_INNER:-}" ] && [ -n "${PI_SUBAGENT_HERDR_PANE:-}" ]; then
+            herdr_owned_pane=$PI_SUBAGENT_HERDR_PANE
+        fi
+        unset PI_SUBAGENT_HERDR_PANE
+        [ "$#" -eq 3 ] || exit 2
+        run_turn "$1" "$2" "$3"
+        ;;
     *) usage ;;
 esac

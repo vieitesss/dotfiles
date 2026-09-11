@@ -99,6 +99,8 @@ if [ -n "${FAKE_PI_ENV_LOG:-}" ]; then
         printf 'run_id=%s\n' "${PI_SUBAGENT_RUN_ID:-}"
         printf 'agent=%s\n' "${PI_SUBAGENT_CHILD_AGENT:-}"
         printf 'index=%s\n' "${PI_SUBAGENT_CHILD_INDEX:-}"
+        printf 'herdr_inner=%s\n' "${PI_SUBAGENT_HERDR_INNER:-}"
+        printf 'herdr_pane=%s\n' "${PI_SUBAGENT_HERDR_PANE:-}"
         printf -- '---\n'
     } >> "$FAKE_PI_ENV_LOG"
 fi
@@ -124,6 +126,10 @@ if [ -n "$worker_plan" ] && [ -f "$worker_plan" ]; then
     mv "$worker_plan.tmp" "$worker_plan"
 fi
 printf 'fake response\n'
+if [ -n "${FAKE_NESTED_HELPER:-}" ] && grep -q 'NESTED-HELPER' "$prompt"; then
+    printf 'Nested grandchild task.\n' > "$FAKE_NESTED_PROMPT"
+    "$FAKE_NESTED_HELPER" start "$FAKE_NESTED_PROMPT" >"$FAKE_NESTED_OUT" 2>"$FAKE_NESTED_ERR" || true
+fi
 if [ -n "${FAKE_PI_GATE:-}" ]; then
     # Bounded wait: a missing gate must fail the suite within a minute,
     # never hang it forever (a stopped child never reaches this point).
@@ -482,6 +488,12 @@ export FAKE_TMUX_LOG=$tmp/tmux.log
 # Isolate the suite from the invoking shell: the helper must only ever see
 # the fake world, never the user's real tmux server, session, or pane.
 export TMUX=fake TMUX_PANE=%0
+# A live Herdr session exports HERDR_ENV=1; existing tmux/headless cases
+# must not take that branch or talk to the real CLI. Inner pane-runs set
+# PI_SUBAGENT_HERDR_INNER; if this suite is itself a Herdr-spawned child,
+# drop that marker so the tests control the branch themselves.
+unset HERDR_ENV
+unset PI_SUBAGENT_HERDR_INNER
 # The suite must never invoke a real agent: drop any inherited pi override
 # so every pane child resolves through the fakes on PATH (or the explicit
 # per-section pins below). Process-local only; the caller's env is untouched.
@@ -877,5 +889,479 @@ if command -v tmux >/dev/null 2>&1; then
 else
     printf 'skip: tmux not installed; real-tmux section omitted\n'
 fi
+
+# --- herdr spawn: fake CLI only, never the live server ---
+command -v python3 >/dev/null 2>&1 || fail 'herdr tests need python3'
+mkdir "$tmp/bin-herdr" "$tmp/herdr-state"
+: > "$tmp/herdr.log"
+printf 'w1:p1 w1:t1 w1\n' > "$tmp/herdr-state/caller"
+printf 'w2:p1 w2:t1 w2\n' > "$tmp/herdr-state/focused"
+printf 'w1:t1 w1 editor\n' > "$tmp/herdr-state/tabs"
+printf 'w2:t1 w2 writer\n' >> "$tmp/herdr-state/tabs"
+printf 'w1:p1 w1:t1 w1\n' > "$tmp/herdr-state/panes"
+printf 'w2:p1 w2:t1 w2\n' >> "$tmp/herdr-state/panes"
+printf '2\n' > "$tmp/herdr-state/next-tab"
+printf '2\n' > "$tmp/herdr-state/next-pane"
+: > "$tmp/herdr-state/runs"
+
+cat > "$tmp/bin-herdr/herdr" <<'FAKE_HERDR'
+#!/bin/sh
+set -eu
+state=${FAKE_HERDR_STATE:?}
+log=${FAKE_HERDR_LOG:?}
+printf '%s\n' "$*" >> "$log"
+
+die() {
+    printf 'fake herdr: %s\n' "$*" >&2
+    exit 1
+}
+
+json_list() {
+    python3 -c '
+import json, sys
+ws, path, kind = sys.argv[1], sys.argv[2], sys.argv[3]
+items = []
+with open(path) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        if kind == "tabs":
+            tid, w, label = line.split(" ", 2)
+            if w == ws:
+                items.append({"tab_id": tid, "workspace_id": w, "label": label})
+        else:
+            pid, tid, w = line.split()
+            if w == ws:
+                items.append({"pane_id": pid, "tab_id": tid, "workspace_id": w})
+if kind == "tabs":
+    print(json.dumps({"id": "cli:tab:list", "result": {"tabs": items, "type": "tab_list"}}))
+else:
+    print(json.dumps({"id": "cli:pane:list", "result": {"panes": items, "type": "pane_list"}}))
+' "$1" "$2" "$3"
+}
+
+next_id() {
+    n=$(cat "$state/next-$1")
+    printf '%s\n' "$((n + 1))" > "$state/next-$1"
+    printf '%s\n' "$n"
+}
+
+[ "$#" -ge 2 ] || die "usage: herdr GROUP CMD ..."
+group=$1
+cmd=$2
+shift 2
+case "$group $cmd" in
+    "pane current")
+        use_current=false
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --current) use_current=true; shift ;;
+                *) shift ;;
+            esac
+        done
+        if [ "$use_current" = true ]; then
+            read -r pane tab ws < "$state/caller"
+        else
+            read -r pane tab ws < "$state/focused"
+        fi
+        printf '{"id":"cli:pane:current","result":{"pane":{"pane_id":"%s","tab_id":"%s","workspace_id":"%s"},"type":"pane_current"}}\n' "$pane" "$tab" "$ws"
+        ;;
+    "tab list")
+        workspace=
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --workspace) workspace=$2; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        [ -n "$workspace" ] || die "tab list missing --workspace"
+        json_list "$workspace" "$state/tabs" tabs
+        ;;
+    "tab create")
+        workspace=; label=; cwd=; no_focus=false
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --workspace) workspace=$2; shift 2 ;;
+                --label) label=$2; shift 2 ;;
+                --cwd) cwd=$2; shift 2 ;;
+                --no-focus) no_focus=true; shift ;;
+                --focus) die "tab create used --focus" ;;
+                --env) shift 2 ;;
+                *) die "tab create bad arg $1" ;;
+            esac
+        done
+        [ "$no_focus" = true ] || die "tab create missing --no-focus"
+        [ -n "$cwd" ] || die "tab create missing --cwd"
+        [ -n "$workspace" ] || die "tab create missing --workspace"
+        [ "$label" = subagents ] || die "tab create label not subagents"
+        tn=$(next_id tab)
+        pn=$(next_id pane)
+        tab_id=$workspace:t$tn
+        pane_id=$workspace:p$pn
+        printf '%s %s %s\n' "$tab_id" "$workspace" "$label" >> "$state/tabs"
+        printf '%s %s %s\n' "$pane_id" "$tab_id" "$workspace" >> "$state/panes"
+        printf '%s\n' "$cwd" > "$state/last-cwd"
+        printf '{"id":"cli:tab:create","result":{"tab":{"tab_id":"%s","workspace_id":"%s","label":"%s"},"root_pane":{"pane_id":"%s","tab_id":"%s","workspace_id":"%s"},"type":"tab_create"}}\n' \
+            "$tab_id" "$workspace" "$label" "$pane_id" "$tab_id" "$workspace"
+        ;;
+    "pane list")
+        workspace=
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --workspace) workspace=$2; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        [ -n "$workspace" ] || die "pane list missing --workspace"
+        json_list "$workspace" "$state/panes" panes
+        ;;
+    "pane split")
+        pane_id=; direction=; cwd=; no_focus=false; used_current=false
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --current) used_current=true; shift ;;
+                --direction) direction=$2; shift 2 ;;
+                --cwd) cwd=$2; shift 2 ;;
+                --no-focus) no_focus=true; shift ;;
+                --focus) die "pane split used --focus" ;;
+                --pane) pane_id=$2; shift 2 ;;
+                --env|--ratio) shift 2 ;;
+                --*) die "pane split bad flag $1" ;;
+                *) pane_id=$1; shift ;;
+            esac
+        done
+        [ "$used_current" = false ] || die "pane split used --current"
+        [ "$direction" = down ] || die "pane split missing --direction down"
+        [ "$no_focus" = true ] || die "pane split missing --no-focus"
+        [ -n "$cwd" ] || die "pane split missing --cwd"
+        [ -n "$pane_id" ] || die "pane split missing pane"
+        tab_id=
+        ws=
+        while read -r pid tid wsid; do
+            if [ "$pid" = "$pane_id" ]; then
+                tab_id=$tid
+                ws=$wsid
+                break
+            fi
+        done < "$state/panes"
+        [ -n "$tab_id" ] || die "pane split unknown pane $pane_id"
+        pn=$(next_id pane)
+        new_pane=$ws:p$pn
+        printf '%s %s %s\n' "$new_pane" "$tab_id" "$ws" >> "$state/panes"
+        printf '%s\n' "$cwd" > "$state/last-cwd"
+        printf '{"id":"cli:pane:split","result":{"pane":{"pane_id":"%s","tab_id":"%s","workspace_id":"%s"},"type":"pane_split"}}\n' \
+            "$new_pane" "$tab_id" "$ws"
+        ;;
+    "pane run")
+        [ "$#" -ge 2 ] || die "pane run needs pane and command"
+        shift
+        run_cmd=$*
+        printf '%s\n' "$run_cmd" >> "$state/runs"
+        if [ "${FAKE_HERDR_PANE_RUN:-}" = bg ]; then
+            # Real pane run returns after sending Enter; delay so foreground
+            # poll starts before the inner helper publishes a pid. The inner
+            # exit status is not pane-run's status.
+            ( sleep 1; sh -c "$run_cmd" >"$state/pane-out" 2>&1 || : ) </dev/null >/dev/null 2>&1 &
+        else
+            sh -c "$run_cmd" >"$state/pane-out" 2>&1 || :
+        fi
+        ;;
+    "pane process-info")
+        pane_id=
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --pane) pane_id=$2; shift 2 ;;
+                --current) shift ;;
+                *) pane_id=$1; shift ;;
+            esac
+        done
+        case ${FAKE_HERDR_PROCESS_INFO:-} in
+            fail) die "process-info failed" ;;
+            omit)
+                printf '{"id":"cli:pane:process_info","result":{"process_info":{"pane_id":"%s"},"type":"pane_process_info"}}\n' "$pane_id"
+                ;;
+            *)
+                printf '{"id":"cli:pane:process_info","result":{"process_info":{"shell_pid":%s,"pane_id":"%s"},"type":"pane_process_info"}}\n' "$$" "$pane_id"
+                ;;
+        esac
+        ;;
+    "pane close")
+        [ "$#" -ge 1 ] || die "pane close needs pane"
+        pane_id=$1
+        if [ "${FAKE_HERDR_CLOSE:-}" = fail ]; then
+            die "pane close failed"
+        fi
+        found=false
+        tab_id=
+        while read -r pid tid wsid; do
+            if [ "$pid" = "$pane_id" ]; then
+                found=true
+                tab_id=$tid
+                break
+            fi
+        done < "$state/panes"
+        [ "$found" = true ] || die "pane close unknown pane $pane_id"
+        awk -v id="$pane_id" '$1 != id' "$state/panes" > "$state/panes.tmp"
+        mv "$state/panes.tmp" "$state/panes"
+        printf '%s\n' "$pane_id" >> "$state/closes"
+        # Last pane in a tab may take the tab with it; sequential launches
+        # then recreate the unique subagents tab instead of splitting.
+        if [ -n "$tab_id" ] && ! awk -v t="$tab_id" '$2 == t { found=1 } END { exit !found }' "$state/panes"; then
+            awk -v t="$tab_id" '$1 != t' "$state/tabs" > "$state/tabs.tmp"
+            mv "$state/tabs.tmp" "$state/tabs"
+        fi
+        printf '{"id":"cli:pane:close","result":{"type":"pane_close"}}\n'
+        ;;
+    *)
+        die "unsupported command: $group $cmd"
+        ;;
+esac
+FAKE_HERDR
+chmod +x "$tmp/bin-herdr/herdr"
+
+export HERDR_ENV=1
+unset PI_SUBAGENT_HERDR_INNER
+export FAKE_HERDR_STATE=$tmp/herdr-state
+export FAKE_HERDR_LOG=$tmp/herdr.log
+HPATH="$tmp/bin-herdr:$tmp/bin:$PATH"
+work_pwd=$(pwd -P)
+
+herdr_pane_of() {
+    printf '%s\n' "$1" | sed -n 's/^watch=herdr workspace=[^ ]* tab=[^ ]* pane=//p'
+}
+
+assert_herdr_closed_after_run() {
+    pane=$1
+    awk -v p="$pane" '
+        $1 == "pane" && $2 == "run" && $3 == p { run_at = NR }
+        $1 == "pane" && $2 == "close" && $3 == p { close_at = NR }
+        END { exit !(run_at && close_at && run_at < close_at) }
+    ' "$tmp/herdr.log" || fail "herdr pane $pane was not closed after pane run"
+    grep -Fqx "$pane" "$tmp/herdr-state/closes" || fail "herdr pane $pane was not recorded as closed"
+}
+
+# Missing herdr binary: fail hard, no tmux/headless fallback.
+printf 'Herdr missing binary.\n' > herdr-missing.md
+set +e
+missing_output=$(PATH="$tmp/bin:/usr/bin:/bin" "$helper" start herdr-missing.md 2>"$tmp/herdr-missing.err")
+missing_code=$?
+set -e
+[ "$missing_code" = 2 ] || fail "missing herdr exited $missing_code instead of 2"
+grep -q 'herdr not found' "$tmp/herdr-missing.err" || fail 'missing herdr gave no reason'
+grep -q 'not falling back' "$tmp/herdr-missing.err" || fail 'missing herdr did not refuse fallback'
+if printf '%s\n' "$missing_output" | grep -q '^watch=tmux'; then fail 'missing herdr fell back to tmux'; fi
+if printf '%s\n' "$missing_output" | grep -q '^watch=none'; then fail 'missing herdr fell back to headless'; fi
+
+# First launch creates the workspace subagents tab (caller pane, not focused).
+printf 'Herdr first.\n' > herdr1.md
+h1_output=$(PATH="$HPATH" "$helper" start --async herdr1.md)
+h1_id=$(value id "$h1_output")
+[ -n "$h1_id" ] || fail 'herdr first start did not return an id'
+printf '%s\n' "$h1_output" | grep -q '^watch=herdr workspace=w1 tab=w1:t2 pane=w1:p2$' || fail 'herdr first start reported no watch=herdr line'
+[ "$(cat ".pi-subagent-runs/$h1_id/orchestrator-target")" = subagent-chat-abcdef1234567890 ] || fail 'herdr first start did not persist the derived orchestrator target'
+[ "$(awk -F= 'BEGIN { t = "" } $1 == "target" { t = $2 } END { print t }' "$tmp/pi-env.log")" = subagent-chat-abcdef1234567890 ] || fail 'herdr inner did not receive the derived orchestrator target'
+[ "$(cat ".pi-subagent-runs/$h1_id/turn-001.result.md")" = 'fake response' ] || fail 'herdr first inner TUI did not publish a result'
+[ "$(cat "$tmp/herdr-state/last-cwd")" = "$work_pwd" ] || fail 'herdr tab create cwd was not pwd -P'
+grep -q 'tab create --workspace w1 --label subagents --cwd ' "$tmp/herdr.log" || fail 'herdr first start did not create the subagents tab'
+grep -q -- '--no-focus' "$tmp/herdr.log" || fail 'herdr tab create omitted --no-focus'
+grep -q '^pane current --current$' "$tmp/herdr.log" || fail 'herdr did not call pane current --current'
+if grep -q -- '--workspace w2' "$tmp/herdr.log"; then fail 'herdr used the focused workspace instead of the caller'; fi
+if grep -q '^pane split ' "$tmp/herdr.log"; then fail 'herdr first start split instead of creating the tab'; fi
+grep -q '^pane run w1:p2 ' "$tmp/herdr.log" || fail 'herdr first start did not pane-run the root pane'
+h1_run=$(head -n 1 "$tmp/herdr-state/runs")
+printf '%s\n' "$h1_run" | grep -q '__run' || fail 'herdr pane run did not invoke inner __run'
+printf '%s\n' "$h1_run" | grep -q 'PI_SUBAGENT_HERDR_INNER=1' || fail 'herdr pane run omitted the inner marker'
+if printf '%s\n' "$h1_run" | grep -q -- '--async'; then fail 'herdr inner command included --async'; fi
+if printf '%s\n' "$h1_run" | grep -q ' start '; then fail 'herdr pane-ran start instead of __run'; fi
+printf '%s\n' "$h1_run" | grep -q -- '-u PI_SESSION_ID' || fail 'herdr inner command did not unset PI_SESSION_ID'
+printf '%s\n' "$h1_run" | grep -q ' pane$' || fail 'herdr inner command was not pane mode'
+printf '%s\n' "$h1_run" | grep -q "PI_SUBAGENT_HERDR_PANE='w1:p2'" || fail 'herdr inner command omitted the allocated pane id'
+grep -q '^herdr_inner=1$' "$tmp/pi-env.log" || fail 'herdr inner Pi lost PI_SUBAGENT_HERDR_INNER'
+if grep -q '^herdr_pane=w1:p2$' "$tmp/pi-env.log"; then fail 'PI_SUBAGENT_HERDR_PANE leaked into Pi'; fi
+assert_herdr_closed_after_run w1:p2
+if awk -v p='w1:p2' '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes"; then fail 'herdr first watch pane remained after the turn'; fi
+
+# Sequential after the previous pane closed: Herdr may drop the empty
+# subagents tab, so the next launch recreates it (unique label, no split).
+printf 'Herdr second.\n' > herdr2.md
+h2_output=$(PATH="$HPATH" "$helper" start --orchestrator-target named-supervisor herdr2.md)
+h2_id=$(value id "$h2_output")
+[ -n "$h2_id" ] || fail 'herdr second start did not return an id'
+printf '%s\n' "$h2_output" | grep -q '^watch=herdr workspace=w1 tab=w1:t3 pane=w1:p3$' || fail 'herdr second start did not recreate the subagents tab after the previous pane closed'
+[ "$(cat ".pi-subagent-runs/$h2_id/orchestrator-target")" = named-supervisor ] || fail 'herdr second start did not persist the verbatim orchestrator target'
+[ "$(awk -F= 'BEGIN { t = "" } $1 == "target" { t = $2 } END { print t }' "$tmp/pi-env.log")" = named-supervisor ] || fail 'herdr inner did not receive the verbatim orchestrator target'
+[ "$(grep -c '^tab create ' "$tmp/herdr.log")" = 2 ] || fail 'herdr second start did not recreate the subagents tab'
+if grep -q '^pane split ' "$tmp/herdr.log"; then fail 'herdr sequential second split instead of recreating the tab'; fi
+[ "$(cat "$tmp/herdr-state/last-cwd")" = "$work_pwd" ] || fail 'herdr tab recreate cwd was not pwd -P'
+h2_run=$(tail -n 1 "$tmp/herdr-state/runs")
+printf '%s\n' "$h2_run" | grep -q '__run' || fail 'herdr second pane run did not invoke inner __run'
+if printf '%s\n' "$h2_run" | grep -q -- '--async'; then fail 'herdr second inner command included --async'; fi
+printf '%s\n' "$h2_run" | grep -q "PI_SUBAGENT_HERDR_PANE='w1:p3'" || fail 'herdr second inner command omitted the allocated pane id'
+assert_herdr_closed_after_run w1:p3
+
+# Foreground launch must not fabricate 143 when process-info fails and the
+# inner helper has not published a pid yet (real pane run is non-blocking).
+printf 'Herdr no shell_pid.\n' > herdr-nospid.md
+set +e
+nospid_output=$(FAKE_HERDR_PANE_RUN=bg FAKE_HERDR_PROCESS_INFO=fail PATH="$HPATH" "$helper" start herdr-nospid.md)
+nospid_code=$?
+set -e
+[ "$nospid_code" = 0 ] || fail "foreground herdr with no shell_pid exited $nospid_code instead of 0"
+nospid_id=$(value id "$nospid_output")
+[ -n "$nospid_id" ] || fail 'foreground herdr with no shell_pid returned no id'
+[ "$(cat ".pi-subagent-runs/$nospid_id/turn-001.exit-code")" != 143 ] || fail 'foreground herdr fabricated exit 143 when process-info failed'
+[ "$(cat ".pi-subagent-runs/$nospid_id/turn-001.result.md")" = 'fake response' ] || fail 'foreground herdr with no shell_pid did not publish a result'
+printf '%s\n' "$nospid_output" | grep -q '^watch=herdr ' || fail 'foreground herdr with no shell_pid reported no watch=herdr line'
+
+# Same empty-pid path when process-info omits shell_pid.
+printf 'Herdr omit shell_pid.\n' > herdr-omit.md
+set +e
+omit_output=$(FAKE_HERDR_PANE_RUN=bg FAKE_HERDR_PROCESS_INFO=omit PATH="$HPATH" "$helper" start herdr-omit.md)
+omit_code=$?
+set -e
+[ "$omit_code" = 0 ] || fail "foreground herdr with omitted shell_pid exited $omit_code instead of 0"
+omit_id=$(value id "$omit_output")
+[ "$(cat ".pi-subagent-runs/$omit_id/turn-001.exit-code")" != 143 ] || fail 'foreground herdr fabricated exit 143 when process-info omitted shell_pid'
+[ "$(cat ".pi-subagent-runs/$omit_id/turn-001.result.md")" = 'fake response' ] || fail 'foreground herdr with omitted shell_pid did not publish a result'
+
+# status / wait / list / stop stay local: they must not call herdr.
+herdr_lines=$(wc -l < "$tmp/herdr.log" | tr -d ' ')
+PATH="$HPATH" "$helper" status "$h1_id" | grep -q 'status=succeeded' || fail 'herdr status did not report success'
+PATH="$HPATH" "$helper" wait "$h1_id" >/dev/null || fail 'herdr wait failed on a finished turn'
+PATH="$HPATH" "$helper" list | grep -q "id=$h1_id .*status=succeeded" || fail 'herdr list missed the herdr-started session'
+PATH="$HPATH" "$helper" stop "$h1_id" >/dev/null || fail 'herdr stop failed on a finished session'
+herdr_lines_after=$(wc -l < "$tmp/herdr.log" | tr -d ' ')
+[ "$herdr_lines" = "$herdr_lines_after" ] || fail 'status/wait/list/stop invoked herdr'
+
+# Local commands with leaked inner env must not close a parent watch pane.
+printf 'w1:t90 w1 legacy-local\n' >> "$tmp/herdr-state/tabs"
+printf 'w1:p90 w1:t90 w1\n' >> "$tmp/herdr-state/panes"
+legacy_close_before=$(grep -c '^pane close w1:p90$' "$tmp/herdr.log" || true)
+PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=w1:p90 PATH="$HPATH" "$helper" status "$h1_id" | grep -q 'status=succeeded' || fail 'legacy-env status did not report success'
+PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=w1:p90 PATH="$HPATH" "$helper" wait "$h1_id" >/dev/null || fail 'legacy-env wait failed on a finished turn'
+PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=w1:p90 PATH="$HPATH" "$helper" list | grep -q "id=$h1_id .*status=succeeded" || fail 'legacy-env list missed the session'
+PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=w1:p90 PATH="$HPATH" "$helper" stop "$h1_id" >/dev/null || fail 'legacy-env stop failed on a finished session'
+legacy_close_after=$(grep -c '^pane close w1:p90$' "$tmp/herdr.log" || true)
+[ "$legacy_close_before" = "$legacy_close_after" ] || fail 'legacy-env status/list/wait/stop called herdr pane close'
+if awk -v p='w1:p90' '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes"; then :; else fail 'legacy-env local commands closed the inherited parent pane'; fi
+
+# Failing inner turn still closes its pane and keeps the real status.
+printf 'FAIL this herdr task.\n' > herdr-fail.md
+set +e
+hf_output=$(PATH="$HPATH" "$helper" start herdr-fail.md)
+hf_code=$?
+set -e
+[ "$hf_code" = 7 ] || fail "foreground herdr failure exited $hf_code instead of 7"
+hf_id=$(value id "$hf_output")
+hf_pane=$(herdr_pane_of "$hf_output")
+[ -n "$hf_pane" ] || fail 'foreground herdr failure reported no watch pane'
+hf_result=$(value result "$hf_output")
+hf_partial=${hf_result%.md}.partial.md
+[ ! -e "$hf_result" ] || fail 'failing herdr turn published a result artifact'
+[ "$(cat "$hf_partial")" = 'partial response' ] || fail 'failing herdr turn partial output was not preserved'
+[ "$(cat ".pi-subagent-runs/$hf_id/turn-001.exit-code")" = 7 ] || fail 'failing herdr turn exit code was not preserved'
+assert_herdr_closed_after_run "$hf_pane"
+
+# Concurrent turns split while both panes are live, then each closes only its own.
+printf 'Herdr concurrent one.\n' > herdr-c1.md
+printf 'Herdr concurrent two.\n' > herdr-c2.md
+rm -f "$tmp/hgate"
+hc1_output=$(FAKE_HERDR_PANE_RUN=bg FAKE_PI_GATE="$tmp/hgate" PATH="$HPATH" "$helper" start --async herdr-c1.md)
+hc1_id=$(value id "$hc1_output")
+hc1_pane=$(herdr_pane_of "$hc1_output")
+[ -n "$hc1_pane" ] || fail 'herdr concurrent 1 reported no watch pane'
+awk -v p="$hc1_pane" '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes" || fail "herdr concurrent 1 pane $hc1_pane gone before concurrent 2"
+hc2_output=$(FAKE_HERDR_PANE_RUN=bg FAKE_PI_GATE="$tmp/hgate" PATH="$HPATH" "$helper" start --async herdr-c2.md)
+hc2_id=$(value id "$hc2_output")
+hc2_pane=$(herdr_pane_of "$hc2_output")
+[ -n "$hc2_pane" ] || fail 'herdr concurrent 2 reported no watch pane'
+[ "$hc1_pane" != "$hc2_pane" ] || fail 'herdr concurrent turns reused a pane'
+grep -q "^pane split $hc1_pane --direction down --no-focus --cwd " "$tmp/herdr.log" || fail 'herdr concurrent 2 did not split the live subagents pane'
+if grep '^pane split ' "$tmp/herdr.log" | grep -q -- '--current'; then fail 'herdr concurrent split used --current'; fi
+if grep '^pane split ' "$tmp/herdr.log" | grep -q 'w1:p1 '; then fail 'herdr concurrent split the supervisor pane'; fi
+if grep '^pane split ' "$tmp/herdr.log" | grep -q 'w2:p1 '; then fail 'herdr concurrent split the focused pane'; fi
+awk -v a="$hc1_pane" -v b="$hc2_pane" '$1 == a { aa=1 } $1 == b { bb=1 } END { exit !(aa && bb) }' "$tmp/herdr-state/panes" || fail 'herdr concurrent turns did not keep both watch panes live'
+: > "$tmp/hgate"
+PATH="$HPATH" "$helper" wait "$hc1_id" >/dev/null
+PATH="$HPATH" "$helper" wait "$hc2_id" >/dev/null
+wait_for_grep "$tmp/herdr.log" "^pane close $hc1_pane$" || fail 'herdr concurrent 1 never closed its pane'
+wait_for_grep "$tmp/herdr.log" "^pane close $hc2_pane$" || fail 'herdr concurrent 2 never closed its pane'
+assert_herdr_closed_after_run "$hc1_pane"
+assert_herdr_closed_after_run "$hc2_pane"
+[ "$(cat ".pi-subagent-runs/$hc1_id/turn-001.exit-code")" = 0 ] || fail 'herdr concurrent 1 did not succeed'
+[ "$(cat ".pi-subagent-runs/$hc2_id/turn-001.exit-code")" = 0 ] || fail 'herdr concurrent 2 did not succeed'
+if awk -v p='w1:p1' '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes"; then :; else fail 'herdr concurrent close removed the supervisor pane'; fi
+if awk -v p='w2:p1' '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes"; then :; else fail 'herdr concurrent close removed the focused pane'; fi
+
+# Pane-close failure after finalize must not overwrite the turn result.
+printf 'Herdr close fail.\n' > herdr-closefail.md
+set +e
+hcf_output=$(FAKE_HERDR_CLOSE=fail PATH="$HPATH" "$helper" start herdr-closefail.md)
+hcf_code=$?
+set -e
+[ "$hcf_code" = 0 ] || fail "herdr close failure exited $hcf_code instead of the turn status 0"
+hcf_id=$(value id "$hcf_output")
+hcf_pane=$(herdr_pane_of "$hcf_output")
+[ -n "$hcf_pane" ] || fail 'herdr close-failure start reported no watch pane'
+[ "$(cat ".pi-subagent-runs/$hcf_id/turn-001.result.md")" = 'fake response' ] || fail 'herdr close failure overwrote or dropped the result'
+[ "$(cat ".pi-subagent-runs/$hcf_id/turn-001.exit-code")" = 0 ] || fail 'herdr close failure overwrote the exit code'
+grep -q "^pane close $hcf_pane$" "$tmp/herdr.log" || fail 'herdr close failure did not attempt pane close'
+if grep -Fqx "$hcf_pane" "$tmp/herdr-state/closes" 2>/dev/null; then fail 'failed pane close was recorded as closed'; fi
+
+# Nested helper spawned from inside the Herdr Pi must not close the parent pane.
+printf 'NESTED-HELPER parent.\n' > herdr-nested.md
+np_output=$(FAKE_NESTED_HELPER="$helper" FAKE_NESTED_PROMPT="$tmp/nested-child.md" FAKE_NESTED_OUT="$tmp/nested.out" FAKE_NESTED_ERR="$tmp/nested.err" PATH="$HPATH" "$helper" start herdr-nested.md)
+np_id=$(value id "$np_output")
+np_pane=$(herdr_pane_of "$np_output")
+[ -n "$np_pane" ] || fail 'herdr nested parent reported no watch pane'
+np_closes=$(grep -c "^pane close $np_pane$" "$tmp/herdr.log" || true)
+[ "$np_closes" = 1 ] || fail "herdr nested grandchild closed the parent pane or parent did not close once (closes=$np_closes)"
+assert_herdr_closed_after_run "$np_pane"
+[ "$(cat ".pi-subagent-runs/$np_id/turn-001.result.md")" = 'fake response' ] || fail 'herdr nested parent did not publish a result'
+grep -q '^watch=none' "$tmp/nested.out" || fail 'herdr nested grandchild did not run headless'
+if grep -q '^watch=herdr' "$tmp/nested.out"; then fail 'herdr nested grandchild re-entered herdr launch'; fi
+[ "$(awk '/^herdr_pane=/ { v = $0 } END { print v }' "$tmp/pi-env.log")" = 'herdr_pane=' ] || fail 'Pi still saw PI_SUBAGENT_HERDR_PANE'
+
+# Early die after allocate (corrupt profile) still closes the pane and keeps status 2.
+printf 'w1:t80 w1 corrupt-profile\n' >> "$tmp/herdr-state/tabs"
+printf 'w1:p80 w1:t80 w1\n' >> "$tmp/herdr-state/panes"
+corrupt_dir=.pi-subagent-runs/task.corruptpane
+mkdir -p "$corrupt_dir/busy"
+printf 'bad\n' > "$corrupt_dir/profile"
+printf 'implementer\n' > "$corrupt_dir/agent"
+: > "$corrupt_dir/turn-001.prompt.md"
+: > "$corrupt_dir/turn-001.skills"
+set +e
+env -u TMUX -u TMUX_PANE HERDR_ENV=1 PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=w1:p80 PATH="$HPATH" \
+    "$helper" __run "$corrupt_dir" 001 pane 2>"$tmp/corrupt.err"
+corrupt_code=$?
+set -e
+[ "$corrupt_code" = 2 ] || fail "corrupt-profile inner exited $corrupt_code instead of 2"
+grep -q 'invalid model profile' "$tmp/corrupt.err" || fail 'corrupt-profile inner gave no profile error'
+grep -q '^pane close w1:p80$' "$tmp/herdr.log" || fail 'corrupt-profile inner did not close its allocated pane'
+grep -Fqx w1:p80 "$tmp/herdr-state/closes" || fail 'corrupt-profile pane was not recorded as closed'
+if awk -v p='w1:p80' '$1 == p { found=1 } END { exit !found }' "$tmp/herdr-state/panes"; then fail 'corrupt-profile pane remained after die'; fi
+[ ! -e "$corrupt_dir/turn-001.exit-code" ] || fail 'corrupt-profile inner fabricated an exit-code artifact'
+[ ! -e "$corrupt_dir/turn-001.result.md" ] || fail 'corrupt-profile inner published a result'
+
+# Duplicate subagents labels are refused; no child, no fallback.
+# Seed two labels: prior turns closed their last pane, which may drop the tab.
+printf 'w1:t98 w1 subagents\n' >> "$tmp/herdr-state/tabs"
+printf 'w1:t99 w1 subagents\n' >> "$tmp/herdr-state/tabs"
+printf 'Herdr duplicate.\n' > herdr-dup.md
+set +e
+dup_output=$(PATH="$HPATH" "$helper" start herdr-dup.md 2>"$tmp/herdr-dup.err")
+dup_code=$?
+set -e
+[ "$dup_code" = 2 ] || fail "duplicate subagents tabs exited $dup_code instead of 2"
+grep -qi 'duplicate' "$tmp/herdr-dup.err" || fail 'duplicate subagents tabs gave no reason'
+dup_id=$(value id "$dup_output")
+[ ! -e ".pi-subagent-runs/$dup_id/session.jsonl" ] || fail 'duplicate tab refusal started a child'
+[ ! -d ".pi-subagent-runs/$dup_id/busy" ] || fail 'duplicate tab refusal stranded busy'
+if printf '%s\n' "$dup_output" | grep -q '^watch=tmux'; then fail 'duplicate tab refusal fell back to tmux'; fi
+if printf '%s\n' "$dup_output" | grep -q '^watch=none'; then fail 'duplicate tab refusal fell back to headless'; fi
+
+unset HERDR_ENV
 
 printf 'ok\n'

@@ -9,7 +9,7 @@ Resolve `scripts/pi-subagent.sh` relative to this `SKILL.md`. Run it from the pa
 
 Subagent sessions talk back over `pi-intercom`. Each child gets a `contact_supervisor` tool bound to the parent session, sends a `TASK COMPLETE:` completion report when it finishes, and may escalate mid-task. Completion reports are the result channel; the file artifacts are crash forensics.
 
-**Spawn surface.** When `HERDR_ENV=1`, load `using-herdr` and follow Herdr spawn. Otherwise invoke the helper from this supervisor (tmux or headless).
+**Spawn surface.** One path: invoke the helper from this supervisor. Child-starting commands (`start`, `follow-up`, `plan`, `work`, `critique`) use the same public flags on Herdr, tmux, and headless. Prefer `--async` on that outer call; the helper keeps the inner Pi TUI attached. `status`, `wait`, `list`, and `stop` stay local.
 
 ## Supervisor routing
 
@@ -61,7 +61,7 @@ Helper `start` defaults to the implementer row. On every other `start` (research
 
    This step is complete when the prompt file alone contains everything the child needs.
 
-3. If the spawn path is the arc, follow Arc below. Otherwise resolve your intercom presence name, then launch. When `HERDR_ENV=1`, follow Herdr spawn and `pane run` this same helper command in the new pane; otherwise run it here.
+3. If the spawn path is the arc, follow Arc below. Otherwise resolve your intercom presence name, then launch:
 
    ```typescript
    intercom({ action: "list" })   // read the "Current session" row
@@ -75,7 +75,7 @@ Helper `start` defaults to the implementer row. On every other `start` (research
    Pass `--model` and `--effort` from the table row on researcher, writer, and reviewer `start`. Omit them only for implementer `start`.
    - If your session is named, pass `--orchestrator-target NAME` with that name so completion reports and escalations route to you.
    - If it is unnamed (a `subagent-chat-...` alias), omit the flag; the helper derives the alias from the parent session.
-   - Capture `id`, `session` (the `session.jsonl` path), `turn`, and prompt/result/stderr/exit-code paths. On Herdr spawn, read them from the pane; the Herdr pane is the watch surface. On the non-Herdr path the helper also prints exactly one `watch=` line: tmux success is `watch=tmux tmux_session=... window=subagents pane=...` — `tmux_session` is this supervisor's tmux session name, not the jsonl path. Headless is `watch=none reason=tmux-not-installed` or `watch=none reason=not-inside-tmux`. A selected-tmux setup failure (including an unmarked or duplicate `subagents` window) exits nonzero with no child and no headless fallback. The child launches with the parent session's `PI_SESSION_ID`/`PI_MODEL`/etc. bash-tool metadata stripped, plus bridge metadata that binds its `contact_supervisor` tool to you.
+   - The helper returns `id`, `session` (the `session.jsonl` path), `turn`, prompt/result/stderr/exit-code paths, and exactly one `watch=` line. On first Herdr or tmux success, tell the user the coordinates from that line (Watch window). A Herdr or selected-tmux setup failure exits nonzero with no child and no fallback. The child launches with the parent session's `PI_SESSION_ID`/`PI_MODEL`/etc. bash-tool metadata stripped, plus bridge metadata that binds its `contact_supervisor` tool to you.
 
    This step is complete when those values are captured.
 
@@ -90,7 +90,7 @@ Helper `start` defaults to the implementer row. On every other `start` (research
 ## Continue or control a session
 
 ```sh
-# Continue the same conversation and model profile; reuses the supervisor target; each turn gets its own Herdr pane or tmux watch pane
+# Continue the same conversation and model profile; reuses the supervisor target
 "$helper" follow-up ID [--async] [--orchestrator-target NAME] [--agent ROLE] [--skill PATH] PROMPT_FILE
 
 # Replace the persisted profile for this and later turns
@@ -103,13 +103,13 @@ Helper `start` defaults to the implementer row. On every other `start` (research
 "$helper" stop ID
 ```
 
-`list` reports sessions. On tmux it also sweeps extra completed watch panes, keeping the last completed pane as the watch window's anchor. `stop` sends a termination signal; the matching watch pane stays as a completed pane (see Watch window). Use `wait` or `status` afterward to observe completion. `status` / `wait` / `list` / `stop` run on this supervisor even when children were started via Herdr spawn.
+`list` reports sessions. On tmux it also sweeps extra completed watch panes, keeping the last completed pane as the watch window's anchor. `stop` sends a termination signal (Watch window). Use `wait` or `status` afterward to observe completion. These four commands stay local on this supervisor.
 
 Sessions persist under `./.pi-subagent-runs/<id>/`. Remove an exact session directory only when the user explicitly requests deletion.
 
 ## Arc: plan -> work -> critique
 
-Use this arc only for multi-step **implement**. Skip it for research and write. A trivial implement is `start` as implementer, then `start --agent reviewer` with the reviewer row's `--model` and `--effort`. Reviewer never runs after plan. `plan` / `work` / `critique` are child-starting launches: same spawn surface as `start`.
+Use this arc only for multi-step **implement**. Skip it for research and write. A trivial implement is `start` as implementer, then `start --agent reviewer` with the reviewer row's `--model` and `--effort`. Reviewer never runs after plan. `plan` / `work` / `critique` are child-starting launches: same helper commands as `start`.
 
 The plan file is the arc's only state: `.pi-subagent-runs/<id>/plan.md`, a checklist of nodes with acceptance criteria. Which node is next and how much is done are always read from it, never tracked separately.
 
@@ -139,42 +139,18 @@ The plan file is the arc's only state: `.pi-subagent-runs/<id>/plan.md`, a check
 
 `status ID` reports plan progress (`plan=k/n`) once a plan exists, alongside the usual turn status.
 
-## Herdr spawn
-
-When `HERDR_ENV=1`, every child-starting launch (`start`, `follow-up`, `plan`, `work`, `critique`) uses this path. Load `using-herdr` for CLI mechanics. Keep persisted sessions and intercom on the helper.
-
-1. Confirm `HERDR_ENV=1` and load `using-herdr`.
-
-   This step is complete when that skill is loaded.
-
-2. Read the current workspace and focused pane from live `workspace list` / `pane list`.
-
-   This step is complete when those current ids are in hand.
-
-3. Create an observable `subagents` tab in that workspace if needed, then a pane for this turn, both with `--no-focus`. Parse the new pane id from the create/split JSON.
-
-   This step is complete when the new pane exists, is unfocused, and its id is stored.
-
-4. `pane run` the helper command in that pane from the parent cwd, same flags as the non-Herdr path.
-
-   This step is complete when the command is sent.
-
-5. Capture `id`, `session`, `turn`, and paths from the pane output. Before a later read, wait, or launch, re-resolve the pane id from a fresh list or create response — Herdr ids compact.
-
-   This step is complete when those values are captured and the pane id matches live Herdr state.
-
-Tell the user workspace, tab, and pane on first Herdr success. Completed Herdr panes stay visible. Intercom remains the result channel.
-
 ## Watch window
 
-When `HERDR_ENV=1`, the watch surface is the Herdr pane from Herdr spawn.
+The helper prints exactly one `watch=` line on every child-starting launch.
 
-Otherwise invoke the helper from this supervisor. Tmux watch is selected only when `tmux` is on PATH and this supervisor is inside a live current tmux session. Then each subagent turn gets one watch pane in this session's helper-owned watch window named `subagents`, tiled. Otherwise the helper runs the turn headless and prints `watch=none reason=tmux-not-installed` or `watch=none reason=not-inside-tmux`. Watch attaches to the current supervisor session only.
+When `HERDR_ENV=1`, that line is `watch=herdr workspace=... tab=... pane=...`: this supervisor's workspace (caller pane, not the focused UI), unique `subagents` tab, one unfocused pane per turn. Tell the user workspace, tab, and pane on first Herdr success. That pane is observable only while the turn is active: after the turn finalizes (success, failure, early error, or stop), the helper finalizes result/exit-code artifacts, then closes exactly that pane. Concurrent panes stay. A close failure warns, leaves the pane, and keeps the finalized status/artifacts. When the last pane closes, Herdr removes the empty `subagents` tab; the next turn recreates it. Intercom remains the result channel. Herdr setup failure — including a missing `herdr` binary or duplicate `subagents` tabs — exits nonzero: no child, no tmux or headless fallback.
+
+Otherwise tmux watch is selected only when `tmux` is on PATH and this supervisor is inside a live current tmux session. Then each subagent turn gets one watch pane in this session's helper-owned watch window named `subagents`, tiled. Otherwise the helper runs the turn headless and prints `watch=none reason=tmux-not-installed` or `watch=none reason=not-inside-tmux`. Watch attaches to the current supervisor session only.
 
 On tmux success the helper prints `watch=tmux tmux_session=<name> window=subagents pane=<id>`. `tmux_session` is the tmux session name; `session=` is the jsonl path. Tell the user those three values on first tmux success. If tmux was selected and setup fails — including an unmarked or duplicate `subagents` window — the launch exits nonzero: no child, no headless retry.
 
-The helper reuses only the helper-owned `subagents` window in this session. A new watch pane is established and retained before the child runs and before extra completed panes are swept, so a fast-finishing turn still leaves an observable pane. `list` and later launches keep the last completed pane as the window's anchor. Live panes stay. `stop` signals the child; its watch pane remains.
+On tmux, the helper reuses only the helper-owned `subagents` window in this session. A new watch pane is established and retained before the child runs and before extra completed panes are swept, so a fast-finishing turn still leaves an observable pane. `list` and later launches keep the last completed pane as the window's anchor. Live panes stay. `stop` signals the child; its watch pane remains.
 
-Each tmux watch pane runs the child as a real pi TUI. When the agent settles, a watch extension shuts pi down; the pane keeps the final conversation frame plus a recap of the last output lines, then shows the dead-pane banner. The result artifact is recovered from the session file after exit. Delegation still runs when watch is headless.
+Each watch pane runs the child as a real pi TUI. On tmux, when the agent settles, a watch extension shuts pi down; the pane keeps the final conversation frame plus a recap of the last output lines, then shows the dead-pane banner. The result artifact is recovered from the session file after exit. Delegation still runs when watch is headless.
 
 All tmux work is `scripts/pi-subagent-tmux.sh` (CLI subprocess). Core `pi-subagent.sh` selects tmux vs headless only on the non-Herdr path.
