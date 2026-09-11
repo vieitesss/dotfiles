@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { isAbsolute, relative, resolve, sep as pathSep } from "node:path";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 const MAX_BRANCH_WIDTH = 30;
 
@@ -23,6 +23,24 @@ function formatCwd(cwd: string): string {
   const rel = relative(resolvedHome, resolvedCwd);
   const inHome = rel === "" || (rel !== ".." && !rel.startsWith(`..${pathSep}`) && !isAbsolute(rel));
   return inHome ? (rel === "" ? "~" : `~${pathSep}${rel}`) : resolvedCwd;
+}
+
+function sessionUsdCost(entries: SessionEntry[]): number {
+  let cost = 0;
+  for (const entry of entries) {
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      cost += entry.message.usage.cost.total;
+    } else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
+      cost += entry.message.usage.cost.total;
+    } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+      cost += entry.usage.cost.total;
+    }
+  }
+  return cost;
+}
+
+function formatUsd(cost: number): string {
+  return `$${cost.toFixed(2)}`;
 }
 
 function gitBranch(cwd: string): string {
@@ -55,9 +73,11 @@ export default function (pi: ExtensionAPI) {
         const usage = ctx.getContextUsage();
         const amount = formatTokens(usage?.tokens);
         const percent = usage?.percent == null ? "?" : `${usage.percent.toFixed(1)}%`;
+        const cost = formatUsd(sessionUsdCost(ctx.sessionManager.getEntries()));
         const left = [
           theme.fg("mdHeading", amount),
           theme.fg("dim", percent),
+          theme.fg("dim", cost),
         ].join(` ${theme.fg("dim", sep)} `);
 
         const modelName = model?.id ?? "no-model";
