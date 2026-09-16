@@ -11,7 +11,7 @@
     "npm:pi-intercom",
     "npm:@inobit/pi-themes"
   ],
-  "theme": "gruber-system",
+  "theme": "gruber-lighter",
   "fullscreenScrollbar": "auto",
   "tuiMode": "regular",
   "modelThinkingLevels": {

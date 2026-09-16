@@ -482,4 +482,6 @@ autoload -Uz compinit && compinit -C
 # <<< grok installer <<<
 
 # OpenClaw Completion
-[ -f '/Users/vieitesprefapp/.openclaw/.openclaw/completions/openclaw.zsh' ] && source '/Users/vieitesprefapp/.openclaw/.openclaw/completions/openclaw.zsh'
+if [[ -f "$HOME/.openclaw/.openclaw/completions/openclaw.zsh" ]]; then
+  source "$HOME/.openclaw/.openclaw/completions/openclaw.zsh"
+fi
