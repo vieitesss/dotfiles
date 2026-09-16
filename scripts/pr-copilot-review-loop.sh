@@ -62,6 +62,20 @@ run_agent() {
   "${STRIP_PI_ENV[@]}" "${AGENT_CMD[@]}" 2>&1
 }
 
+# Classify a finished agent run: prints a one-line reason and returns 0 when the
+# loop must abort, prints nothing and returns 1 when the run is usable.
+# A missing/unsupported model is fatal even when the child exited 0: Pi prints the
+# warning + Codex error and can still finish looking "successful".
+agent_run_failure() {
+  local rc="$1" out="$2" hit
+  if (( rc != 0 )); then
+    printf 'agent failed (exit %s)\n' "$rc"
+    return 0
+  fi
+  hit=$(grep -i -m1 -E 'Model "[^"]*" not found|model is not supported|is not supported when using Codex' <<<"$out") || return 1
+  printf 'model not found/unsupported: %s\n' "$hit"
+}
+
 validate_backend() {
   case "$AGENT" in
     pi|opencode) ;;
@@ -294,6 +308,35 @@ self_check() {
     echo "FAIL: parent Pi session env leaked to child"; failed=1
   fi
 
+  # Agent-run failure detection (offline): a missing/unsupported model aborts even
+  # when the child exited 0; a non-zero exit always aborts; clean output does not.
+  local reason
+  if reason=$(agent_run_failure 0 'Warning: Model "gpt-5.6-astra" not found for provider "openai-codex". Using custom model id.') \
+     && [[ "$reason" == *"not found"* ]]; then
+    echo "PASS: missing-model warning aborts (rc=0)"
+  else
+    echo "FAIL: missing-model warning not detected (got '${reason:-nothing}')"; failed=1
+  fi
+
+  if reason=$(agent_run_failure 0 "Codex error: The 'gpt-5.6-astra' model is not supported when using Codex with a ChatGPT account.") \
+     && [[ "$reason" == *"not supported"* ]]; then
+    echo "PASS: unsupported-model Codex error aborts (rc=0)"
+  else
+    echo "FAIL: unsupported-model Codex error not detected (got '${reason:-nothing}')"; failed=1
+  fi
+
+  if reason=$(agent_run_failure 0 "Cycle complete: 3 comments fixed and pushed."); then
+    echo "FAIL: clean agent output flagged as failure ('${reason}')"; failed=1
+  else
+    echo "PASS: clean agent output not flagged"
+  fi
+
+  if reason=$(agent_run_failure 2 "boom") && [[ "$reason" == *"exit 2"* ]]; then
+    echo "PASS: non-zero agent exit aborts"
+  else
+    echo "FAIL: non-zero agent exit not detected (got '${reason:-nothing}')"; failed=1
+  fi
+
   if (( failed == 0 )); then
     echo "All checks passed."; exit 0
   else
@@ -371,10 +414,21 @@ Review only Copilot's comments (author login matches 'copilot', case-insensitive
 Commit+push for this PR branch is explicitly authorised for the life of this loop —
 commit and push all accepted fixes, then reply to + resolve every triaged thread
 per the skill's §8 (fix → include the commit SHA; reject/defer → one-line reason)." | tee "$_pi_tmp"
-  log "${AGENT} agent finished."
+  AGENT_RC=${PIPESTATUS[0]}
 
   PI_OUTPUT=$(cat "$_pi_tmp")
   rm -f "$_pi_tmp"
+
+  # Abort before any commit/push/Copilot request when the agent did not really run.
+  if AGENT_FAILURE=$(agent_run_failure "$AGENT_RC" "$PI_OUTPUT"); then
+    FINAL_STATE="ABORTED — ${AGENT} agent unusable in cycle ${CYCLE}: ${AGENT_FAILURE}"
+    log "ERROR: ${AGENT_FAILURE}"
+    log "ERROR: aborting loop — no commit, no push, no Copilot review requested."
+    print_brief
+    exit 1
+  fi
+
+  log "${AGENT} agent finished."
 
   # Safety net: commit anything pi left uncommitted before we push.
   if ! git diff --quiet HEAD 2>/dev/null; then
