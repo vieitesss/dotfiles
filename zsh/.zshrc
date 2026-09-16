@@ -236,6 +236,10 @@ if [[ -d "$OBSIDIAN/terminal/scripts" ]]; then
     add-to-path "OBSIDIAN_SCRIPTS" "$OBSIDIAN/terminal/scripts"
 fi
 
+if [[ -d "$HOME/.openclaw" ]]; then
+    add-to-path "OPENCLAW_HOME" "$HOME/.openclaw" "/bin"
+fi
+
 if [[ ! -f "$HOME/.local/bin/fd" ]] && (( $+commands[fdfind] )); then
     ln -s "${commands[fdfind]}" "$HOME/.local/bin/fd" 2>/dev/null || true
 fi
@@ -476,3 +480,6 @@ export PATH="$HOME/.grok/bin:$PATH"
 fpath=(~/.grok/completions/zsh $fpath)
 autoload -Uz compinit && compinit -C
 # <<< grok installer <<<
+
+# OpenClaw Completion
+[ -f '/Users/vieitesprefapp/.openclaw/.openclaw/completions/openclaw.zsh' ] && source '/Users/vieitesprefapp/.openclaw/.openclaw/completions/openclaw.zsh'
