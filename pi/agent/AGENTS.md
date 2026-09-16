@@ -20,3 +20,5 @@ Before non-trivial repository work, use `workflow-router`.
 ## Delegation routing
 
 Classify each user task as research, implement, or write and spawn it via `pi-subagent` — the child does that work. After implement, spawn reviewer and wait for PASS before write. Multi-step implement uses the arc; trivial implement is `start` then reviewer. Details live in the pi-subagent skill.
+
+NOTE: if the user tells you not to use subagents, don't use subagents, do the work yourself.
