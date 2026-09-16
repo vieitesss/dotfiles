@@ -14,8 +14,43 @@ onboarding = false
 
 # Follow host terminal light/dark appearance and switch Herdr UI themes.
 auto_switch = true
-dark_name = "rose-pine"
-light_name = "rose-pine-dawn"
+dark_name = "catppuccin"
+light_name = "catppuccin-latte"
+
+# Override individual color tokens on top of the base theme.
+# Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
+# Appearance-specific overrides apply when auto_switch is enabled.
+# gruber-darker palette.
+[theme.custom.dark]
+panel_bg = "#181818"
+accent = "#ffdd33"
+surface_dim = "#282828"
+mauve = "#9e95c7"
+green = "#73d936"
+yellow = "#ffdd33"
+red = "#f43841"
+peach = "#cc8c3c"
+
+# gruber-lighter palette.
+[theme.custom.light]
+panel_bg = "#F5F5F5"
+text = "#282828"
+accent = "#37526D"
+surface_dim = "#CEC9C0"
+mauve = "#59477E"
+green = "#82A762"
+yellow = "#CC9600"
+red = "#98222A"
+peach = "#704313"
+sidebar_bg = "#F5F5F5"
+active_row_bg = "#CEC9C0"
+surface0 = "#CEC9C0"
+selection_bg = "#C2BCB4"
+surface1 = "#C2BCB4"
+subtext0 = "#45554D"
+overlay0 = "#AAA49C"
+overlay1 = "#88857F"
+blue = "#37526D"
 
 [terminal]
 # Executable used for new interactive panes.

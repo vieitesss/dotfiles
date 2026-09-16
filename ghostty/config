@@ -19,7 +19,7 @@ background-opacity = 1
 background-blur = false
 
 # theme
-theme = light:Rose Pine Dawn,dark:Rose Pine
+theme = light:gruber-lighter,dark:gruber-darker
 
 # keybinds
 keybind = ctrl+1=goto_tab:1

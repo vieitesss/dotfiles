@@ -11,7 +11,7 @@
     "npm:pi-intercom",
     "npm:@inobit/pi-themes"
   ],
-  "theme": "rosepine-system",
+  "theme": "gruber-system",
   "fullscreenScrollbar": "auto",
   "tuiMode": "regular",
   "modelThinkingLevels": {

@@ -1,14 +1,14 @@
-# Theme rollback: Gruber → Rosé Pine
+# Theme rollback: Rosé Pine → Gruber
 
-On 2026-09-11 the light/dark auto-switching theme pair for Ghostty, Herdr, and
-Pi was switched from Gruber to Rosé Pine. This note stores the previous
-configuration so the Gruber pair can be restored.
+On 2026-09-15 the light/dark auto-switching theme pair for Ghostty, Herdr, and
+Pi was switched back from Rosé Pine to Gruber. This note stores the previous
+Rosé Pine configuration so it can be restored.
 
-| Tool    | Previous light   | Previous dark  | Current light   | Current dark |
-|---------|------------------|----------------|-----------------|--------------|
-| Ghostty | `gruber-lighter` | `gruber-darker` | `Rose Pine Dawn` | `Rose Pine` |
-| Herdr   | `catppuccin-latte` | `catppuccin` | `rose-pine-dawn` | `rose-pine` |
-| Pi      | `gruber-lighter` | `gruber-darker` | `rosepine-dawn`  | `rosepine`  |
+| Tool    | Previous light   | Previous dark | Current light                        | Current dark                         |
+|---------|------------------|---------------|--------------------------------------|--------------------------------------|
+| Ghostty | `Rose Pine Dawn` | `Rose Pine`   | `gruber-lighter`                     | `gruber-darker`                      |
+| Herdr   | `rose-pine-dawn` | `rose-pine`   | `gruber-lighter` (custom overrides)  | `gruber-darker` (custom overrides)   |
+| Pi      | `rosepine-dawn`  | `rosepine`    | `gruber-lighter`                     | `gruber-darker`                      |
 
 Auto-switching (`light:`/`dark:` in Ghostty, `auto_switch = true` in Herdr, and
 `scripts/system-appearance` for Pi) is unchanged.
@@ -18,24 +18,15 @@ Auto-switching (`light:`/`dark:` in Ghostty, `auto_switch = true` in Herdr, and
 Previous line in `ghostty/config`:
 
 ```ini
-theme = light:gruber-lighter,dark:gruber-darker
+theme = light:Rose Pine Dawn,dark:Rose Pine
 ```
 
-Both themes are repo-owned custom themes and were left untouched:
-
-- `ghostty/themes/gruber-lighter`
-- `ghostty/themes/gruber-darker`
-
-Restore by putting the line above back into `ghostty/config`.
+Restore by putting the line above back into `ghostty/config`. The repo-owned
+`ghostty/themes/gruber-*` files were left untouched.
 
 ## Herdr
 
-Previous `[theme]` section of `herdr/config.toml` (working-tree state before
-the switch; the two custom override tables were uncommitted). The
-`[theme.custom.dark]` values are the palette kept under the name
-`gruber-darker`, and `[theme.custom.light]` is `gruber-lighter`; both are
-copy-paste overlay tables for `[theme.custom.*]`, not standalone Herdr theme
-names:
+Previous `[theme]` section of `herdr/config.toml`:
 
 ```toml
 [theme]
@@ -46,87 +37,58 @@ names:
 
 # Follow host terminal light/dark appearance and switch Herdr UI themes.
 auto_switch = true
-dark_name = "catppuccin"
-light_name = "catppuccin-latte"
-
-# Override individual color tokens on top of the base theme.
-# Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
-# Appearance-specific overrides apply when auto_switch is enabled.
-# gruber-darker palette (current dark palette name is "rose-pine").
-[theme.custom.dark]
-panel_bg = "#181818"
-accent = "#ffdd33"
-surface_dim = "#282828"
-mauve = "#9e95c7"
-green = "#73d936"
-yellow = "#ffdd33"
-red = "#f43841"
-peach = "#cc8c3c"
-
-# gruber-lighter palette (current light palette name is "rose-pine-dawn").
-[theme.custom.light]
-panel_bg = "#F5F5F5"
-text = "#282828"
-accent = "#37526D"
-surface_dim = "#CEC9C0"
-mauve = "#59477E"
-green = "#82A762"
-yellow = "#CC9600"
-red = "#98222A"
-peach = "#704313"
-sidebar_bg = "#F5F5F5"
-active_row_bg = "#CEC9C0"
-surface0 = "#CEC9C0"
-selection_bg = "#C2BCB4"
-surface1 = "#C2BCB4"
-subtext0 = "#45554D"
-overlay0 = "#AAA49C"
-overlay1 = "#88857F"
-blue = "#37526D"
+dark_name = "rose-pine"
+light_name = "rose-pine-dawn"
 ```
 
-Restore by replacing the current `[theme]` section (which sets
-`dark_name = "rose-pine"` / `light_name = "rose-pine-dawn"`) with the block
-above, then run `herdr server reload-config`.
+Restore by replacing the current `[theme]` section with the block above and
+removing the `[theme.custom.dark]` / `[theme.custom.light]` Gruber override
+tables; otherwise they would override the Rosé Pine base palette. Then run
+`herdr server reload-config`.
 
 ## Pi
 
-Previous `pi/agent/settings.json` values:
+Previous `pi/agent/settings.json` value:
 
-- `"theme": "gruber-system"`
-- package entry `"git:github.com/vieitesss/pi-theme-gruber-darker"` — still
-  present, kept for easy revert (the new `"npm:@inobit/pi-themes"` entry sits
-  next to it).
+- `"theme": "rosepine-system"`
+- package `npm:@inobit/pi-themes` is still present, kept for easy revert.
 
-The previous Pi generation block in `scripts/system-appearance` (from git
-history) was:
+The previous Pi generation block in `scripts/system-appearance` was:
 
 ```sh
 # Pi hot-reloads the active custom theme file. Build that stable file from the
-# installed Gruber package so running and future sessions use the same name.
-pi_package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
-pi_source="$pi_package/themes/gruber-${mode}er.json"
+# installed Rosé Pine package so running and future sessions use the same name.
+pi_package="$HOME/.pi/agent/npm/node_modules/@inobit/pi-themes"
+case "$mode" in
+    light) pi_source="$pi_package/themes/rosepine-dawn.json" ;;
+    dark) pi_source="$pi_package/themes/rosepine.json" ;;
+esac
 pi_theme_dir="$HOME/.pi/agent/themes"
-pi_theme_file="$pi_theme_dir/gruber-system.json"
+pi_theme_file="$pi_theme_dir/rosepine-system.json"
 if [ -f "$pi_source" ]; then
     mkdir -p "$pi_theme_dir"
     pi_tmp="$pi_theme_file.tmp.$$"
-    sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$pi_source" > "$pi_tmp"
+    sed 's/"name": "rosepine[^"]*"/"name": "rosepine-system"/' "$pi_source" > "$pi_tmp"
     mv "$pi_tmp" "$pi_theme_file"
 else
-    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
+    echo "WARN: Pi Rosé Pine theme package is not installed; skipped Pi" >&2
 fi
 ```
 
-Saved Pi theme files (kept in `~/.pi/agent/themes/`):
+`~/.pi/agent/themes/rosepine-system.json` still exists.
+`gruber-system.json` is the file the script regenerates.
 
-- `gruber-system.json` — the previously generated auto-switch theme (last
-  written for light mode); no longer regenerated by the script.
-- `rosepine-system.json` — new generated auto-switch theme.
+To fully revert Pi: set `"theme": "rosepine-system"`, restore the block above,
+and reload.
 
-The `gruber-darker` and `gruber-lighter` theme names come from the installed
-package `git:github.com/vieitesss/pi-theme-gruber-darker`, not from saved
-files in `~/.pi/agent/themes/`.
+## Wallpapers
 
-To fully revert Pi: set `"theme": "gruber-system"`, restore the script block
-above, and reload.
+Previous wallpapers in `scripts/system-appearance`:
+
+- dark: `$HOME/Pictures/astronaut_rosepine.png`
+- light: `$HOME/Pictures/astronaut_rosepinedawn.png`
+
+Current:
+
+- dark: `$HOME/Pictures/astronaut_umbraline.png`
+- light: `$HOME/Pictures/astronaut_light.png`

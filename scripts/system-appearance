@@ -37,11 +37,11 @@ esac
 if [ "$mode" = dark ]; then
     dark_mode=true
     brightness=0.7
-    wallpaper="$HOME/Pictures/astronaut_rosepine.png"
+    wallpaper="$HOME/Pictures/astronaut_umbraline.png"
 else
     dark_mode=false
     brightness=0.4
-    wallpaper="$HOME/Pictures/astronaut_rosepinedawn.png"
+    wallpaper="$HOME/Pictures/astronaut_light.png"
 fi
 
 if [ ! -f "$wallpaper" ]; then
@@ -150,21 +150,18 @@ if command -v nvim >/dev/null 2>&1; then
 fi
 
 # Pi hot-reloads the active custom theme file. Build that stable file from the
-# installed Rosé Pine package so running and future sessions use the same name.
-pi_package="$HOME/.pi/agent/npm/node_modules/@inobit/pi-themes"
-case "$mode" in
-    light) pi_source="$pi_package/themes/rosepine-dawn.json" ;;
-    dark) pi_source="$pi_package/themes/rosepine.json" ;;
-esac
+# installed Gruber package so running and future sessions use the same name.
+pi_package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
+pi_source="$pi_package/themes/gruber-${mode}er.json"
 pi_theme_dir="$HOME/.pi/agent/themes"
-pi_theme_file="$pi_theme_dir/rosepine-system.json"
+pi_theme_file="$pi_theme_dir/gruber-system.json"
 if [ -f "$pi_source" ]; then
     mkdir -p "$pi_theme_dir"
     pi_tmp="$pi_theme_file.tmp.$$"
-    sed 's/"name": "rosepine[^"]*"/"name": "rosepine-system"/' "$pi_source" > "$pi_tmp"
+    sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$pi_source" > "$pi_tmp"
     mv "$pi_tmp" "$pi_theme_file"
 else
-    echo "WARN: Pi Rosé Pine theme package is not installed; skipped Pi" >&2
+    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
 fi
 
 printf 'System appearance: %s\n' "$mode"
