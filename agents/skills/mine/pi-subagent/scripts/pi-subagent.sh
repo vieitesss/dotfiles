@@ -522,6 +522,15 @@ EOF
 # Orchestrator target is persisted by the outer process before this runs;
 # inner run_turn only reads run_dir/orchestrator-target. --async is outer-only:
 # the pane command is always __run ... pane so the Herdr pane keeps a real TUI.
+#
+# pane run types the command into the pane's shell and sends Enter; a long
+# command can be mangled in transit (seen on Linux herdr 0.9.0: an injected
+# accept split the line mid-command, and a full-length launch whose Enter
+# never landed). Keep the typed command short: a launcher script in the run
+# dir carries the real command line and the pane is told only its path.
+# (Residual exposure: the typed path is cwd depth + ~45 chars, so a very deep
+# cwd can still reach the mangling zone; the launcher must live in the run
+# dir, which is rooted at the caller's cwd.)
 herdr_launch() {
     run_dir=$1
     turn=$2
@@ -529,8 +538,17 @@ herdr_launch() {
     command -v herdr >/dev/null 2>&1 || herdr_die "herdr not found; not falling back to tmux or headless"
     command -v python3 >/dev/null 2>&1 || herdr_die "python3 not found; not falling back to tmux or headless"
     herdr_allocate_pane
-    cmd="env -u TMUX -u TMUX_PANE -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=$(shell_quote "$herdr_pane") $(shell_quote "$self") __run $(shell_quote "$run_dir") $(shell_quote "$turn") pane"
-    herdr pane run "$herdr_pane" "$cmd" || herdr_die "herdr pane run failed; not falling back to tmux or headless"
+    launcher=$run_dir/.launch-$turn.sh
+    {
+        printf '#!/bin/sh\n'
+        printf '# Written by pi-subagent herdr_launch; the watch pane types only this path.\n'
+        printf 'exec env -u TMUX -u TMUX_PANE -u PI_SESSION_ID -u PI_SESSION_FILE -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL PI_SUBAGENT_HERDR_INNER=1 PI_SUBAGENT_HERDR_PANE=%s %s __run %s %s pane\n' \
+            "$(shell_quote "$herdr_pane")" "$(shell_quote "$self")" "$(shell_quote "$run_dir")" "$(shell_quote "$turn")"
+    } > "$launcher"
+    chmod 700 "$launcher"
+    # Quote the typed path: the pane shell word-splits an unquoted launcher
+    # under a cwd with spaces/metacharacters and the turn never starts.
+    herdr pane run "$herdr_pane" "$(shell_quote "$launcher")" || herdr_die "herdr pane run failed; not falling back to tmux or headless"
     if proc=$(herdr pane process-info --pane "$herdr_pane" 2>/dev/null); then
         herdr_shell_pid=$(printf '%s' "$proc" | herdr_json_str result.process_info.shell_pid) || herdr_shell_pid=
     fi

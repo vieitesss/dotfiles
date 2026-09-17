@@ -3,7 +3,9 @@ set -eu
 
 skill_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 helper=$skill_dir/scripts/pi-subagent.sh
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/pi-subagent-test.XXXXXX")
+# /tmp, not $TMPDIR: macOS TMPDIR paths are deep enough to push the herdr
+# launcher path over the short-typed-command threshold the suite asserts on.
+tmp=$(mktemp -d "/tmp/pi-subagent-test.XXXXXX")
 # Supervisor-side pane for the fake tmux world: display-message -t $TMUX_PANE
 # resolves through it, and killing it on exit leaves no stray sleep behind.
 sleep 300 &
@@ -1141,6 +1143,27 @@ assert_herdr_closed_after_run() {
     grep -Fqx "$pane" "$tmp/herdr-state/closes" || fail "herdr pane $pane was not recorded as closed"
 }
 
+# pane-run lines shell-quote the launcher path; strip one level of quoting
+# for path/content assertions (test tmp paths contain no embedded quotes).
+dequote() {
+    case $1 in
+        \'*\') printf '%s' "$1" | sed "s/^'//; s/'\$//; s/'\\\\''/'/g" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# The herdr watch command is typed as a short launcher path (long typed
+# commands get mangled on Linux herdr). Resolve a recorded pane-run line to
+# the real command text so content assertions check what actually executes.
+resolve_run() {
+    line=$(dequote "$1")
+    if [ -f "$line" ]; then
+        cat "$line"
+    else
+        printf '%s\n' "$line"
+    fi
+}
+
 # Missing herdr binary: fail hard, no tmux/headless fallback.
 printf 'Herdr missing binary.\n' > herdr-missing.md
 set +e
@@ -1169,7 +1192,19 @@ grep -q '^pane current --current$' "$tmp/herdr.log" || fail 'herdr did not call 
 if grep -q -- '--workspace w2' "$tmp/herdr.log"; then fail 'herdr used the focused workspace instead of the caller'; fi
 if grep -q '^pane split ' "$tmp/herdr.log"; then fail 'herdr first start split instead of creating the tab'; fi
 grep -q '^pane run w1:p2 ' "$tmp/herdr.log" || fail 'herdr first start did not pane-run the root pane'
-h1_run=$(head -n 1 "$tmp/herdr-state/runs")
+h1_raw=$(head -n 1 "$tmp/herdr-state/runs")
+h1_path=$(dequote "$h1_raw")
+[ "${#h1_raw}" -le 130 ] || fail "herdr pane-run typed ${#h1_raw} chars instead of a short launcher path"
+case $h1_raw in
+    \'*\') : ;;
+    *) fail 'herdr pane-run typed the launcher path unquoted' ;;
+esac
+case $h1_path in
+    */.pi-subagent-runs/*/.launch-*.sh) : ;;
+    *) fail 'herdr pane-run did not type the launcher path' ;;
+esac
+[ -x "$h1_path" ] || fail 'herdr launcher script is not executable'
+h1_run=$(resolve_run "$h1_raw")
 printf '%s\n' "$h1_run" | grep -q '__run' || fail 'herdr pane run did not invoke inner __run'
 printf '%s\n' "$h1_run" | grep -q 'PI_SUBAGENT_HERDR_INNER=1' || fail 'herdr pane run omitted the inner marker'
 if printf '%s\n' "$h1_run" | grep -q -- '--async'; then fail 'herdr inner command included --async'; fi
@@ -1194,7 +1229,7 @@ printf '%s\n' "$h2_output" | grep -q '^watch=herdr workspace=w1 tab=w1:t3 pane=w
 [ "$(grep -c '^tab create ' "$tmp/herdr.log")" = 2 ] || fail 'herdr second start did not recreate the subagents tab'
 if grep -q '^pane split ' "$tmp/herdr.log"; then fail 'herdr sequential second split instead of recreating the tab'; fi
 [ "$(cat "$tmp/herdr-state/last-cwd")" = "$work_pwd" ] || fail 'herdr tab recreate cwd was not pwd -P'
-h2_run=$(tail -n 1 "$tmp/herdr-state/runs")
+h2_run=$(resolve_run "$(tail -n 1 "$tmp/herdr-state/runs")")
 printf '%s\n' "$h2_run" | grep -q '__run' || fail 'herdr second pane run did not invoke inner __run'
 if printf '%s\n' "$h2_run" | grep -q -- '--async'; then fail 'herdr second inner command included --async'; fi
 printf '%s\n' "$h2_run" | grep -q "PI_SUBAGENT_HERDR_PANE='w1:p3'" || fail 'herdr second inner command omitted the allocated pane id'
