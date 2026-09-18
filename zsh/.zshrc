@@ -485,3 +485,6 @@ autoload -Uz compinit && compinit -C
 if [[ -f "$HOME/.openclaw/.openclaw/completions/openclaw.zsh" ]]; then
   source "$HOME/.openclaw/.openclaw/completions/openclaw.zsh"
 fi
+
+# Added by the Hunk installer (https://hunk.dev)
+export PATH='/home/vieitesrpi/.hunk/bin':"$PATH"
