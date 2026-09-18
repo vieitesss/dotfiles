@@ -19,7 +19,7 @@ ghostty|~/.config/ghostty
 kitty|~/.config/kitty
 wezterm|~/.config/wezterm
 
-agents/skills|~/.agents/skills
+agents/skills/mine|~/.agents/skills/mine
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
