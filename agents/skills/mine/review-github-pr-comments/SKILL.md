@@ -1,146 +1,90 @@
 ---
 name: review-github-pr-comments
-description: Review PR comments and bot feedback, then decide whether each point should be fixed, rejected, deferred, or already handled. Apply accepted suggestions when asked.
+description: Review GitHub PR comments and bot feedback, decide each point (fix, reject, defer, already handled), and apply accepted fixes on request.
 ---
 
 # Review GitHub PR Comments
 
-## Overview
+Triage PR feedback to a **verdict** per point, then act on it. Judge every point against the **current branch** — diff, code, and PR intent as they are now, never the original review snapshot. Refresh GitHub data at the start of every run; thread text goes stale as the branch moves.
 
-Review GitHub PR feedback end to end. Fetch the latest review summaries and thread comments, understand the PR goal and current code, classify each reviewer point as fix, reject, defer, or already handled, and implement accepted comments when requested.
+## Verdicts
 
-Refresh GitHub data at the start of every run. Review comments can change during PR development, and old thread text is often stale by the time the branch moves forward.
+- `fix` — valid issue that belongs in this PR.
+- `reject` — wrong, stale, speculative, purely stylistic without local support, or contradicted by current code, conventions, or PR goal.
+- `defer` — reasonable, but follow-up work outside this PR.
+- `already handled` — the current branch already resolves it.
 
 ## Workflow
 
 ### 1. Identify the PR
 
-- Use a PR number or URL from the user if one is provided.
-- Otherwise infer the PR from the current branch.
-- Stop and report the problem if there is no active PR.
-
-Start with:
+Use the user's PR number or URL, else infer from the current branch:
 
 ```bash
-git branch --show-current
-gh pr view --json number,url,title,body,baseRefName,headRefName
+gh pr view --json number,url,title,body,baseRefName
 ```
 
-### 2. Understand the PR before judging comments
+No active PR: stop and report.
 
-- Read the PR title and body to understand the intended outcome.
-- Read the current diff against the base branch.
-- Read commit messages on the branch to see how the implementation evolved.
-- Read the affected files and nearby tests or related code before deciding whether a comment is correct.
-- Check project conventions when they matter: lint rules, formatter config, contribution docs, test layout, and surrounding local patterns.
+### 2. Understand the PR
 
-Use current code and current PR intent, not the original review snapshot, as the source of truth.
+Read the PR body, current diff (`gh pr diff`), and branch commits, plus the affected files and local conventions, before judging any comment.
 
-Helpful commands:
+### 3. Fetch the feedback
+
+Collect review summaries and inline threads — all authors, bots included, unless the user named specific reviewers. Read whole threads: later replies often narrow or withdraw the original ask, so the latest reviewer message plus the resolved/outdated state defines the current ask. When `gh pr view` is not enough, use `references/github-queries.md`.
+
+### 4. Triage
+
+From the repository root:
 
 ```bash
-gh pr diff
-git log $(gh pr view --json baseRefName --jq '.baseRefName')..HEAD --oneline
-gh pr checks
+node <skill-dir>/scripts/triage.mjs
 ```
 
-### 3. Fetch review summaries and inline threads
+(`<skill-dir>` = this skill's directory; first run: `npm install` in `scripts/`; `--reviewers login,login` when the user named reviewers; `--help` for more. Exit 3/4 or missing `node`/`gh`: note it and triage every thread manually.)
 
-- Gather both review summaries and review threads.
-- If the user names specific reviewers or bots, filter to those authors.
-- Otherwise include all reviewer feedback, including bots such as CodeRabbit, Qodo, Copilot, and human reviewers.
-- Read the entire thread, not only the first comment. Later replies often narrow, update, or effectively withdraw the original concern.
-- Prefer the latest reviewer-authored message in a thread when determining the current ask.
-- Note whether the thread is resolved or outdated before treating it as actionable.
+`Auto:` verdicts are final — carry them into the step-6 report as-is. Jev fix/reject/defer suggestions are input, never the verdict.
 
-Use `references/github-queries.md` for GraphQL query templates when `gh pr view` is not enough.
+Jev's evidence is the thread, a ±40-line excerpt around the anchor, the file's diff hunks, PR metadata, and branch commit messages — no repo-wide context (conventions, CI, release tooling). A confident `fix` suggestion can be an evidence blind spot, not a conclusion; verify against the actual branch. Rationale and known limits: `docs/triage-eval-2026-09-19.md`.
 
-### 4. Normalize the feedback into review points
+Give a verdict to **every** escalated thread and every concrete point split from review summaries (summaries are context, not evidence — check each against the code). Collapse duplicates pointing at the same issue. Decide from current code and PR goal: is the problem real, in scope, still true, consistent with local conventions, safe to apply? If ambiguous, state the ambiguity and ask one focused question.
 
-- Collapse duplicate comments that point at the same issue.
-- Split broad summaries into concrete review points when possible.
-- Mark a point as `already handled` if the current branch already addresses it.
-- Mark a point as `stale` if the code moved or later discussion made the original text obsolete.
-- Mark a point as `out of scope` if it targets unrelated pre-existing code that should be handled separately.
+### 5. Implement fixes
 
-### 5. Decide whether to fix, reject, defer, or mark handled
+Skip edits when the user asked only for review or triage. Otherwise implement every `fix` fully — or report the concrete blocker:
 
-Evaluate every point against these questions:
+- Re-read the relevant file sections first; match current code, not reviewer wording.
+- Use `/coding` for the smallest correct change; fold overlapping fixes into one coherent change.
+- Add or update tests when behavior changes or a coverage gap closes.
+- Verify with the most relevant checks available.
+- If implementation proves the comment was based on a misunderstanding, change the verdict and explain why.
 
-- Does the comment describe a real bug, regression, correctness issue, security issue, or meaningful maintainability problem?
-- Does it fit the PR goal, or would it pull the PR into unrelated work?
-- Is it still true in the current code, or was it already fixed by later commits?
-- Does the suggested direction match the repository's conventions and existing local patterns?
-- Would applying it break behavior, tests, or the deliberate design of the PR?
-
-Choose one decision per point:
-
-- `fix`: The issue is valid and should be addressed in this PR.
-- `reject`: The comment is wrong, stale, contradicted by the code, or conflicts with the PR goal or project conventions.
-- `defer`: The comment is reasonable but belongs in follow-up work instead of this PR.
-- `already handled`: The current branch already resolves the concern.
-
-Reject comments when they are speculative, purely stylistic without local support, based on outdated code, or would expand the PR beyond its purpose.
-
-### 6. Implement accepted comments
-
-- By default, convert each `fix` decision into a concrete code change and implement it.
-- If the user asked only for review or triage, do not edit code.
-- Re-read the relevant file sections before editing so the implementation matches the current code, not only the reviewer wording.
-- Use `/coding` to make the smallest correct change that addresses the review point without expanding the PR unnecessarily.
-- If multiple accepted comments overlap, implement them together in one coherent change instead of stacking redundant edits.
-- Add or update tests when the accepted comment changes behavior, fixes a bug, or closes a missing coverage gap.
-- Do not perform unrelated refactors while implementing accepted comments.
-- If implementation shows the reviewer comment was based on a misunderstanding, stop treating it as `fix`, change the decision, and explain why.
-- Verify the accepted fixes with the most relevant checks available.
-- Do not resolve GitHub threads unless the user explicitly asks for that action.
-
-### 7. Report the result clearly
-
-Use a concise structure like this:
+### 6. Report
 
 ```markdown
 ## PR Context
 - Goal: ...
-- Current branch state: ...
+- Branch state: ...
 
 ## Review Summaries
 - Reviewer: summary
 
-## Comment Decisions
-- fix - reviewer - `path:line` - reason
-- reject - reviewer - `path:line` - reason
-- defer - reviewer - `path:line` - reason
-- already handled - reviewer - `path:line` - reason
+## Triage
+- auto already handled: N — `path:line` list
+- auto noise: N — `path:line` list
+- escalated, decided below: N
+
+## Verdicts
+- fix|reject|defer|already handled — reviewer — `path:line` — reason
 
 ## Applied Changes
-- `path`
-  - accepted comment: ...
-  - implementation: ...
+- `path` — accepted comment: ... — implementation: ...
 
 ## Verification
-- `test command` - result
+- `command` — result
 ```
 
-### 8. Resolve GitHub comments
+### 7. Resolve threads
 
-Only resolve GitHub threads when the user has already asked to commit and push the changes, or when they explicitly ask you to do so.
-
-For each thread:
-
-- If fixed, reply with the commit SHA that contains the fix and a one-line summary.
-- If not fixed, reply with the brief reason of why it was rejected/deferred/stale/out of scope/already handled.
-- Keep each reply very brief: two lines at most.
-- Post the reply before resolving the thread so the closure records why it was closed.
-- Resolve only threads you have reviewed in the current run; do not bulk-resolve unrelated comments.
-
-Use `references/github-queries.md` for commands to identify thread IDs, post the final reply, and resolve the thread.
-
-## Decision Rules
-
-- Never decide from comment text alone; always inspect the current code and PR goal.
-- Prefer the latest thread state over the oldest review text.
-- Treat top-level review summaries as context, not as enough evidence by themselves.
-- If the feedback is ambiguous, state the ambiguity and ask one focused follow-up question.
-- If a comment is valid but broader than this PR, defer it instead of silently rejecting it.
-- If a comment is accepted, implement it fully or report the concrete blocker that prevented implementation.
+Only when the user explicitly asks, or has already asked to commit and push. Per thread: post a ≤2-line reply (fixed → commit SHA + one-line summary; otherwise → the reason), then resolve — reply first so the closure records why. Resolve only threads reviewed in this run. Commands: `references/github-queries.md`.
