@@ -1,0 +1,13 @@
+{
+  "name": "review-github-pr-comments-triage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Jev triage for GitHub PR review threads (tier 1: actionable / already-addressed / decision)",
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
