@@ -264,6 +264,7 @@ enabled = false
 # manage_ssh_config = true
 
 [experimental]
+kitty_graphics = true
 # Allow launching herdr from inside a herdr-managed pane.
 # allow_nested = false
 # Experimental local Kitty graphics rendering for attached clients.
