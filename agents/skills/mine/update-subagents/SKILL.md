@@ -1,40 +1,20 @@
 ---
 name: update-subagents
-description: Retarget the model profile for one subagent kind.
+description: Pin or unpin the model profile for a subagent kind.
 disable-model-invocation: true
-argument-hint: "use <model> [effort] to <research|implement|write|review>"
 ---
 
-# Update subagents
+1. Check the new model
 
-Retarget one kind so the **next spawn** of that kind uses the new profile. Running sessions stay as they are.
+You receive a message like: "use <model> [instead of <model>]"
+- `<model>` ~= `<provider>/<actual_model>`. If `model` is not provided like `provider/actual_model`, ask the user to specify both elements.
+- the text in `[]` is optional by the user.
 
-Resolve sibling `../pi-subagent/SKILL.md` (the table) and `../pi-subagent/scripts/pi-subagent.sh` (helper constants) relative to this `SKILL.md`.
+2. Show current models
 
-## 1. Parse
+Provide the models that are already available in the ../subagents/scripts/subagent.py script, in the MODELS object within the first 50 lines of code.
+The user has to decide between those models the one that's going to be replaced with the model they have indicated at the beginning.
 
-Expect `/update-subagents use <model> [effort] to <research|implement|write|review>`.
+3. Update script
 
-- Missing model, or kind not exactly `research` | `implement` | `write` | `review`: refuse and say so. Do not guess.
-- Effort omitted: keep that kind's current effort.
-
-This step is complete when the model and kind are valid, or the user has been told why it was refused.
-
-## 2. Map
-
-| Kind | Table row (Session) | Helper constants |
-|---|---|---|
-| research | researcher | none |
-| implement | implementer | `DEFAULT_MODEL` / `DEFAULT_EFFORT` |
-| write | writer | none |
-| review | reviewer | `CRITIC_MODEL` / `CRITIC_EFFORT` |
-
-This step is complete when the row and constants for this kind are identified.
-
-## 3. Edit
-
-1. In the table, set that row's Model cell to the given model. Set Effort only when the user passed one; otherwise leave the cell as-is.
-2. When the kind has helper constants, write them as **literals** (`CRITIC_MODEL=...`, not `$PLANNER_MODEL`). Match the table: new model, and the effort cell after step 1.
-3. Leave the planner row, `PLANNER_*`, `DEFAULT_AGENT`, and every other kind untouched. Do not edit `.pi-subagent-runs/` or stop running children.
-
-This step is complete when the next spawn of that kind would use the new profile, and running sessions are untouched.
+Update the script, replacing the selected model to switch with the new one.
