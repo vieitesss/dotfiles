@@ -1,0 +1,9 @@
+{
+  "pr": {"number": 0, "title": "probe", "body": "", "url": "", "author": "vieitesss",
+         "headRefOid": "4c96d48ae500b0f3f128e027249daf028d58577f"},
+  "threads": [
+    {"isResolved": false, "isOutdated": false, "path": "app.log", "line": 1, "originalLine": 1,
+     "comments": {"nodes": [{"author": {"login": "some-bot"}, "body": "This file looks wrong, please fix the formatting.", "createdAt": "", "url": ""}]}}
+  ],
+  "diff": ""
+}
