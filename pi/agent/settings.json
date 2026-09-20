@@ -1,15 +1,16 @@
 {
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "0.86.1",
   "hideThinkingBlock": true,
   "defaultProvider": "github-copilot",
-  "defaultModel": "kimi-k3",
+  "defaultModel": "grok-4.6",
   "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
     "npm:@ff-labs/pi-fff",
     "npm:pi-web-extension",
     "npm:pi-intercom",
-    "npm:@inobit/pi-themes"
+    "npm:@inobit/pi-themes",
+    "git:github.com/badlogic/pi-telegram"
   ],
   "theme": "gruber-lighter",
   "fullscreenScrollbar": "auto",
