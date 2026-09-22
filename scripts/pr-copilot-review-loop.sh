@@ -139,26 +139,27 @@ get_pr_url() {
 # Timestamp of the newest Copilot review, or empty.
 latest_copilot_ts() {
   gh api --paginate "repos/${NWO}/pulls/${PR_NUMBER}/reviews?per_page=100" \
-    --jq '.[] | select(.user.login | test("copilot"; "i")) | .submitted_at' \
+    --jq '.[] | select((.user.login // "" | ascii_downcase) == "copilot-pull-request-reviewer[bot]" or (.user.login // "" | ascii_downcase) == "copilot") | .submitted_at' \
     2>/dev/null | sort | tail -1 || true
 }
 
 # Timestamp of the newest Copilot inline code comment, or empty.
 latest_copilot_comment_ts() {
   gh api --paginate "repos/${NWO}/pulls/${PR_NUMBER}/comments?per_page=100" \
-    --jq '.[] | select(.user.login | test("copilot"; "i")) | .created_at' \
+    --jq '.[] | select((.user.login // "" | ascii_downcase) == "copilot-pull-request-reviewer[bot]" or (.user.login // "" | ascii_downcase) == "copilot") | .created_at' \
     2>/dev/null | sort | tail -1 || true
 }
 
 count_copilot_comments_after() {
   gh api --paginate "repos/${NWO}/pulls/${PR_NUMBER}/comments?per_page=100" \
-    --jq '.[] | select(.user.login | test("copilot"; "i")) | .created_at' \
+    --jq '.[] | select((.user.login // "" | ascii_downcase) == "copilot-pull-request-reviewer[bot]" or (.user.login // "" | ascii_downcase) == "copilot") | .created_at' \
     2>/dev/null | awk -v baseline="$1" '$0 > baseline { n++ } END { print n + 0 }'
 }
 
 request_copilot_review() {
   local out rc
-  out=$(gh pr edit "${PR_NUMBER}" --add-reviewer "@copilot" 2>&1) && rc=0 || rc=$?
+  out=$(gh api -X POST "repos/${NWO}/pulls/${PR_NUMBER}/requested_reviewers" \
+    -f 'reviewers[]=copilot-pull-request-reviewer[bot]' 2>&1) && rc=0 || rc=$?
   if (( rc == 0 )); then
     log "Copilot reviewer requested."
   else
@@ -252,6 +253,74 @@ self_check() {
     echo "PASS: comment-only Copilot activity"
   else
     echo "FAIL: comment-only Copilot activity"; failed=1
+  fi
+
+  # Copilot review request must use the REST API's exact reviewer payload.
+  # Stub gh so this stays offline while exercising request_copilot_review itself.
+  local request_capture expected_request actual_request
+  request_capture=$(mktemp)
+  gh() { printf '%s\n' "$@" > "$request_capture"; }
+  NWO="owner/repo"
+  PR_NUMBER=123
+  request_copilot_review >/dev/null 2>&1
+  unset -f gh
+  expected_request=$'api\n-X\nPOST\nrepos/owner/repo/pulls/123/requested_reviewers\n-f\nreviewers[]=copilot-pull-request-reviewer[bot]'
+  actual_request=$(cat "$request_capture")
+  rm -f "$request_capture"
+  if [[ "$actual_request" == "$expected_request" ]]; then
+    echo "PASS: Copilot request uses REST API payload"
+  else
+    echo "FAIL: Copilot request command/payload (got: ${actual_request//$'\n'/ } expected: ${expected_request//$'\n'/ })"; failed=1
+  fi
+
+  # Author filters match the live review bot and inline-comment logins, not
+  # unrelated logins that merely contain the word "copilot".
+  # jq is self-check-only; the workflow uses gh's embedded --jq support.
+  if command -v jq >/dev/null 2>&1; then
+    local reviews_fixture comments_fixture review_ts comment_ts comment_count
+    reviews_fixture=$(mktemp)
+    comments_fixture=$(mktemp)
+    cat > "$reviews_fixture" <<'EOF'
+[
+  {"user":{"login":"copilot-pull-request-reviewer[bot]"},"submitted_at":"2025-01-01T00:03:00Z"},
+  {"user":{"login":"copilot-helper"},"submitted_at":"2025-01-01T00:04:00Z"}
+]
+EOF
+    cat > "$comments_fixture" <<'EOF'
+[
+  {"user":{"login":"Copilot"},"created_at":"2025-01-01T00:05:00Z"},
+  {"user":{"login":"copilot-helper"},"created_at":"2025-01-01T00:06:00Z"}
+]
+EOF
+    gh() {
+      local jq_filter="" fixture="$reviews_fixture"
+      while (( $# )); do
+        case "$1" in
+          *"/comments?"*) fixture="$comments_fixture" ;;
+        esac
+        if [[ "$1" == --jq ]]; then
+          jq_filter="$2"
+          shift 2
+        else
+          shift
+        fi
+      done
+      jq -r "$jq_filter" "$fixture"
+    }
+    review_ts=$(latest_copilot_ts)
+    comment_ts=$(latest_copilot_comment_ts)
+    comment_count=$(count_copilot_comments_after "2025-01-01T00:00:00Z")
+    unset -f gh
+    rm -f "$reviews_fixture" "$comments_fixture"
+    if [[ "$review_ts" == "2025-01-01T00:03:00Z" \
+      && "$comment_ts" == "2025-01-01T00:05:00Z" \
+      && "$comment_count" == 1 ]]; then
+      echo "PASS: exact Copilot author filters"
+    else
+      echo "FAIL: exact Copilot author filters (review=${review_ts:-none} comment=${comment_ts:-none} count=${comment_count:-none})"; failed=1
+    fi
+  else
+    echo "SKIP: exact Copilot author filters (jq not installed)"
   fi
 
   # PR number from URL
