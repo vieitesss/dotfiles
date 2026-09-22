@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a pi subagent in a new herdr tab and wait for it to finish.
+"""Launch a pi subagent in a new herdr tab and return immediately.
 
 Jev (TypeSafe) reads the task and picks the subagent kind, model, thinking
 effort, and which skills to load. CLI flags override any of those choices.
@@ -7,11 +7,12 @@ effort, and which skills to load. CLI flags override any of those choices.
 Usage:
     subagent.py "task for the subagent" [--kind K] [--model M] [--effort E]
                 [--skill NAME]... [--cwd DIR] [--workspace ID]
-                [--timeout MS] [--lines N] [--keep] [--dry-run]
+                [--timeout MS] [--dry-run]
+    subagent.py --close TAB_ID
 
 Creates a new tab in the current herdr workspace, starts a pi agent there,
-submits the task, and waits for the agent to finish. Prints the agent's recent
-terminal output and closes the tab, unless --keep is given or the agent blocks.
+submits the task, prints the tab id, and exits. The parent does not wait.
+Close the tab later with --close.
 """
 
 import argparse
@@ -19,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -325,7 +327,7 @@ def subagent_prompt(task, profile):
 # --------------------------------------------------------------- main
 
 
-def launch(name, pane_id, argv):
+def launch(name, pane_id, argv, timeout_ms=30000):
     """Start pi in the pane; on failure show pi's own error and report it."""
 
     def start(extra):
@@ -339,6 +341,8 @@ def launch(name, pane_id, argv):
                 "pi",
                 "--pane",
                 pane_id,
+                "--timeout",
+                str(timeout_ms),
                 "--",
                 *extra,
             ],
@@ -347,8 +351,15 @@ def launch(name, pane_id, argv):
             check=False,
         )
 
+    started = time.monotonic()
     proc = start(argv)
-    if proc.returncode == 0:
+    while proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        if "agent_pane_busy" not in detail or time.monotonic() - started >= 30:
+            break
+        time.sleep(0.25)
+        proc = start(argv)
+    else:
         return True
 
     view = herdr(
@@ -387,18 +398,25 @@ def launch(name, pane_id, argv):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("task")
+    parser.add_argument("task", nargs="?")
     parser.add_argument("--kind", choices=sorted(KINDS))
     parser.add_argument("--model", choices=sorted(MODELS))
     parser.add_argument("--effort", choices=sorted(EFFORTS))
     parser.add_argument("--skill", action="append")
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--workspace")
-    parser.add_argument("--timeout", type=int, default=600000)
-    parser.add_argument("--lines", type=int, default=40)
-    parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--timeout", type=int, default=30000)
+    parser.add_argument("--close", metavar="TAB_ID")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--keep", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--lines", type=int, default=40, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.close:
+        herdr("tab", "close", args.close)
+        return 0
+    if not args.task:
+        parser.error("task is required")
 
     skills = discover_skills(args.cwd)
     profile = choose_profile(args, skills)
@@ -409,7 +427,7 @@ def main():
 
     workspace = args.workspace or focused_workspace()
     name = f"subagent-{profile['kind']}-{os.getpid()}"
-    keep = args.keep
+    start_timeout = min(max(args.timeout, 1000), 300000)
 
     tab = herdr_json(
         "tab",
@@ -429,44 +447,14 @@ def main():
         file=sys.stderr,
     )
 
-    try:
-        if not launch(name, pane_id, pi_args(profile)):
-            keep = True
-            return 2
-        result = herdr_json(
-            "agent",
-            "prompt",
-            name,
-            subagent_prompt(args.task, profile),
-            "--wait",
-            "--until",
-            "done",
-            "--until",
-            "blocked",
-            "--timeout",
-            str(args.timeout),
-        )["result"]
-        status = result["agent"]["agent_status"]
-
-        print(
-            herdr(
-                "agent", "read", name, "--source", "recent", "--lines", str(args.lines)
-            )
-        )
-
-        if status == "blocked":
-            keep = True
-            print(
-                f"[subagent] {name} is blocked; inspect tab {tab_id}", file=sys.stderr
-            )
-            return 2
-        if status != "done":
-            print(f"[subagent] {name} ended in status {status}", file=sys.stderr)
-            return 1
-        return 0
-    finally:
-        if not keep:
-            herdr("tab", "close", tab_id, check=False)
+    if not launch(name, pane_id, pi_args(profile), timeout_ms=start_timeout):
+        return 2
+    herdr("agent", "prompt", name, subagent_prompt(args.task, profile))
+    print(
+        f"[subagent] launched; close with {sys.argv[0]} --close {tab_id}",
+        file=sys.stderr,
+    )
+    return 0
 
 
 if __name__ == "__main__":

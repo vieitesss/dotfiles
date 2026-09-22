@@ -9,13 +9,15 @@ Run `scripts/subagent.py` from the herdr pane where the parent Pi runs.
 scripts/subagent.py "the task for the child" \
   [--kind research|implement|write] [--model MODEL] [--effort LEVEL] \
   [--skill NAME]... [--cwd DIR] [--workspace ID] \
-  [--timeout MS] [--lines N] [--keep] [--dry-run]
+  [--timeout MS] [--dry-run]
+
+scripts/subagent.py --close TAB_ID
 ```
 
-It creates a herdr tab, starts Pi there, prompts it with the task, waits until it
-is done or blocked, prints its recent output, and closes the tab. The tab stays
-open when the child blocks, when the launch fails, or with `--keep` (those
-failures exit 2).
+It creates a herdr tab, starts Pi there, prompts it with the task, prints the
+tab id, and exits. The parent does not wait for the child. Close the tab later
+with `--close` and the tab id from launch. Launch failures exit 2 and leave the
+tab open.
 
 Jev picks `--kind`, `--model`, `--effort`, and the skills (it needs
 `TYPESAFE_API_KEY` and falls back to `--kind implement` on error). Each flag
