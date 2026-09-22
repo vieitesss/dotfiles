@@ -30,9 +30,9 @@ KINDS = {
 
 MODELS = {
     "opencode-go/deepseek-v4.1-flash": "Small, mechanical, well-specified tasks where speed matters.",
-    "github-copilot/grok-4.6": "Most tasks; strong general coding and writing at moderate cost.",
+    "opencode-go/mimo-v2.6-flash": "Most tasks; strong general coding and writing at moderate cost.",
     "github-copilot/kimi-k3": "Multi-step tasks that need careful reasoning.",
-    "openai-codex/gpt-5.6-sol": "Hard, ambiguous, or high-stakes tasks.",
+    "github-copilot/gpt-5.6-sol": "Hard, ambiguous, or high-stakes tasks.",
 }
 
 EFFORTS = {

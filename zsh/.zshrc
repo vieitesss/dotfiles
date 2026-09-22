@@ -225,6 +225,7 @@ source "$HOME/.zsh_functions"
 [ -f "$HOME/.profile" ] && source "$HOME/.profile"
 
 add-to-path "MY_SCRIPTS" "$HOME/.local/bin"
+add-to-path "DOTFILES_SCRIPTS" "$DOTFILES/scripts"
 
 # macOS-specific: LaTeX
 if [[ $IS_DARWIN -eq 1 ]] && [[ -d "/Library/TeX/texbin" ]]; then

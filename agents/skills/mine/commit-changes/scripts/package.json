@@ -1,0 +1,10 @@
+{
+  "name": "commit-changes-guard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Jev message_matches guardrail for the commit-changes skill (issue 0002)",
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
+  }
+}
