@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.87.0",
   "hideThinkingBlock": true,
   "defaultProvider": "opencode-go",
-  "defaultModel": "mimo-v2.6-pro",
+  "defaultModel": "deepseek-v4.1-flash",
   "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
