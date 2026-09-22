@@ -320,14 +320,20 @@ def pi_args(profile):
     return args
 
 
-def subagent_prompt(task, profile):
+def subagent_prompt(task, profile, parent_session):
     """Task prompt, prefixed with the skills to use and how to reach the parent."""
     lines = []
     if profile["skills"]:
         lines.append(f"Use these skills: {', '.join(profile['skills'])}.")
+    if parent_session:
+        lines.append(f"Your parent agent is intercom session {parent_session}.")
+    else:
+        lines.append("Find your parent agent with `intercom list`.")
     lines.append(
-        "You can communicate with other agents and with your parent agent "
-        "using pi-intercom; use it to report progress or ask questions."
+        "Use pi-intercom to report: when the task is finished, send your final "
+        "result to the parent session with `intercom send` (fire-and-forget); "
+        "when blocked on a question, `intercom ask` the parent. "
+        "Reporting via intercom is mandatory, not optional. "
     )
     return "\n".join(lines) + "\n\n" + task
 
@@ -457,7 +463,10 @@ def main():
 
     if not launch(name, pane_id, pi_args(profile), timeout_ms=start_timeout):
         return 2
-    herdr("agent", "prompt", name, subagent_prompt(args.task, profile))
+    parent_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
+        "PI_SESSION_ID"
+    )
+    herdr("agent", "prompt", name, subagent_prompt(args.task, profile, parent_session))
     print(
         f"[subagent] launched; close with {sys.argv[0]} --close {tab_id}",
         file=sys.stderr,
