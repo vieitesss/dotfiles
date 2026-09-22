@@ -10,7 +10,7 @@ Usage:
                 [--timeout MS] [--dry-run]
     subagent.py --close TAB_ID
 
-Creates a new tab in the current herdr workspace, starts a pi agent there,
+Creates a new tab in the calling agent's herdr workspace, starts a pi agent there,
 submits the task, prints the tab id, and exits. The parent does not wait.
 Close the tab later with --close.
 """
@@ -113,7 +113,15 @@ def herdr_json(*args):
     return json.loads(herdr(*args))
 
 
-def focused_workspace():
+def parent_workspace():
+    """Workspace the calling agent runs in, not whichever one has UI focus.
+
+    Herdr sets HERDR_WORKSPACE_ID in every pane, so prefer that. The focused
+    workspace is only a fallback for callers running outside a herdr pane.
+    """
+    workspace = os.environ.get("HERDR_WORKSPACE_ID")
+    if workspace:
+        return workspace
     for ws in herdr_json("workspace", "list")["result"]["workspaces"]:
         if ws["focused"]:
             return ws["workspace_id"]
@@ -425,7 +433,7 @@ def main():
         print(json.dumps(profile, indent=2))
         return 0
 
-    workspace = args.workspace or focused_workspace()
+    workspace = args.workspace or parent_workspace()
     name = f"subagent-{profile['kind']}-{os.getpid()}"
     start_timeout = min(max(args.timeout, 1000), 300000)
 

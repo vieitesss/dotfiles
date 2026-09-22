@@ -14,10 +14,12 @@ scripts/subagent.py "the task for the child" \
 scripts/subagent.py --close TAB_ID
 ```
 
-It creates a herdr tab, starts Pi there, prompts it with the task, prints the
-tab id, and exits. The parent does not wait for the child. Close the tab later
-with `--close` and the tab id from launch. Launch failures exit 2 and leave the
-tab open.
+It creates a herdr tab in the calling agent's workspace (from
+`HERDR_WORKSPACE_ID`, not whichever workspace is focused in the UI), starts Pi
+there, prompts it with the task, prints the tab id, and exits. The parent does
+not wait for the child. Close the tab later with `--close` and the tab id from
+launch. Launch failures exit 2 and leave the tab open. `--workspace` overrides
+the target workspace.
 
 Jev picks `--kind`, `--model`, `--effort`, and the skills (it needs
 `TYPESAFE_API_KEY` and falls back to `--kind implement` on error). Each flag
