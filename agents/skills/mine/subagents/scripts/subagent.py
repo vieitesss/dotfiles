@@ -31,10 +31,10 @@ KINDS = {
 }
 
 MODELS = {
-    "opencode-go/deepseek-v4.1-flash": "Small, mechanical, well-specified tasks where speed matters.",
-    "openai-codex/gpt-6-luna": "Most tasks; strong general coding and writing at moderate cost.",
-    "openai-codex/gpt-6-sol": "Multi-step tasks that need careful reasoning.",
-    "opencode-go/mimo-v2.6-pro": "Hard, ambiguous, or high-stakes tasks.",
+    "opencode-go/mimo-v2.6-flash": "Small, mechanical, well-specified tasks where speed matters.",
+    "opencode-go/deepseek-v4.1-flash": "Most tasks; strong general coding and writing at moderate cost.",
+    "openai-codex/gpt-6-luna": "Multi-step tasks that need careful reasoning.",
+    "openai-codex/gpt-6-sol": "Hard, ambiguous, or high-stakes tasks.",
 }
 
 EFFORTS = {
