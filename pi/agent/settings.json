@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.87.0",
+  "lastChangelogVersion": "0.87.1",
   "hideThinkingBlock": true,
-  "defaultProvider": "opencode-go",
-  "defaultModel": "deepseek-v4.1-flash",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-6-sol",
   "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
