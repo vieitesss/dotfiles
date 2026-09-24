@@ -2,11 +2,11 @@
 """Launch a pi subagent in a new herdr tab and return immediately.
 
 Jev (TypeSafe) reads the task and picks the subagent kind, model, thinking
-effort, and which skills to load. CLI flags override any of those choices.
+effort, and which skills to load. The --skill flag may override the skills.
 
 Usage:
-    subagent.py "task for the subagent" [--kind K] [--model M] [--effort E]
-                [--skill NAME]... [--cwd DIR] [--workspace ID]
+    subagent.py "task for the subagent" [--skill NAME]...
+                [--cwd DIR] [--workspace ID]
                 [--timeout MS] [--dry-run]
     subagent.py --close TAB_ID
 
@@ -34,7 +34,7 @@ MODELS = {
     "opencode-go/mimo-v2.6-flash": "Small, mechanical, well-specified tasks where speed matters.",
     "opencode-go/deepseek-v4.1-flash": "Most tasks; strong general coding and writing at moderate cost.",
     "openai-codex/gpt-6-luna": "Multi-step tasks that need careful reasoning.",
-    "openai-codex/gpt-6-sol": "Hard, ambiguous, or high-stakes tasks.",
+    "github-copilot/gpt-6-sol": "Hard, ambiguous, or high-stakes tasks.",
 }
 
 EFFORTS = {
@@ -264,33 +264,21 @@ def jev_profile(task, skills):
 
 
 def choose_profile(args, skills):
-    pinned = args.kind and args.model and args.effort and args.skill is not None
-    if pinned:
+    try:
+        profile = jev_profile(args.task, skills)
+    except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
+        print(
+            f"[subagent] jev unavailable ({err}); using pi defaults",
+            file=sys.stderr,
+        )
         profile = {
-            "kind": args.kind,
-            "model": args.model,
-            "effort": args.effort,
-            "skills": args.skill,
+            "kind": "implement",
+            "model": None,
+            "effort": None,
+            "skills": None,
         }
-    else:
-        try:
-            profile = jev_profile(args.task, skills)
-        except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
-            print(
-                f"[subagent] jev unavailable ({err}); using pi defaults",
-                file=sys.stderr,
-            )
-            profile = {
-                "kind": "implement",
-                "model": None,
-                "effort": None,
-                "skills": None,
-            }
-        profile["kind"] = args.kind or profile["kind"]
-        profile["model"] = args.model or profile["model"]
-        profile["effort"] = args.effort or profile["effort"]
-        if args.skill is not None:
-            profile["skills"] = args.skill
+    if args.skill is not None:
+        profile["skills"] = args.skill
 
     profile["kind"] = profile["kind"] if profile["kind"] in KINDS else "implement"
     profile["model"] = profile["model"] if profile["model"] in MODELS else None
@@ -413,9 +401,6 @@ def launch(name, pane_id, argv, timeout_ms=30000):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("task", nargs="?")
-    parser.add_argument("--kind", choices=sorted(KINDS))
-    parser.add_argument("--model", choices=sorted(MODELS))
-    parser.add_argument("--effort", choices=sorted(EFFORTS))
     parser.add_argument("--skill", action="append")
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--workspace")

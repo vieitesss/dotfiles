@@ -7,7 +7,6 @@ Run `scripts/subagent.py` from the herdr pane where the parent Pi runs.
 
 ```bash
 scripts/subagent.py "the task for the child" \
-  [--kind research|implement|write] [--model MODEL] [--effort LEVEL] \
   [--skill NAME]... [--cwd DIR] [--workspace ID] \
   [--timeout MS] [--dry-run]
 
@@ -21,11 +20,11 @@ not wait for the child (see Waiting for the subagent). Close the tab later with
 `--close` and the tab id from launch. Launch failures exit 2 and leave the tab
 open. `--workspace` overrides the target workspace.
 
-Jev picks `--kind`, `--model`, `--effort`, and the skills (it needs
-`TYPESAFE_API_KEY` and falls back to `--kind implement` on error). Each flag
-overrides just its own field, so Jev is skipped only when all four are given.
-`--dry-run` prints the chosen profile without launching. The child's prompt
-names the skills to use and tells it it can reach the parent via pi-intercom.
+Jev always picks the subagent kind, model, and thinking effort, and by default
+picks the skills too. `--skill` overrides Jev's skill choices.
+Jev needs `TYPESAFE_API_KEY`; if it is unavailable, the launcher uses the
+`implement` kind and pi's default model and effort. `--dry-run` prints the
+chosen profile without launching. The child's prompt names the skills to use and tells it it can reach the parent via pi-intercom.
 
 ## Waiting for the subagent
 
