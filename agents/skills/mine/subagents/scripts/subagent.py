@@ -33,7 +33,7 @@ KINDS = {
 MODELS = {
     "opencode-go/mimo-v2.6-flash": "Trivial or mechanical, fully specified tasks that need no real reasoning and where speed matters.",
     "opencode-go/deepseek-v4.1-flash": "The default for most tasks: well-scoped everyday coding, writing, and research, including straightforward multi-step work. Prefer this unless a stronger model is clearly needed.",
-    "openai-codex/gpt-6-luna": "The strongest model for ordinary difficult work: substantial multi-step tasks that need careful reasoning, or moderately unclear tasks with ordinary stakes. Choose this when a task is hard, large, or somewhat vague.",
+    "github-copilot/gpt-6-luna": "The strongest model for ordinary difficult work: substantial multi-step tasks that need careful reasoning, or moderately unclear tasks with ordinary stakes. Choose this when a task is hard, large, or somewhat vague.",
     "claude-code/opus": "Reserved for genuinely exceptional tasks only: production-critical or otherwise high-stakes work, especially when the right approach is genuinely unclear. Choose this when an error would be costly and cheaper models are likely to fail.",
 }
 
