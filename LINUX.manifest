@@ -21,6 +21,21 @@ wezterm|~/.config/wezterm
 
 agents/skills/mine|~/.agents/skills/mine
 
+# Claude Code only discovers skills one level deep in ~/.claude/skills
+agents/skills/mine/clockify-fill|~/.claude/skills/clockify-fill
+agents/skills/mine/coding|~/.claude/skills/coding
+agents/skills/mine/commit-changes|~/.claude/skills/commit-changes
+agents/skills/mine/component-finder|~/.claude/skills/component-finder
+agents/skills/mine/gh-stack|~/.claude/skills/gh-stack
+agents/skills/mine/grilling-frontend-prototype|~/.claude/skills/grilling-frontend-prototype
+agents/skills/mine/idea|~/.claude/skills/idea
+agents/skills/mine/loop-me|~/.claude/skills/loop-me
+agents/skills/mine/review-github-pr-comments|~/.claude/skills/review-github-pr-comments
+agents/skills/mine/subagents|~/.claude/skills/subagents
+agents/skills/mine/teach|~/.claude/skills/teach
+agents/skills/mine/update-subagents|~/.claude/skills/update-subagents
+agents/skills/mine/using-herdr|~/.claude/skills/using-herdr
+
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
 pi/agent/extensions|~/.pi/agent/extensions
