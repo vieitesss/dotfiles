@@ -1,4 +1,5 @@
 zsh/.zshrc|~/.zshrc
+zsh/.zshenv|~/.zshenv
 zsh/.zsh_functions|~/.zsh_functions
 zsh/aliases|~/.aliases
 

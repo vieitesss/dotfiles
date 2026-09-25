@@ -18,6 +18,7 @@ agents/skills/mine/using-herdr|~/.claude/skills/using-herdr
 claude/statusline.sh|~/.claude/statusline.sh
 
 zsh/.zshrc|~/.zshrc
+zsh/.zshenv|~/.zshenv
 zsh/.zsh_functions|~/.zsh_functions
 zsh/aliases|~/.aliases
 
