@@ -26,6 +26,12 @@ Jev needs `TYPESAFE_API_KEY`; if it is unavailable, the launcher uses the
 `implement` kind and pi's default model and effort. `--dry-run` prints the
 chosen profile without launching. The child's prompt names the skills to use and tells it it can reach the parent via pi-intercom.
 
+A `claude-code/<model>` model starts Claude Code instead of Pi. Claude has no
+intercom tool, so its prompt tells it to report through the pi-intercom CLI
+(`cli.ts send`/`ask`) via Bash; its messages reach you like any other intercom
+message. To send a Claude child a follow-up, use
+`herdr agent prompt <agent-name> "..."`.
+
 ## Waiting for the subagent
 
 After `subagent.py` returns, do nothing and end your turn. No sleep loops, no

@@ -34,7 +34,7 @@ MODELS = {
     "opencode-go/mimo-v2.6-flash": "Trivial or mechanical, fully specified tasks that need no real reasoning and where speed matters.",
     "opencode-go/deepseek-v4.1-flash": "The default for most tasks: well-scoped everyday coding, writing, and research, including straightforward multi-step work. Prefer this unless a stronger model is clearly needed.",
     "openai-codex/gpt-6-luna": "The strongest model for ordinary difficult work: substantial multi-step tasks that need careful reasoning, or moderately unclear tasks with ordinary stakes. Choose this when a task is hard, large, or somewhat vague.",
-    "openai-codex/gpt-6-sol": "Reserved for genuinely exceptional tasks only: production-critical or otherwise high-stakes work, especially when the right approach is genuinely unclear. Choose this when an error would be costly and cheaper models are likely to fail.",
+    "claude-code/opus": "Reserved for genuinely exceptional tasks only: production-critical or otherwise high-stakes work, especially when the right approach is genuinely unclear. Choose this when an error would be costly and cheaper models are likely to fail.",
 }
 
 EFFORTS = {
@@ -47,6 +47,13 @@ EFFORTS = {
 }
 
 SKILL_THRESHOLD = 0.5  # Noul probability at or above which a skill is selected
+
+CLAUDE_PROVIDER = "claude-code"
+CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+# Claude has no pi-intercom tool; it reports through the package's CLI instead.
+INTERCOM_CLI = "npx --yes tsx " + os.path.expanduser(
+    "~/.pi/agent/npm/node_modules/pi-intercom/cli.ts"
+)
 
 THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -299,6 +306,46 @@ def choose_profile(args, skills):
     return profile
 
 
+def is_claude(profile):
+    return (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER
+
+
+def claude_args(profile):
+    args = ["--append-system-prompt", KINDS[profile["kind"]]]
+    if profile["model"]:
+        args += ["--model", profile["model"].partition("/")[2]]
+    if profile["effort"]:
+        args += ["--effort", clamp_effort(profile["effort"], CLAUDE_EFFORTS)]
+    # Let the intercom CLI run without a permission prompt, or reporting stalls.
+    args += ["--allowedTools", f"Bash({INTERCOM_CLI} *)"]
+    return args
+
+
+def trust_claude_dir(cwd):
+    """Pre-accept Claude Code's workspace trust dialog for cwd.
+
+    Interactive claude has no flag to skip the dialog; it reads
+    projects[<path>].hasTrustDialogAccepted from ~/.claude.json.
+    """
+    path = os.path.expanduser("~/.claude.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except FileNotFoundError:
+        config = {}
+    except (OSError, ValueError) as err:
+        print(f"[subagent] cannot read {path} ({err}); skipping trust", file=sys.stderr)
+        return
+    project = config.setdefault("projects", {}).setdefault(os.path.realpath(cwd), {})
+    if project.get("hasTrustDialogAccepted"):
+        return
+    project["hasTrustDialogAccepted"] = True
+    tmp = f"{path}.subagent-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+    os.replace(tmp, path)
+
+
 def pi_args(profile):
     args = ["--append-system-prompt", KINDS[profile["kind"]]]
     if profile["model"]:
@@ -308,11 +355,40 @@ def pi_args(profile):
     return args
 
 
-def subagent_prompt(task, profile, parent_session):
+def claude_intercom_lines(parent_session, name):
+    """How a Claude child reaches the parent: the pi-intercom CLI via Bash."""
+    target = parent_session or "<parent-session-id>"
+    lines = []
+    if not parent_session:
+        lines.append(
+            f"Find your parent agent's session id with `{INTERCOM_CLI} list`."
+        )
+    lines += [
+        f"Your parent agent is pi-intercom session {target}. You have no intercom "
+        "tool; use the pi-intercom CLI through Bash instead:",
+        "",
+        "```sh",
+        f'{INTERCOM_CLI} send --to {target} --name {name} --text "TASK COMPLETE: <summary>"',
+        f'{INTERCOM_CLI} ask --to {target} --name {name} --timeout-ms 600000 --text "<question>"',
+        "```",
+        "",
+        "When the task is finished, `send` your final result to the parent "
+        "(fire-and-forget). When blocked on a question, `ask` the parent; the "
+        "command waits and prints the parent's reply. For long results, write "
+        "them to a file and send its path. Reporting this way is mandatory, "
+        "not optional.",
+    ]
+    return lines
+
+
+def subagent_prompt(task, profile, parent_session, name):
     """Task prompt, prefixed with the skills to use and how to reach the parent."""
     lines = []
     if profile["skills"]:
         lines.append(f"Use these skills: {', '.join(profile['skills'])}.")
+    if is_claude(profile):
+        lines += claude_intercom_lines(parent_session, name)
+        return "\n".join(lines) + "\n\n" + task
     if parent_session:
         lines.append(f"Your parent agent is intercom session {parent_session}.")
     else:
@@ -329,8 +405,8 @@ def subagent_prompt(task, profile, parent_session):
 # --------------------------------------------------------------- main
 
 
-def launch(name, pane_id, argv, timeout_ms=30000):
-    """Start pi in the pane; on failure show pi's own error and report it."""
+def launch(name, pane_id, argv, timeout_ms=30000, kind="pi"):
+    """Start the agent in the pane; on failure show its own error and report it."""
 
     def start(extra):
         return subprocess.run(
@@ -340,7 +416,7 @@ def launch(name, pane_id, argv, timeout_ms=30000):
                 "start",
                 name,
                 "--kind",
-                "pi",
+                kind,
                 "--pane",
                 pane_id,
                 "--timeout",
@@ -376,12 +452,13 @@ def launch(name, pane_id, argv, timeout_ms=30000):
     level_error = any(
         any(w in line for w in ("thinking", "reasoning", "effort")) for line in errors
     )
-    if "--thinking" in argv and level_error:
+    effort_flag = "--effort" if kind == "claude" else "--thinking"
+    if effort_flag in argv and level_error:
         print(
             "[subagent] launch failed on effort; retrying with the model default",
             file=sys.stderr,
         )
-        cut = argv.index("--thinking")
+        cut = argv.index(effort_flag)
         retry = [arg for i, arg in enumerate(argv) if i not in (cut, cut + 1)]
         proc = start(retry)
         if proc.returncode == 0:
@@ -446,12 +523,17 @@ def main():
         file=sys.stderr,
     )
 
-    if not launch(name, pane_id, pi_args(profile), timeout_ms=start_timeout):
+    if is_claude(profile):
+        trust_claude_dir(args.cwd)
+        kind, argv = "claude", claude_args(profile)
+    else:
+        kind, argv = "pi", pi_args(profile)
+    if not launch(name, pane_id, argv, timeout_ms=start_timeout, kind=kind):
         return 2
     parent_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
         "PI_SESSION_ID"
     )
-    herdr("agent", "prompt", name, subagent_prompt(args.task, profile, parent_session))
+    herdr("agent", "prompt", name, subagent_prompt(args.task, profile, parent_session, name))
     print(
         f"[subagent] launched; close with {sys.argv[0]} --close {tab_id}",
         file=sys.stderr,
