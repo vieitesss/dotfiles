@@ -108,7 +108,9 @@ right="$(fg "$dim")$model $sep $effort$reset"
 plain_left="$tokens $sep $percent $sep $cost"
 plain_middle="$cwd${branch:+ $sep $branch}"
 plain_right="$model $sep $effort"
-width=${COLUMNS:-0}
+# Claude Code passes the full terminal width but renders the line with a
+# 2-column margin on each side, truncating anything wider with "…".
+width=$((${COLUMNS:-0} - 4))
 if [ "$width" -gt 0 ] 2>/dev/null; then
   free=$((width - ${#plain_left} - ${#plain_middle} - ${#plain_right}))
   if [ "$free" -ge 2 ]; then
