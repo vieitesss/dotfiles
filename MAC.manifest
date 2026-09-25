@@ -15,6 +15,7 @@ agents/skills/mine/subagents|~/.claude/skills/subagents
 agents/skills/mine/teach|~/.claude/skills/teach
 agents/skills/mine/update-subagents|~/.claude/skills/update-subagents
 agents/skills/mine/using-herdr|~/.claude/skills/using-herdr
+claude/statusline.sh|~/.claude/statusline.sh
 
 zsh/.zshrc|~/.zshrc
 zsh/.zsh_functions|~/.zsh_functions

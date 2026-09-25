@@ -35,6 +35,7 @@ agents/skills/mine/subagents|~/.claude/skills/subagents
 agents/skills/mine/teach|~/.claude/skills/teach
 agents/skills/mine/update-subagents|~/.claude/skills/update-subagents
 agents/skills/mine/using-herdr|~/.claude/skills/using-herdr
+claude/statusline.sh|~/.claude/statusline.sh
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
