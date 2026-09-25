@@ -50,11 +50,6 @@ SKILL_THRESHOLD = 0.5  # Noul probability at or above which a skill is selected
 
 CLAUDE_PROVIDER = "claude-code"
 CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
-# Claude has no pi-intercom tool; it reports through the package's CLI instead.
-INTERCOM_CLI = "npx --yes tsx " + os.path.expanduser(
-    "~/.pi/agent/npm/node_modules/pi-intercom/cli.ts"
-)
-
 THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
@@ -316,8 +311,8 @@ def claude_args(profile):
         args += ["--model", profile["model"].partition("/")[2]]
     if profile["effort"]:
         args += ["--effort", clamp_effort(profile["effort"], CLAUDE_EFFORTS)]
-    # Let the intercom CLI run without a permission prompt, or reporting stalls.
-    args += ["--allowedTools", f"Bash({INTERCOM_CLI} *)"]
+    # Let herdr prompts run without a permission prompt, or reporting stalls.
+    args += ["--allowedTools", "Bash(herdr agent prompt *)"]
     return args
 
 
@@ -355,44 +350,43 @@ def pi_args(profile):
     return args
 
 
-def claude_intercom_lines(parent_session, name):
-    """How a Claude child reaches the parent: the pi-intercom CLI via Bash."""
-    target = parent_session or "<parent-session-id>"
+def herdr_lines(parent_pane, name):
+    """How a child reaches a parent without intercom: typing into its pane via herdr."""
+    target = parent_pane or "<parent-pane-id>"
     lines = []
-    if not parent_session:
-        lines.append(
-            f"Find your parent agent's session id with `{INTERCOM_CLI} list`."
-        )
+    if not parent_pane:
+        lines.append("Find your parent agent's pane id with `herdr agent list`.")
     lines += [
-        f"Your parent agent is pi-intercom session {target}. You have no intercom "
-        "tool; use the pi-intercom CLI through Bash instead:",
+        f"Your parent agent runs in herdr pane {target}; you are herdr agent "
+        f"{name}. Reach the parent by prompting its pane through Bash:",
         "",
         "```sh",
-        f'{INTERCOM_CLI} send --to {target} --name {name} --text "TASK COMPLETE: <summary>"',
-        f'{INTERCOM_CLI} ask --to {target} --name {name} --timeout-ms 600000 --text "<question>"',
+        f'herdr agent prompt {target} "[{name}] TASK COMPLETE: <summary>"',
+        f'herdr agent prompt {target} "[{name}] QUESTION: <question>"',
         "```",
         "",
-        "When the task is finished, `send` your final result to the parent "
-        "(fire-and-forget). When blocked on a question, `ask` the parent; the "
-        "command waits and prints the parent's reply. For long results, write "
-        "them to a file and send its path. Reporting this way is mandatory, "
-        "not optional.",
+        "When the task is finished, send your final result that way. When "
+        "blocked on a question, send it, then end your turn; the parent's "
+        "answer arrives as your next prompt. Always start the message with "
+        f"`[{name}]`. For long results, write them to a file and send its "
+        "path. If herdr rejects the prompt (for example `agent_blocked`), wait "
+        "a few seconds and retry. Reporting this way is mandatory, not optional.",
     ]
     return lines
 
 
-def subagent_prompt(task, profile, parent_session, name):
+def subagent_prompt(task, profile, parent_session, name, parent_pane=None):
     """Task prompt, prefixed with the skills to use and how to reach the parent."""
     lines = []
     if profile["skills"]:
         lines.append(f"Use these skills: {', '.join(profile['skills'])}.")
-    if is_claude(profile):
-        lines += claude_intercom_lines(parent_session, name)
+    # Intercom only works between two pi agents. A Claude child has no intercom
+    # tool, and a parent without an intercom session (e.g. Claude) never
+    # receives intercom messages, so everything else reports through herdr.
+    if is_claude(profile) or not parent_session:
+        lines += herdr_lines(parent_pane, name)
         return "\n".join(lines) + "\n\n" + task
-    if parent_session:
-        lines.append(f"Your parent agent is intercom session {parent_session}.")
-    else:
-        lines.append("Find your parent agent with `intercom list`.")
+    lines.append(f"Your parent agent is intercom session {parent_session}.")
     lines.append(
         "Use pi-intercom to report: when the task is finished, send your final "
         "result to the parent session with `intercom send` (fire-and-forget); "
@@ -533,7 +527,9 @@ def main():
     parent_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
         "PI_SESSION_ID"
     )
-    herdr("agent", "prompt", name, subagent_prompt(args.task, profile, parent_session, name))
+    parent_pane = os.environ.get("HERDR_PANE_ID")
+    prompt = subagent_prompt(args.task, profile, parent_session, name, parent_pane)
+    herdr("agent", "prompt", name, prompt)
     print(
         f"[subagent] launched; close with {sys.argv[0]} --close {tab_id}",
         file=sys.stderr,
