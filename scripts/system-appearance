@@ -4,7 +4,7 @@ set -eu
 
 # GUI launchers such as Hammerspoon inherit macOS's minimal PATH rather than
 # the interactive shell's PATH. Include managed and Homebrew binaries so live
-# tmux and Neovim reloads work identically from the keyboard shortcut.
+# tmux reloads work identically from the keyboard shortcut.
 PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 export PATH
 
@@ -111,41 +111,6 @@ if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
     tmux list-clients -F '#{client_tty}' | while IFS= read -r client; do
         [ -n "$client" ] || continue
         tmux refresh-client -t "$client" -S
-    done
-fi
-
-# Make the selected colorscheme persistent for new Neovim instances, then
-# source it in every running instance through Neovim's built-in RPC sockets.
-nvim_theme_dir="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/after/plugin"
-nvim_theme_file="$nvim_theme_dir/system-appearance.lua"
-mkdir -p "$nvim_theme_dir"
-if [ "$mode" = dark ]; then
-    cat > "$nvim_theme_file" <<'EOF'
-if vim.v.servername == "" then
-    vim.fn.serverstart()
-end
-vim.opt.background = "dark"
-vim.cmd("packadd gruber-darker.nvim")
-vim.cmd.colorscheme("gruber-darker")
-vim.cmd.redraw()
-EOF
-else
-    cat > "$nvim_theme_file" <<'EOF'
-if vim.v.servername == "" then
-    vim.fn.serverstart()
-end
-vim.opt.background = "light"
-vim.cmd.colorscheme("gruber-lighter")
-vim.cmd.redraw()
-EOF
-fi
-
-if command -v nvim >/dev/null 2>&1; then
-    nvim_socket_root="${TMPDIR:-/tmp}/nvim.${USER}"
-    for socket in "$nvim_socket_root"/*/nvim.*.*; do
-        [ -S "$socket" ] || continue
-        nvim --server "$socket" --remote-expr \
-            "execute('source ' . fnameescape('$nvim_theme_file'))" >/dev/null 2>&1 || true
     done
 fi
 
