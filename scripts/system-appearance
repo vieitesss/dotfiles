@@ -8,10 +8,6 @@ set -eu
 PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 export PATH
 
-usage() {
-    echo "Usage: $(basename "$0") light|dark|toggle" >&2
-}
-
 if [ "$(uname -s)" != Darwin ]; then
     echo "system-appearance currently supports macOS only" >&2
     exit 1
@@ -29,7 +25,7 @@ case "${1:-}" in
         fi
         ;;
     *)
-        usage
+        echo "Usage: $(basename "$0") light|dark|toggle" >&2
         exit 2
         ;;
 esac
@@ -101,18 +97,32 @@ fi
 
 # Reload tmux after Ghostty, passing the target mode explicitly so the config
 # cannot race macOS while its appearance preference is still propagating.
-if command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1; then
-    tmux set-environment -g SYSTEM_APPEARANCE "$mode"
-    tmux source-file "$HOME/.tmux.conf"
-    tmux set-environment -gu SYSTEM_APPEARANCE
+# Linux has no appearance setting, so also persist the mode where tmux.conf
+# reads it there. source-file does not always repaint clients after an
+# external reload, so force each one to redraw.
+tmux_reload='
+mode=$1
+mkdir -p "$HOME/.local/state"
+printf "%s\n" "$mode" > "$HOME/.local/state/system-appearance"
+tmux list-sessions >/dev/null 2>&1 || exit 0
+tmux set-environment -g SYSTEM_APPEARANCE "$mode"
+tmux source-file "$HOME/.tmux.conf"
+tmux set-environment -gu SYSTEM_APPEARANCE
+tmux list-clients -F "#{client_tty}" | while read -r client; do
+    tmux refresh-client -t "$client" -S
+done
+'
+sh -c "$tmux_reload" sh "$mode"
 
-    # source-file updates tmux's palette, but an externally triggered reload
-    # does not always repaint attached clients. Force each client to redraw.
-    tmux list-clients -F '#{client_tty}' | while IFS= read -r client; do
-        [ -n "$client" ] || continue
-        tmux refresh-client -t "$client" -S
-    done
-fi
+# Remote tmux servers opened through rp proxies draw inside this terminal, so
+# they must use the same palette. Reuse rp's SSH connection when it is open and
+# never prompt, so an unreachable host cannot block the switch.
+for host in $(tmux show-options -gqv @rp_hosts 2>/dev/null); do
+    if ! printf '%s' "$tmux_reload" | ssh -o BatchMode=yes -o ConnectTimeout=3 \
+        -o "ControlPath=$HOME/.ssh/cm-%C" "$host" sh -s "$mode"; then
+        echo "WARN: Could not update tmux appearance on $host" >&2
+    fi
+done
 
 # Pi hot-reloads the active custom theme file. Build that stable file from the
 # installed Gruber package so running and future sessions use the same name.
