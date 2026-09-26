@@ -1,9 +1,9 @@
 ---
 name: subagents
-description: Spawn a Pi subagent and wait for its result. Use when handing off a research, implement, or write task to a child agent.
+description: Spawn a subagent and wait for its result. Use when handing off a research, implement, or write task to a child agent.
 ---
 
-NOTE: If you are a subagent, do not run other subagents.
+NOTE: If you are a subagent, do NEVER run other subagents.
 
 Run `scripts/subagent.py` from the herdr or tmux pane where the parent agent
 (Pi or Claude) runs.
