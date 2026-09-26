@@ -384,7 +384,7 @@ if [ -s "$NVM_DIR/nvm.sh" ]; then
         _nvm_lazy_version=""
     fi
     if [[ -z "$_nvm_lazy_version" ]]; then
-        _nvm_lazy_version="$(ls -1dt "$NVM_DIR"/versions/node/v* 2>/dev/null | head -n 1)"
+        _nvm_lazy_version="$(command ls -1dt "$NVM_DIR"/versions/node/v* 2>/dev/null | head -n 1)"
         _nvm_lazy_version="${_nvm_lazy_version:t}"
     fi
     if [[ -n "$_nvm_lazy_version" ]]; then

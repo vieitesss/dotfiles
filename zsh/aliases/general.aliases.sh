@@ -4,7 +4,7 @@
 if [[ "$(uname)" == "Darwin" ]]; then
 	alias ls="ls -G"
 else
-	alias ls="ls --color"
+	alias ls="ls --color=auto"
 fi
 
 alias ll="eza --long --group-directories-first --icons --no-time"
