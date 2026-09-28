@@ -21,6 +21,10 @@ background-blur = false
 # theme
 theme = light:gruber-lighter,dark:gruber-darker
 
+# keyboard
+# left Option = Meta, right Option types layout symbols (@ # | \ [ ] { } €)
+macos-option-as-alt = left
+
 # keybinds
 keybind = ctrl+1=goto_tab:1
 keybind = ctrl+2=goto_tab:2
