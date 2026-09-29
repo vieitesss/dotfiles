@@ -20,6 +20,7 @@ children report back with --notify, which types MESSAGE into the parent pane.
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,13 @@ SKILL_THRESHOLD = 0.5  # Noul probability at or above which a skill is selected
 
 SCRIPT = os.path.abspath(__file__)
 STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
+# Allow slow login shells (including 35s startup) without retaining orphaned keys
+# indefinitely. Only the secret-bearing env file is age-swept, never the task.
+TEMP_FILE_SWEEP = 120
+
+# Parent variables a child must inherit even though tmux spawns it from the
+# server's environment; the child sources them from a 0600 temp file.
+PASSTHROUGH_ENV = ["TYPESAFE_API_KEY"]
 
 CLAUDE_PROVIDER = "claude-code"
 CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
@@ -181,6 +189,38 @@ def tmux_notify(pane, message):
     tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane)
     time.sleep(0.3)  # let the TUI finish the paste before Enter submits it
     tmux("send-keys", "-t", pane, "Enter")
+
+
+def child_env_file(path=None):
+    """0600 temp file exporting allowlisted parent variables for a child."""
+    if path is None:
+        fd, path = tempfile.mkstemp(prefix="subagent-env-")
+    else:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        handle = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
+    except BaseException:
+        os.close(fd)
+        remove_temp(path)
+        raise
+    try:
+        with handle:
+            for var in PASSTHROUGH_ENV:
+                value = os.environ.get(var)
+                if value is not None:
+                    handle.write(f"export {var}={shlex.quote(value)}\n")
+    except BaseException:
+        remove_temp(path)
+        raise
+    return path
+
+
+def remove_temp(*paths):
+    for path in paths:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------- skills
@@ -478,7 +518,11 @@ def without_effort(argv, kind, view):
 
 
 def launch(name, pane_id, argv, timeout_ms=30000, kind="pi"):
-    """Start the agent in the pane; on failure show its own error and report it."""
+    """Start the agent in the pane; on failure show its own error and report it.
+
+    GAP: herdr children were not testable here because HERDR_ENV is unset.
+    Whether a herdr child receives PASSTHROUGH_ENV is unverified.
+    """
 
     def start(extra):
         return subprocess.run(
@@ -545,25 +589,66 @@ def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
 
     tmux has no `agent start`/`agent prompt`, so the task goes on the agent's
     command line instead. It travels through a temp file because tmux rejects
-    over-long commands, and a login shell gives the child the user's
-    environment rather than the tmux server's. The pane remains after the agent
-    exits, so a failed launch stays visible.
+    over-long commands. A login shell is not enough for the environment (zsh
+    reads ~/.zprofile, not ~/.profile), so PASSTHROUGH_ENV travels in a second
+    0600 temp file the child sources and deletes before exec. A detached
+    sweeper removes only the env file after TEMP_FILE_SWEEP seconds as a
+    backstop, registered before respawn so parent death cannot bypass it. The
+    task is never age-swept. The pane remains after the agent exits, so a failed
+    launch stays visible.
     """
     tmux("set-option", "-w", "-t", pane_id, "remain-on-exit", "on")
     shell = os.environ.get("SHELL", "/bin/sh")
-    script = 'prompt=$(cat "$1"); rm -f "$1"; shift; exec "$@" "$prompt"'
+    script = (
+        'if ! prompt=$(cat "$1"); then '
+        'printf "%s\\n" "[subagent] cannot read prompt file: $1" >&2; '
+        'rm -f "$1" "$2"; exit 1; fi; '
+        'rm -f "$1"; if [ -r "$2" ]; then . "$2"; fi; rm -f "$2"; '
+        'shift 2; exec "$@" "$prompt"'
+    )
 
     def start(extra):
-        fd, path = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(prompt)
-        tmux(
-            "respawn-pane", "-k", "-t", pane_id, "-c", cwd, "--",
-            shell, "-lc", script, name, path, kind, *extra, "--",
-        )
+        path = env_path = None
+        env_created = False
+        try:
+            fd, path = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(prompt)
+            env_path = os.path.join(
+                tempfile.gettempdir(),
+                f"subagent-env-{os.getpid()}-{os.urandom(8).hex()}",
+            )
+            subprocess.Popen(
+                [
+                    "/bin/sh", "-c", 'sleep "$1"; rm -f "$2"',
+                    "_", str(TEMP_FILE_SWEEP), env_path,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            child_env_file(env_path)
+            env_created = True
+            tmux(
+                "respawn-pane", "-k", "-t", pane_id, "-c", cwd, "--",
+                shell, "-lc", script, name, path, env_path, kind, *extra, "--",
+            )
+        except BaseException:
+            remove_temp(path)
+            if env_created:
+                remove_temp(env_path)
+            raise
+
         deadline = time.monotonic() + STARTUP_GRACE
         while time.monotonic() < deadline:
-            if tmux("display-message", "-p", "-t", pane_id, "#{pane_dead}") == "1":
+            pane_state = subprocess.run(
+                ["tmux", "display-message", "-p", "-t", pane_id,
+                 "#{pane_id} #{pane_dead}"],
+                capture_output=True, text=True, check=False,
+            )
+            if pane_state.returncode != 0 or pane_state.stdout.strip() != f"{pane_id} 0":
+                remove_temp(path, env_path)
                 return False
             time.sleep(0.25)
         return True
