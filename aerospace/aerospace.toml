@@ -4,6 +4,10 @@
 # It's not necessary to copy all keys to your config.
 # If the key is missing in your config, "default-config.toml" will serve as a fallback
 
+# Config version for compatibility and deprecations
+# See: https://nikitabobko.github.io/AeroSpace/guide#config-version
+config-version = 2
+
 # You can use it to add commands that run after AeroSpace startup.
 # 'after-startup-command' is run after 'after-login-command'
 # Available commands : https://nikitabobko.github.io/AeroSpace/commands
@@ -38,6 +42,11 @@ key-mapping.preset = 'qwerty'
 # See https://nikitabobko.github.io/AeroSpace/guide#on-focus-changed-callbacks
 # See https://nikitabobko.github.io/AeroSpace/commands#move-mouse
 on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+
+# List of workspaces that should stay alive even when they contain no windows,
+# even when they are invisible.
+# This config option is only available since 'config-version = 2'
+persistent-workspaces = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
 exec-on-workspace-change = ['/bin/bash', '-c',
     'sketchybar --trigger aerospace_workspace_change PREV=$AEROSPACE_PREV_WORKSPACE FOCUSED=$AEROSPACE_FOCUSED_WORKSPACE'
@@ -143,9 +152,7 @@ ctrl-alt-enter = 'exec-and-forget sketchybar --trigger change_keyboard_layout'
 ctrl-alt-shift-u = 'mode service'
 
 # fullscreen
-ctrl-alt-f = 'fullscreen'
-
-ctrl-alt-shift-f = 'layout floating tiling'
+alt-shift-f = 'layout floating tiling'
 
 # 'service' binding mode declaration.
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes

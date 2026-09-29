@@ -24,6 +24,8 @@ theme = light:gruber-lighter,dark:gruber-darker
 # keyboard
 # left Option = Meta, right Option types layout symbols (@ # | \ [ ] { } €)
 macos-option-as-alt = left
+# left Option+ñ still types ~ (Spanish layout), instead of sending Meta-ñ
+keybind = alt+ñ=text:~
 
 # keybinds
 keybind = ctrl+1=goto_tab:1
