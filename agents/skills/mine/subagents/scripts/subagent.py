@@ -41,7 +41,7 @@ MODELS = {
     "github-copilot/gpt-5.6-luna": (
         "One step above the default: large, genuinely unclear, or design-heavy multi-step tasks where careful reasoning is needed to find the right approach. Choose it once the work is clearly bigger, less defined, or riskier than a well-scoped task the default handles comfortably.",
     ),
-    "claude-code/opus": (
+    "openai-codex/gpt-6.1-sol": (
         "The reviewer: use when the task is to review, critique, or verify another agent's changes and report a verdict.",
         "Only for exceptional, high-stakes work where the right approach is unclear and an error would be costly.",
     ),
