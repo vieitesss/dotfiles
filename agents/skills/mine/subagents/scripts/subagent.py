@@ -56,6 +56,10 @@ EFFORTS = {
     "max": "Maximum thinking; the hardest or highest-stakes tasks.",
 }
 
+# Hard ceilings: a model listed here is never launched above this effort,
+# whatever Jev asks for. Only ever lowers an effort, never raises it.
+MODEL_MAX_EFFORT = {"openai-codex/gpt-6.1-sol": "medium"}
+
 SKILL_THRESHOLD = 0.5  # Noul probability at or above which a skill is selected
 
 SCRIPT = os.path.abspath(__file__)
@@ -379,6 +383,17 @@ def choose_profile(args, skills):
     profile["kind"] = profile["kind"] if profile["kind"] in KINDS else "implement"
     profile["model"] = profile["model"] if profile["model"] in MODELS else None
     profile["effort"] = profile["effort"] if profile["effort"] in EFFORTS else None
+
+    # Some models must never be launched above their ceiling, whatever Jev asks.
+    cap = MODEL_MAX_EFFORT.get(profile["model"])
+    if cap and profile["effort"]:
+        if THINKING_ORDER.index(profile["effort"]) > THINKING_ORDER.index(cap):
+            print(
+                f"[subagent] {profile['model']} is capped at {cap} effort; "
+                f"using {cap}",
+                file=sys.stderr,
+            )
+            profile["effort"] = cap
 
     # A model may not offer every level; clamp to the nearest one it supports
     # instead of letting pi silently adjust (or fail on) the launch.
