@@ -34,9 +34,16 @@ KINDS = {
 }
 
 MODELS = {
-    "opencode-go/deepseek-v4.1-flash": "The default for most tasks: well-scoped everyday coding, writing, and research, including straightforward multi-step work. Prefer this unless a stronger model is clearly needed.",
-    "openai-codex/gpt-5.6-luna": "The strongest model for ordinary difficult work: substantial multi-step tasks that need careful reasoning, or moderately unclear tasks with ordinary stakes. Choose this when a task is hard, large, or somewhat vague.",
-    "claude-code/opus": "Reserved for genuinely exceptional tasks only: production-critical or otherwise high-stakes work, especially when the right approach is genuinely unclear. Choose this when an error would be costly and cheaper models are likely to fail.",
+    "opencode-go/deepseek-v4.1-flash": (
+        "The default for most tasks: everyday coding, writing, and research, plus multi-step work whose scope is clear and whose approach is already known, and bounded investigations of a concrete problem whose root cause is not yet known. Use it for anything up to a solid, well-defined piece of work, and for borderline cases that are only somewhat harder than everyday.",
+    ),
+    "github-copilot/gpt-5.6-luna": (
+        "One step above the default: large, genuinely unclear, or design-heavy multi-step tasks where careful reasoning is needed to find the right approach. Choose it once the work is clearly bigger, less defined, or riskier than a well-scoped task the default handles comfortably.",
+    ),
+    "claude-code/opus": (
+        "The reviewer: use when the task is to review, critique, or verify another agent's changes and report a verdict.",
+        "Only for exceptional, high-stakes work where the right approach is unclear and an error would be costly.",
+    ),
 }
 
 EFFORTS = {
@@ -263,8 +270,9 @@ def jev_profile(task, skills):
     model_criteria = {}
     for model_id, when in MODELS.items():
         levels = model_thinking_levels(model_id)
+        criteria = " ".join(when)
         model_criteria[model_id] = (
-            f"{when} (thinking: {', '.join(levels)})" if levels else when
+            f"{criteria} (thinking: {', '.join(levels)})" if levels else criteria
         )
 
     questions = {
