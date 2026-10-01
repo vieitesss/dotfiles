@@ -489,3 +489,6 @@ fi
 
 # Added by the Hunk installer (https://hunk.dev)
 export PATH='/home/vieitesrpi/.hunk/bin':"$PATH"
+
+# opencode
+export PATH=/home/vieitesrpi/.opencode/bin:$PATH
