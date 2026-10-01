@@ -6,7 +6,7 @@ effort, and which skills to load. The --skill flag may override the skills.
 
 Usage:
     subagent.py "task for the subagent" [--skill NAME]...
-                [--cwd DIR] [--workspace ID]
+                [--cwd DIR] [--workspace ID | --project DIR]
                 [--timeout MS] [--dry-run]
     subagent.py --close TAB_ID
     subagent.py --notify PANE_ID MESSAGE
@@ -152,6 +152,25 @@ def parent_workspace():
         if ws["focused"]:
             return ws["workspace_id"]
     sys.exit("no focused herdr workspace")
+
+
+def project_workspace(path, mux):
+    """Create or reuse the project's session/workspace without focusing it.
+
+    nexo prints the container it opened; its id is a tmux session id or a herdr
+    workspace_id, which is exactly what --workspace expects.
+    """
+    cmd = ["nexo", "--json", f"--backend={mux}", "open", "--no-focus", path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.exit(f"nexo open failed for {path}: {result.stderr.strip()}")
+    container = json.loads(result.stdout)
+    print(
+        f"[subagent] project {container['name']} ({container['id']})"
+        f"{' created' if container.get('created') else ''}",
+        file=sys.stderr,
+    )
+    return container["id"]
 
 
 # --------------------------------------------------------------- tmux
@@ -690,8 +709,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("task", nargs="?")
     parser.add_argument("--skill", action="append")
-    parser.add_argument("--cwd", default=os.getcwd())
-    parser.add_argument("--workspace")
+    parser.add_argument("--cwd")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--workspace")
+    target.add_argument("--project", metavar="DIR")
     parser.add_argument("--timeout", type=int, default=30000)
     parser.add_argument("--close", metavar="TAB_ID")
     parser.add_argument("--notify", nargs=2, metavar=("PANE_ID", "MESSAGE"))
@@ -711,6 +732,9 @@ def main():
         return 0
     if not args.task:
         parser.error("task is required")
+    if args.project:
+        args.project = os.path.abspath(os.path.expanduser(args.project))
+    args.cwd = args.cwd or args.project or os.getcwd()
 
     skills = discover_skills(args.cwd)
     profile = choose_profile(args, skills)
@@ -720,6 +744,8 @@ def main():
         return 0
 
     mux = multiplexer()
+    if args.project:
+        args.workspace = project_workspace(args.project, mux)
     name = f"subagent-{profile['kind']}-{os.getpid()}"
     if is_claude(profile):
         trust_claude_dir(args.cwd)

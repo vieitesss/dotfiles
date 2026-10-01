@@ -10,7 +10,7 @@ Run `scripts/subagent.py` from the herdr or tmux pane where the parent agent
 
 ```bash
 scripts/subagent.py "the task for the child" \
-  [--skill NAME]... [--cwd DIR] [--workspace ID] \
+  [--skill NAME]... [--cwd DIR] [--workspace ID | --project DIR] \
   [--timeout MS] [--dry-run]
 
 scripts/subagent.py --close TAB_ID
@@ -29,7 +29,18 @@ id such as `@18`) and the child's pane id, and exits. The parent does not wait
 for the child (see Waiting for the subagent). Close the tab later with
 `--close` and the tab id from launch. Launch failures exit 2 and leave the tab
 open. `--workspace` overrides the target: a herdr `workspace_id`, or a tmux
-session name (the `session` field of `contx --json --multiplexer tmux open`).
+session name or id.
+
+`--project DIR` puts the child in DIR's own session instead, and runs it in DIR
+unless `--cwd` says otherwise. The launcher runs
+`nexo --json --backend <mux> open --no-focus DIR`, which creates the session
+(or herdr workspace) without switching your view to it, and uses the returned
+`id` as the workspace. DIR must be a project nexo discovers. For a fresh
+worktree, create it with
+`nexo --json worktree create --no-focus --new-branch --add-parent REPO BRANCH DEST`,
+which also opens it without focus; pass its `.container.id` as `--workspace`.
+`--add-parent` adds DEST's parent to nexo's paths, so `--project` then works for
+any worktree next to it.
 
 Jev always picks the subagent kind, model, and thinking effort, and by default
 picks the skills too. `--skill` overrides Jev's skill choices.
