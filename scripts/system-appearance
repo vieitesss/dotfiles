@@ -100,23 +100,39 @@ fi
 # Linux has no appearance setting, so also persist the mode where tmux.conf
 # reads it there. source-file does not always repaint clients after an
 # external reload, so force each one to redraw.
-tmux_reload='
+tmux_reload=$(cat <<'SH'
 mode=$1
 mkdir -p "$HOME/.local/state"
-printf "%s\n" "$mode" > "$HOME/.local/state/system-appearance"
-tmux list-sessions >/dev/null 2>&1 || exit 0
-tmux set-environment -g SYSTEM_APPEARANCE "$mode"
-tmux source-file "$HOME/.tmux.conf"
-tmux set-environment -gu SYSTEM_APPEARANCE
-tmux list-clients -F "#{client_tty}" | while read -r client; do
-    tmux refresh-client -t "$client" -S
-done
-'
+printf '%s\n' "$mode" > "$HOME/.local/state/system-appearance"
+if tmux list-sessions >/dev/null 2>&1; then
+    tmux set-environment -g SYSTEM_APPEARANCE "$mode"
+    tmux source-file "$HOME/.tmux.conf"
+    tmux set-environment -gu SYSTEM_APPEARANCE
+    tmux list-clients -F '#{client_tty}' | while read -r client; do
+        tmux refresh-client -t "$client" -S
+    done
+fi
+SH
+)
 sh -c "$tmux_reload" sh "$mode"
 
+# Pi hot-reloads the active custom theme file. Build that stable file from the
+# installed Gruber package so running and future sessions use the same name.
+pi_package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
+pi_source="$pi_package/themes/gruber-${mode}er.json"
+pi_theme_dir="$HOME/.pi/agent/themes"
+pi_theme_file="$pi_theme_dir/gruber-system.json"
+if [ -f "$pi_source" ]; then
+    mkdir -p "$pi_theme_dir"
+    pi_tmp="$pi_theme_file.tmp.$$"
+    sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$pi_source" > "$pi_tmp"
+    mv "$pi_tmp" "$pi_theme_file"
+else
+    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
+fi
+
 # nexo's auto theme queries the terminal, which a remote popup inside a proxy
-# cannot reach, so remote hosts pin [tui] theme to the mode instead. Runs
-# before tmux_reload, whose early exit would otherwise skip it.
+# cannot reach, so remote hosts pin [tui] theme to the mode instead.
 nexo_theme=$(cat <<'SH'
 mode=$1
 config="$HOME/.config/nexo/config.toml"
@@ -143,30 +159,27 @@ fi
 SH
 )
 
-# Remote tmux servers opened through rp proxies draw inside this terminal, so
-# they must use the same palette. Reuse rp's SSH connection when it is open and
-# never prompt, so an unreachable host cannot block the switch.
-for host in $(tmux show-options -gqv @rp_hosts 2>/dev/null); do
+# Remote tmux servers opened through nexo proxies draw inside this terminal, so
+# they must use the same palette. The hosts are nexo's [remote] machines. Never
+# prompt, so an unreachable host cannot block the switch.
+remote_hosts=$(awk '
+    /^[ \t]*\[/ { in_remote = ($0 ~ /^[ \t]*\[remote\][ \t]*(#.*)?$/) }
+    in_remote && /^[ \t]*machines[ \t]*=/ { in_machines = 1 }
+    in_machines {
+        line = $0
+        sub(/#.*/, "", line)
+        while (match(line, /"[^"]*"/)) {
+            print substr(line, RSTART + 1, RLENGTH - 2)
+            line = substr(line, RSTART + RLENGTH)
+        }
+        if ($0 ~ /\]/) in_machines = 0
+    }
+' "$HOME/.config/nexo/config.toml" 2>/dev/null || true)
+for host in $remote_hosts; do
     if ! printf '%s\n%s' "$nexo_theme" "$tmux_reload" | ssh -o BatchMode=yes \
-        -o ConnectTimeout=3 -o "ControlPath=$HOME/.ssh/cm-%C" "$host" \
-        sh -s "$mode"; then
+        -o ConnectTimeout=3 "$host" sh -s "$mode"; then
         echo "WARN: Could not update tmux and nexo appearance on $host" >&2
     fi
 done
-
-# Pi hot-reloads the active custom theme file. Build that stable file from the
-# installed Gruber package so running and future sessions use the same name.
-pi_package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
-pi_source="$pi_package/themes/gruber-${mode}er.json"
-pi_theme_dir="$HOME/.pi/agent/themes"
-pi_theme_file="$pi_theme_dir/gruber-system.json"
-if [ -f "$pi_source" ]; then
-    mkdir -p "$pi_theme_dir"
-    pi_tmp="$pi_theme_file.tmp.$$"
-    sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$pi_source" > "$pi_tmp"
-    mv "$pi_tmp" "$pi_theme_file"
-else
-    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
-fi
 
 printf 'System appearance: %s\n' "$mode"
