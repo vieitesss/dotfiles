@@ -479,6 +479,18 @@ def pi_args(profile):
     return args
 
 
+# What every child is told, whichever way it reports.
+CHILD_RULES = (
+    "Your parent manages the work; you do this task and report. Send the "
+    "parent two kinds of message only: the final result, and questions. "
+    "A decision the brief leaves open (a proposal, a choice between "
+    "approaches) is a question: ask it and wait for the answer. After you "
+    "report the result, a new prompt from the parent is a follow-up: apply "
+    "it and report the result again. Delegating belongs to the parent, so "
+    "do every part of this task yourself."
+)
+
+
 def pane_lines(parent_pane, name, mux="herdr"):
     """How a child reaches a parent without intercom: typing into its pane."""
     target = parent_pane or "<parent-pane-id>"
@@ -520,14 +532,15 @@ def subagent_prompt(task, profile, parent_session, name, parent_pane=None, mux="
     # receives intercom messages, so everything else reports through its pane.
     if is_claude(profile) or not parent_session:
         lines += pane_lines(parent_pane, name, mux)
-        return "\n".join(lines) + "\n\n" + task
-    lines.append(f"Your parent agent is intercom session {parent_session}.")
-    lines.append(
-        "Use pi-intercom to report: when the task is finished, send your final "
-        "result to the parent session with `intercom send` (fire-and-forget); "
-        "when blocked on a question, `intercom ask` the parent. "
-        "Reporting via intercom is mandatory, not optional. "
-    )
+    else:
+        lines.append(f"Your parent agent is intercom session {parent_session}.")
+        lines.append(
+            "Use pi-intercom to report: when the task is finished, send your "
+            "final result to the parent session with `intercom send` "
+            "(fire-and-forget); when blocked on a question, `intercom ask` the "
+            "parent. Reporting via intercom is mandatory, not optional."
+        )
+    lines += ["", CHILD_RULES]
     return "\n".join(lines) + "\n\n" + task
 
 
