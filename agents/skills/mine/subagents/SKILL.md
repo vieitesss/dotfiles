@@ -1,18 +1,21 @@
 ---
 name: subagents
-description: Spawn a subagent and wait for its result. Use when handing off a research, implement, or write task to a child agent.
+description: Launch a child agent in its own tab, exchange messages with it, and close it. Use when handing off a research, implement, or write task to a child agent.
 ---
 
-NOTE: If you are a subagent, do NEVER run other subagents.
+Launching is the manager's move: the `manager` skill decides when to delegate
+and what a brief carries. A child does its own task and reports; the launcher
+already tells it so.
 
 Run `scripts/subagent.py` from the herdr or tmux pane where the parent agent
 (Pi or Claude) runs.
 
 ```bash
-scripts/subagent.py "the task for the child" \
+scripts/subagent.py "$(cat BRIEF_FILE)" \
   [--skill NAME]... [--cwd DIR] [--workspace ID | --project DIR] \
   [--timeout MS] [--dry-run]
 
+scripts/subagent.py --notify PANE "message"   # prompt a pane (tmux)
 scripts/subagent.py --close TAB_ID
 ```
 
@@ -25,48 +28,63 @@ creates a tab for the child in the calling agent's workspace:
   attached.
 
 It starts Pi there, prompts it with the task, prints the tab id (a tmux window
-id such as `@18`) and the child's pane id, and exits. The parent does not wait
-for the child (see Waiting for the subagent). Close the tab later with
-`--close` and the tab id from launch. Launch failures exit 2 and leave the tab
-open. `--workspace` overrides the target: a herdr `workspace_id`, or a tmux
-session name or id.
+id such as `@18`) and the child's pane id, and exits. Keep both: the pane id
+addresses follow-ups, the tab id closes the tab. Launch failures exit 2 and
+leave the tab open. `--workspace` overrides the target: a herdr
+`workspace_id`, or a tmux session name or id.
 
-`--project DIR` puts the child in DIR's own session instead, and runs it in DIR
-unless `--cwd` says otherwise. The launcher runs
-`nexo --json --backend <mux> open --no-focus DIR`, which creates the session
-(or herdr workspace) without switching your view to it, and uses the returned
-`id` as the workspace. DIR must be a project nexo discovers. For a fresh
-worktree, create it with
-`nexo --json worktree create --no-focus --new-branch --add-parent REPO BRANCH DEST`,
-which also opens it without focus; pass its `.container.id` as `--workspace`.
-`--add-parent` adds DEST's parent to nexo's paths, so `--project` then works for
-any worktree next to it.
+## Profile
 
 Jev always picks the subagent kind, model, and thinking effort, and by default
 picks the skills too. `--skill` overrides Jev's skill choices.
 Jev needs `TYPESAFE_API_KEY`; if it is unavailable, the launcher uses the
 `implement` kind and pi's default model and effort. `--dry-run` prints the
-chosen profile without launching. The child's prompt names the skills to use
-and tells it how to reach the parent.
+chosen profile without launching. A `claude-code/<model>` model starts Claude
+Code instead of Pi.
 
-A `claude-code/<model>` model starts Claude Code instead of Pi.
+## Workspaces
 
-The child reports over pi-intercom only when both parent and child are Pi.
-Otherwise (a Claude parent, or a Claude child) it types into your pane, with
-`herdr agent prompt` in herdr or `scripts/subagent.py --notify PANE MESSAGE`
-in tmux, so its messages arrive as prompts starting with `[subagent-...]`.
+`--project DIR` puts the child in DIR's own session instead, and runs it in DIR
+unless `--cwd` says otherwise. The launcher runs
+`nexo --json --backend <mux> open --no-focus DIR`, which creates the session
+(or herdr workspace) without switching your view to it. DIR must be a project
+nexo discovers.
 
-## Waiting for the subagent
+Create a fresh worktree with:
 
-After `subagent.py` returns, do nothing and end your turn. No sleep loops, no
-`herdr pane read` or `tmux capture-pane`, no tab or agent status checks, no
-`intercom pending` polling.
+```bash
+nexo --json worktree create --no-focus --new-branch --add-parent \
+  REPO BRANCH <repo-parent>/<repo>-wt/<name>
+```
 
-The only thing that resumes you is the subagent's message. Over pi-intercom,
-its final result arrives as a plain message and its questions arrive as
-intercom asks you answer with `intercom reply`. Otherwise its result or
-question arrives as a `[subagent-...] TASK COMPLETE:` or `QUESTION:` prompt.
-Answer its questions with `herdr agent prompt <agent-name> "..."` in herdr, or
-`scripts/subagent.py --notify <child-pane-id> "..."` in tmux.
+The branch starts from REPO's current HEAD, so update main first. The command
+opens the worktree without focus; pass its `.container.id` as `--workspace`.
+`--add-parent` adds the `-wt` folder to nexo's paths, so `--project` then
+works for every worktree in it.
 
-Close the tab with `--close` only after you have the result.
+A fresh worktree holds tracked files only. Pass untracked project skills
+(`.agents/skills/…`) by their absolute path in the main checkout.
+
+## Messages
+
+The child reports over pi-intercom only when both parent and child are Pi:
+its result arrives as a plain message, its questions as intercom asks you
+answer with `intercom reply`. Otherwise it types into your pane, so its
+messages arrive as prompts:
+
+- `[subagent-…] TASK COMPLETE: <summary or report path>` — the result.
+- `[subagent-…] QUESTION: <question>` — it waits for your answer.
+
+Any other `[subagent-…]` message that asks for a choice is a question too.
+Answer, or send a follow-up after a result, with
+`herdr agent prompt <agent-name> "..."` in herdr, or
+`scripts/subagent.py --notify <child-pane-id> "..."` in tmux. A follow-up
+earns a fresh TASK COMPLETE.
+
+## Waiting
+
+After launching or messaging a child, end your turn. Its next message resumes
+you; that message is the only signal to act on, so leave its pane, tab status
+and intercom queue unread.
+
+Close the tab with `--close` once you have accepted the result.
