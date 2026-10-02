@@ -114,13 +114,43 @@ done
 '
 sh -c "$tmux_reload" sh "$mode"
 
+# nexo's auto theme queries the terminal, which a remote popup inside a proxy
+# cannot reach, so remote hosts pin [tui] theme to the mode instead. Runs
+# before tmux_reload, whose early exit would otherwise skip it.
+nexo_theme=$(cat <<'SH'
+mode=$1
+config="$HOME/.config/nexo/config.toml"
+if [ -f "$config" ]; then
+    awk -v theme="$mode" '
+        /^[ \t]*\[/ {
+            if (in_tui && !done) { print "theme = \"" theme "\""; done = 1 }
+            in_tui = ($0 ~ /^[ \t]*\[tui\][ \t]*(#.*)?$/)
+        }
+        in_tui && /^[ \t]*theme[ \t]*=/ {
+            if (!done) print "theme = \"" theme "\""
+            done = 1
+            next
+        }
+        { print }
+        END {
+            if (!done) {
+                if (!in_tui) { if (NR) print ""; print "[tui]" }
+                print "theme = \"" theme "\""
+            }
+        }
+    ' "$config" > "$config.tmp.$$" && mv "$config.tmp.$$" "$config"
+fi
+SH
+)
+
 # Remote tmux servers opened through rp proxies draw inside this terminal, so
 # they must use the same palette. Reuse rp's SSH connection when it is open and
 # never prompt, so an unreachable host cannot block the switch.
 for host in $(tmux show-options -gqv @rp_hosts 2>/dev/null); do
-    if ! printf '%s' "$tmux_reload" | ssh -o BatchMode=yes -o ConnectTimeout=3 \
-        -o "ControlPath=$HOME/.ssh/cm-%C" "$host" sh -s "$mode"; then
-        echo "WARN: Could not update tmux appearance on $host" >&2
+    if ! printf '%s\n%s' "$nexo_theme" "$tmux_reload" | ssh -o BatchMode=yes \
+        -o ConnectTimeout=3 -o "ControlPath=$HOME/.ssh/cm-%C" "$host" \
+        sh -s "$mode"; then
+        echo "WARN: Could not update tmux and nexo appearance on $host" >&2
     fi
 done
 
