@@ -27,6 +27,7 @@ agents/skills/mine/clockify-fill|~/.claude/skills/clockify-fill
 agents/skills/mine/coding|~/.claude/skills/coding
 agents/skills/mine/commit-changes|~/.claude/skills/commit-changes
 agents/skills/mine/component-finder|~/.claude/skills/component-finder
+agents/skills/mine/create-verification-skill|~/.claude/skills/create-verification-skill
 agents/skills/mine/gh-stack|~/.claude/skills/gh-stack
 agents/skills/mine/grilling-frontend-prototype|~/.claude/skills/grilling-frontend-prototype
 agents/skills/mine/idea|~/.claude/skills/idea
