@@ -21,11 +21,19 @@ tokens: run a stage when its trigger holds and skip it otherwise.
 | Design   | `prototype`, `codebase-design`             | a state model, UI, or module interface is undecided              |
 | Plan     | `to-spec`, `to-tickets`, `wayfinder`       | the work outgrows one session; these are user-invoked, so suggest them |
 | Build    | `implement` with `tdd`; `diagnosing-bugs`  | always, for a change; `diagnosing-bugs` when the cause is unknown |
+| Refine   | `zero-tech-debt`                           | Build added behaviour or reshaped a module; not for hotfixes, security backports, or small fixes |
 | Prove    | lint, tests, `verify-<app>`                | always, scaled by the proof budget                               |
 | Review   | `review`                                   | the proof budget says so                                         |
 | Ship     | `commit-changes`, `visual-pr`, `review-github-pr-comments` | the user asks                                    |
 
 A concrete, small ask goes straight to Build.
+
+Refine runs once Build's tests pass and before Prove and Review, so
+`verify-<app>` and `review` see the final shape once and cleanup never costs a
+second review round. Scope it to the code the change touched: rot it finds
+beyond that becomes a follow-up task, not part of this change. When a feature
+would otherwise be bolted onto debt, run it before Build instead, as its own
+change.
 
 ## Proof budget
 
@@ -87,7 +95,9 @@ scratch file and pass it as `"$(cat FILE)"`. It carries:
 - the decisions it brings back as a QUESTION instead of making.
 
 `implement` ends with `review`; tell an implementing child to stop before it.
-Review is yours to schedule.
+Review is yours to schedule. When Refine applies, add `--skill zero-tech-debt`
+and have the child run it over the code it touched once its tests pass, then
+stop.
 
 ## Parallel children
 
