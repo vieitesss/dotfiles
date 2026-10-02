@@ -34,7 +34,5 @@
   "compaction": {
     "enabled": false
   },
-  {
-    "defaultTools": ["+codemode"]
-  }
+  "defaultTools": ["+codemode"]
 }
