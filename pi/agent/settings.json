@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.99.1",
+  "lastChangelogVersion": "1.0.0",
   "hideThinkingBlock": true,
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-sol",
@@ -33,5 +33,8 @@
   },
   "compaction": {
     "enabled": false
+  },
+  {
+    "defaultTools": ["+codemode"]
   }
 }
