@@ -141,20 +141,34 @@ key = "prefix+p"
 type = "pane"
 command = "zsh"
 
+# nexo (plugin linked with `herdr plugin link ~/personal/nexo`)
 [[keys.command]]
 key = "prefix+o"
-type = "pane"
-command = "contx --multiplexer herdr"
+type = "plugin_action"
+command = "nexo.tui-projects"
+description = "open nexo projects"
 
 [[keys.command]]
 key = "prefix+u"
-type = "pane"
-command = "contx --multiplexer herdr"
+type = "plugin_action"
+command = "nexo.tui-containers"
+description = "open nexo containers"
+
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "nexo.tui-agents"
+description = "open nexo agents"
 
 [[keys.command]]
 key = "prefix+n"
 type = "shell"
-command = "herdr-last-space"
+command = "nexo --backend=herdr previous"
+
+[[keys.command]]
+key = "alt+o"
+type = "shell"
+command = "nexo --backend=herdr remote previous"
 
 [[keys.command]]
 key = "prefix+!"
