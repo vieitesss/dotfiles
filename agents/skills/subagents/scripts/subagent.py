@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Launch a pi subagent in a new herdr tab or tmux window and return immediately.
+"""Launch a Subagent for one Stage of one Work Item in a new herdr tab or tmux
+window, and return immediately.
 
-Jev (TypeSafe) reads the task and picks the subagent kind, model, thinking
-effort, and which skills to load. The --skill flag may override the skills.
+The Stage decides the Subagent's skills and instructions, and pins the model
+for Write and Review. Jev (TypeSafe) judges only what the Stage leaves open:
+the model, and the thinking effort.
 
 Usage:
-    subagent.py "task for the subagent" [--skill NAME]...
+    subagent.py --stage STAGE [--axis AXIS] --item ITEM "brief"
                 [--cwd DIR] [--workspace ID | --project DIR]
                 [--timeout MS] [--dry-run]
+    subagent.py --stages
     subagent.py --close TAB_ID
     subagent.py --notify PANE_ID MESSAGE
 
 Creates a new tab (herdr) or window (tmux) in the calling agent's workspace or
-session, starts a pi agent there, submits the task, prints the tab id, and
-exits. The parent does not wait. Close the tab later with --close. In tmux,
-children report back with --notify, which types MESSAGE into the parent pane.
+session, starts the agent there, submits the brief, prints the tab id, and
+exits. The Manager does not wait. Close the tab later with --close. In tmux,
+Subagents report back with --notify, which types MESSAGE into the Manager pane.
 """
 
 import argparse
@@ -28,21 +31,19 @@ import time
 import urllib.error
 import urllib.request
 
-KINDS = {
-    "research": "You are a research subagent. Investigate and report findings. Do not modify files.",
-    "implement": "You are an implementation subagent. Make the code changes the task requires.",
-    "write": "You are a writing subagent. Produce the requested prose or documentation.",
-}
-
+# Role: (model, when Jev should pick it). A Stage may pin a role.
 MODELS = {
-    "opencode-go/deepseek-v4.1-flash": (
-        "Implementer and researcher",
+    "builder": (
+        "opencode-go/deepseek-v4.1-flash",
+        "Code, research, and refactoring; the default.",
     ),
-    "claude-code/sonnet": (
-        "Writer; documentation and for agents",
+    "writer": (
+        "claude-code/sonnet",
+        "Prose: documentation and text for agents.",
     ),
-    "github-copilot/gpt-6.1-sol": (
-        "Review and critique",
+    "critic": (
+        "github-copilot/gpt-6.1-sol",
+        "Review and critique; a second opinion on a hard problem.",
     ),
 }
 
@@ -56,10 +57,93 @@ EFFORTS = {
 }
 
 # Hard ceilings: a model listed here is never launched above this effort,
-# whatever Jev asks for. Only ever lowers an effort, never raises it.
-MODEL_MAX_EFFORT = {"openai-codex/gpt-6.1-sol": "medium"}
+# whatever Jev asks for. Only ever lowers an effort, never raises it. Keyed by
+# model name without provider, so the cap holds whichever provider serves it.
+MODEL_MAX_EFFORT = {"gpt-6.1-sol": "medium"}
 
-SKILL_THRESHOLD = 0.5  # Noul probability at or above which a skill is selected
+# Every Stage a Subagent can run. Shape, Plan, and Ship stay with the Manager.
+# "skills" are loaded in order; "model" pins a MODELS role, else Jev picks.
+STAGES = {
+    "research": {
+        "skills": ["research"],
+        "role": (
+            "You run the Research stage: you are the background agent the "
+            "research skill describes, so do its job yourself. Change no files "
+            "except the findings file."
+        ),
+    },
+    "design": {
+        "skills": ["prototype", "codebase-design"],
+        "role": (
+            "You run the Design stage: build the throwaway prototype that "
+            "answers the brief's design question, and report the answer."
+        ),
+    },
+    "diagnose": {
+        "skills": ["diagnosing-bugs", "coding"],
+        "role": (
+            "You run the Diagnose stage: find the root cause and prove it with "
+            "a failing check. The fix belongs to Build unless the brief asks "
+            "for it."
+        ),
+    },
+    "build": {
+        "skills": ["tdd", "coding"],
+        "role": (
+            "You run the Build stage: implement the brief and prove it with "
+            "lint and tests scoped to what you touched. Refine and Review are "
+            "later Stages run by other Subagents, so finish at your own report."
+        ),
+    },
+    "write": {
+        "skills": ["writing-for-agents"],
+        "model": "writer",
+        "role": "You run the Write stage: write the prose the brief asks for.",
+    },
+    "refine": {
+        "skills": ["zero-tech-debt"],
+        "role": (
+            "You run the Refine stage: reshape the code this Work Item touched "
+            "toward its intended design, keeping behaviour and tests green. "
+            "Your scope is the diff since the brief's base, and the code it "
+            "touches."
+        ),
+    },
+    "prove": {
+        "skills": [],  # the repo's verify-* skills, found at launch
+        "role": (
+            "You run the Prove stage: exercise the change the way a user "
+            "would, and report what you observed. Change no files."
+        ),
+    },
+    "review": {
+        "model": "critic",
+        "axes": {
+            "standards": {
+                "skills": ["review"],
+                "role": (
+                    "You run the Review stage, Standards axis: you are the "
+                    "Standards sub-agent the review skill describes, so apply "
+                    "its brief and smell baseline yourself. Change no files."
+                ),
+            },
+            "spec": {
+                "skills": ["review"],
+                "role": (
+                    "You run the Review stage, Spec axis: you are the Spec "
+                    "sub-agent the review skill describes, so apply its brief "
+                    "yourself. Change no files."
+                ),
+            },
+            "debt": {
+                "skills": ["review-debt"],
+                "role": (
+                    "You run the Review stage, Debt axis. Change no files."
+                ),
+            },
+        },
+    },
+}
 
 SCRIPT = os.path.abspath(__file__)
 STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
@@ -281,6 +365,8 @@ def read_frontmatter(path):
 
 
 def discover_skills(cwd):
+    """Installed skills by name: global ones, the repo's from cwd upward, then
+    the main checkout's, whose untracked skills a fresh worktree lacks."""
     home = os.path.expanduser("~")
     roots = [
         os.path.join(home, ".pi/agent/skills"),
@@ -291,9 +377,13 @@ def discover_skills(cwd):
         roots.append(os.path.join(current, ".pi/skills"))
         roots.append(os.path.join(current, ".agents/skills"))
         parent = os.path.dirname(current)
-        if parent == current or os.path.isdir(os.path.join(current, ".git")):
+        if parent == current or os.path.exists(os.path.join(current, ".git")):
             break
         current = parent
+    main = main_checkout(cwd)
+    if main:
+        roots.append(os.path.join(main, ".pi/skills"))
+        roots.append(os.path.join(main, ".agents/skills"))
 
     skills = {}
     for root in roots:
@@ -302,11 +392,101 @@ def discover_skills(cwd):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
             if "SKILL.md" not in filenames:
                 continue
-            name, description = read_frontmatter(os.path.join(dirpath, "SKILL.md"))
-            if name and description and name not in skills:
-                skills[name] = {"path": dirpath, "description": description[:300]}
+            name, _ = read_frontmatter(os.path.join(dirpath, "SKILL.md"))
+            if name and name not in skills:
+                skills[name] = dirpath
             dirnames[:] = []  # a skill directory contains no nested skills
     return skills
+
+
+def stage_spec(stage, axis):
+    """The Stage's skills, role text, and pinned MODELS role (or None)."""
+    spec = STAGES[stage]
+    if "axes" in spec:
+        if axis not in spec["axes"]:
+            sys.exit(f"--stage {stage} needs --axis {{{','.join(spec['axes'])}}}")
+        return {**spec["axes"][axis], "model": spec.get("model")}
+    if axis:
+        sys.exit(f"--stage {stage} takes no --axis")
+    return {**spec, "model": spec.get("model")}
+
+
+def stage_skills(stage, spec, cwd):
+    """Skills to load as {name: SKILL.md path}, failing fast when one is not
+    installed for cwd."""
+    installed = discover_skills(cwd)
+    skills = list(spec["skills"])
+    if stage == "prove":
+        skills = sorted(name for name in installed if name.startswith("verify-"))
+        if not skills:
+            sys.exit(
+                "no verify-* skill for this repo; create one with "
+                "create-verification-skill, or Prove without a Subagent"
+            )
+    missing = [name for name in skills if name not in installed]
+    if missing:
+        sys.exit(f"skills not installed for {cwd}: {', '.join(missing)}")
+    return {name: os.path.join(installed[name], "SKILL.md") for name in skills}
+
+
+def print_stages():
+    for stage, spec in STAGES.items():
+        pinned = spec.get("model")
+        model = f"{pinned}: {MODELS[pinned][0]}" if pinned else "Jev"
+        axes = spec.get("axes") or {None: spec}
+        for axis, axis_spec in axes.items():
+            label = f"{stage} --axis {axis}" if axis else stage
+            skills = ", ".join(axis_spec["skills"]) or "the repo's verify-* skills"
+            print(f"{label:<24} model {model:<40} skills {skills}")
+    return 0
+
+
+# --------------------------------------------------------------- reports
+
+
+def git_common_dir(cwd):
+    proc = subprocess.run(
+        ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def main_checkout(cwd):
+    """Root of the main checkout, also when cwd is a worktree; None outside git."""
+    common = git_common_dir(cwd)
+    return os.path.dirname(common) if common else None
+
+
+def report_path(cwd, item, stage, axis, create=True):
+    """Where the Subagent writes its report, in the main checkout's .agents/.
+
+    Worktrees share the main checkout's reports, so the Manager reads every
+    Stage's report from one place. The reports and the Ledger are kept out of
+    git through info/exclude, leaving any tracked .agents/skills alone.
+    """
+    common = git_common_dir(cwd)
+    root = os.path.dirname(common) if common else os.path.abspath(cwd)
+    reports = os.path.join(root, ".agents", "reports")
+    if create:
+        os.makedirs(reports, exist_ok=True)
+    if create and common:
+        exclude = os.path.join(common, "info", "exclude")
+        wanted = ["/.agents/ledger.md", "/.agents/reports/"]
+        try:
+            with open(exclude, encoding="utf-8") as handle:
+                present = handle.read().splitlines()
+        except OSError:
+            present = []
+        lines = [line for line in wanted if line not in present]
+        if lines:
+            os.makedirs(os.path.dirname(exclude), exist_ok=True)
+            with open(exclude, "a", encoding="utf-8") as handle:
+                handle.write("".join(f"{line}\n" for line in lines))
+    name = "-".join(part for part in (item, stage, axis) if part)
+    return os.path.join(reports, f"{name}.md")
 
 
 # --------------------------------------------------------------- jev
@@ -328,82 +508,49 @@ def jev(state, questions):
         return json.load(response)["answers"]
 
 
-def jev_profile(task, skills):
-    model_criteria = {}
-    for model_id, when in MODELS.items():
-        levels = model_thinking_levels(model_id)
-        criteria = " ".join(when)
-        model_criteria[model_id] = (
-            f"{criteria} (thinking: {', '.join(levels)})" if levels else criteria
-        )
-
+def jev_profile(brief, stage, pinned):
+    """Ask Jev for whatever the Stage leaves open: effort, and the model if unpinned."""
     questions = {
-        "kind": {
-            "type": "choice",
-            "instructions": "What kind of subagent should handle this task?",
-            "criteria": {
-                "research": "Investigate a question or codebase and report findings; do not change files.",
-                "implement": "Change code to add, fix, or refactor behavior.",
-                "write": "Write prose, documentation, or a summary rather than code.",
-            },
-        },
-        "model": {
-            "type": "choice",
-            "instructions": "Which model should run this task, given its difficulty?",
-            "criteria": model_criteria,
-        },
         "effort": {
             "type": "choice",
-            "instructions": "Which thinking effort does this task need?",
+            "instructions": f"Which thinking effort does this {stage} stage need?",
             "criteria": EFFORTS,
         },
     }
-    for name, info in skills.items():
-        questions[f"skill:{name}"] = {
-            "type": "noul",
-            "instructions": f"Does the task need the `{name}` skill? {info['description']}",
-            "criteria": {
-                "true": "The task matches this skill's purpose.",
-                "false": "It does not.",
-            },
+    if not pinned:
+        criteria = {}
+        for role, (model_id, when) in MODELS.items():
+            levels = model_thinking_levels(model_id)
+            criteria[role] = f"{when} (thinking: {', '.join(levels)})" if levels else when
+        questions["model"] = {
+            "type": "choice",
+            "instructions": f"Which model should run this {stage} stage, given its difficulty?",
+            "criteria": criteria,
         }
-
-    answers = jev(task, questions)
+    answers = jev(f"Stage: {stage}\n\n{brief}", questions)
     return {
-        "kind": answers["kind"]["choice"],
-        "model": answers["model"]["choice"],
+        "model": pinned or answers["model"]["choice"],
         "effort": answers["effort"]["choice"],
-        "skills": [
-            key.split(":", 1)[1]
-            for key, answer in answers.items()
-            if key.startswith("skill:") and answer.get("noul", 0) >= SKILL_THRESHOLD
-        ],
     }
 
 
-def choose_profile(args, skills):
+def choose_profile(args, spec):
+    pinned = spec["model"]
     try:
-        profile = jev_profile(args.task, skills)
+        profile = jev_profile(args.task, args.stage, pinned)
     except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
         print(
-            f"[subagent] jev unavailable ({err}); using pi defaults",
+            f"[subagent] jev unavailable ({err}); using the model's default effort",
             file=sys.stderr,
         )
-        profile = {
-            "kind": "implement",
-            "model": None,
-            "effort": None,
-            "skills": None,
-        }
-    if args.skill is not None:
-        profile["skills"] = args.skill
+        profile = {"model": pinned or "builder", "effort": None}
 
-    profile["kind"] = profile["kind"] if profile["kind"] in KINDS else "implement"
-    profile["model"] = profile["model"] if profile["model"] in MODELS else None
+    role = profile["model"] if profile["model"] in MODELS else "builder"
+    profile["model"] = MODELS[role][0]
     profile["effort"] = profile["effort"] if profile["effort"] in EFFORTS else None
 
     # Some models must never be launched above their ceiling, whatever Jev asks.
-    cap = MODEL_MAX_EFFORT.get(profile["model"])
+    cap = MODEL_MAX_EFFORT.get(profile["model"].partition("/")[2])
     if cap and profile["effort"]:
         if THINKING_ORDER.index(profile["effort"]) > THINKING_ORDER.index(cap):
             print(
@@ -415,7 +562,7 @@ def choose_profile(args, skills):
 
     # A model may not offer every level; clamp to the nearest one it supports
     # instead of letting pi silently adjust (or fail on) the launch.
-    if profile["model"] and profile["effort"]:
+    if profile["effort"]:
         levels = model_thinking_levels(profile["model"])
         if levels is not None and profile["effort"] not in levels:
             clamped = clamp_effort(profile["effort"], levels)
@@ -432,15 +579,16 @@ def is_claude(profile):
     return (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER
 
 
-def claude_args(profile, mux="herdr"):
-    args = ["--append-system-prompt", KINDS[profile["kind"]]]
+def claude_args(profile, report, mux="herdr"):
+    args = ["--append-system-prompt", profile["role"]]
     if profile["model"]:
         args += ["--model", profile["model"].partition("/")[2]]
     if profile["effort"]:
         args += ["--effort", clamp_effort(profile["effort"], CLAUDE_EFFORTS)]
-    # Let reports to the parent run without a permission prompt, or they stall.
-    report = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
-    args += ["--allowedTools", f"Bash({report} *)"]
+    # Let reports to the Manager run without a permission prompt, or they
+    # stall. Edit rules take absolute paths with a leading "//".
+    send = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
+    args += ["--allowedTools", f"Bash({send} *)", f"Edit(/{report})"]
     return args
 
 
@@ -470,7 +618,7 @@ def trust_claude_dir(cwd):
 
 
 def pi_args(profile):
-    args = ["--append-system-prompt", KINDS[profile["kind"]]]
+    args = ["--append-system-prompt", profile["role"]]
     if profile["model"]:
         args += ["--model", profile["model"]]
     if profile["effort"]:
@@ -478,39 +626,38 @@ def pi_args(profile):
     return args
 
 
-# What every child is told, whichever way it reports.
-CHILD_RULES = (
-    "Your parent manages the work; you do this task and report. Send the "
-    "parent two kinds of message only: the final result, and questions. "
-    "A decision the brief leaves open (a proposal, a choice between "
-    "approaches) is a question: ask it and wait for the answer. After you "
-    "report the result, a new prompt from the parent is a follow-up: apply "
-    "it and report the result again. Delegating belongs to the parent, so "
-    "do every part of this task yourself."
+# What every Subagent is told, whichever way it reports.
+SUBAGENT_RULES = (
+    "The Manager runs the workflow; you run this one Stage and report. Send "
+    "the Manager two kinds of message only: the completion report, and "
+    "questions. A decision the brief leaves open (a proposal, a choice "
+    "between approaches) is a question: ask it and wait for the answer. "
+    "After you report, a new prompt from the Manager is a follow-up: apply "
+    "it, update your report file, and report again. Delegating belongs to "
+    "the Manager, so do every part of this Stage yourself."
 )
 
 
-def pane_lines(parent_pane, name, mux="herdr"):
-    """How a child reaches a parent without intercom: typing into its pane."""
-    target = parent_pane or "<parent-pane-id>"
+def pane_lines(manager_pane, tag, mux="herdr"):
+    """How a Subagent reaches the Manager without intercom: typing into its pane."""
+    target = manager_pane or "<manager-pane-id>"
     send = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
     lines = []
-    if not parent_pane:
-        lines.append("Find your parent agent's pane id with `herdr agent list`.")
+    if not manager_pane:
+        lines.append("Find the Manager's pane id with `herdr agent list`.")
     lines += [
-        f"Your parent agent runs in {mux} pane {target}; you are subagent "
-        f"{name}. Reach the parent by prompting its pane through Bash:",
+        f"The Manager runs in {mux} pane {target}. Reach it by prompting its "
+        "pane through Bash:",
         "",
         "```sh",
-        f'{send} {target} "[{name}] TASK COMPLETE: <summary>"',
-        f'{send} {target} "[{name}] QUESTION: <question>"',
+        f'{send} {target} "[{tag}] TASK COMPLETE: <one-line summary>"',
+        f'{send} {target} "[{tag}] QUESTION: <question>"',
         "```",
         "",
-        "When the task is finished, send your final result that way. When "
-        "blocked on a question, send it, then end your turn; the parent's "
-        "answer arrives as your next prompt. Always start the message with "
-        f"`[{name}]`. For long results, write them to a file and send its "
-        "path.",
+        "When the Stage is finished, send the completion report that way. "
+        "When blocked on a question, send it, then end your turn; the "
+        "Manager's answer arrives as your next prompt. Always start the "
+        f"message with `[{tag}]`.",
     ]
     if mux == "herdr":
         lines[-1] += (
@@ -521,26 +668,34 @@ def pane_lines(parent_pane, name, mux="herdr"):
     return lines
 
 
-def subagent_prompt(task, profile, parent_session, name, parent_pane=None, mux="herdr"):
-    """Task prompt, prefixed with the skills to use and how to reach the parent."""
-    lines = []
+def subagent_prompt(brief, profile, manager_session, tag, report, manager_pane=None, mux="herdr"):
+    """Brief, prefixed with the Stage, its skills, the report file, and how to reach the Manager."""
+    lines = [f"You are {tag}."]
     if profile["skills"]:
-        lines.append(f"Use these skills: {', '.join(profile['skills'])}.")
-    # Intercom only works between two pi agents. A Claude child has no intercom
-    # tool, and a parent without an intercom session (e.g. Claude) never
-    # receives intercom messages, so everything else reports through its pane.
-    if is_claude(profile) or not parent_session:
-        lines += pane_lines(parent_pane, name, mux)
+        lines.append("Read and follow these skills:")
+        lines += [f"- {name}: {path}" for name, path in profile["skills"].items()]
+    lines.append(
+        f"Write your full report to {report}: what you did, how you proved "
+        "it, and anything left open. The completion report is one line "
+        "pointing at it."
+    )
+    # Intercom only works between two pi agents. A Claude Subagent has no
+    # intercom tool, and a Manager without an intercom session (e.g. Claude)
+    # never receives intercom messages, so everything else reports through
+    # its pane.
+    if is_claude(profile) or not manager_session:
+        lines += pane_lines(manager_pane, tag, mux)
     else:
-        lines.append(f"Your parent agent is intercom session {parent_session}.")
+        lines.append(f"The Manager is intercom session {manager_session}.")
         lines.append(
-            "Use pi-intercom to report: when the task is finished, send your "
-            "final result to the parent session with `intercom send` "
-            "(fire-and-forget); when blocked on a question, `intercom ask` the "
-            "parent. Reporting via intercom is mandatory, not optional."
+            "Use pi-intercom to report: when the Stage is finished, send the "
+            "completion report to the Manager with `intercom send` "
+            "(fire-and-forget); when blocked on a question, `intercom ask` "
+            f"the Manager. Start every message with `[{tag}]`. Reporting via "
+            "intercom is mandatory, not optional."
         )
-    lines += ["", CHILD_RULES]
-    return "\n".join(lines) + "\n\n" + task
+    lines += ["", SUBAGENT_RULES]
+    return "\n".join(lines) + "\n\n" + brief
 
 
 # --------------------------------------------------------------- main
@@ -719,8 +874,11 @@ def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", nargs="?")
-    parser.add_argument("--skill", action="append")
+    parser.add_argument("task", nargs="?", metavar="brief")
+    parser.add_argument("--stage", choices=STAGES)
+    parser.add_argument("--axis")
+    parser.add_argument("--item", help="Work Item id, as in the Ledger")
+    parser.add_argument("--stages", action="store_true", help="print the Stage table")
     parser.add_argument("--cwd")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--workspace")
@@ -733,6 +891,8 @@ def main():
     parser.add_argument("--lines", type=int, default=40, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
+    if args.stages:
+        return print_stages()
     if args.notify:
         tmux_notify(*args.notify)
         return 0
@@ -742,33 +902,42 @@ def main():
         else:
             tmux("kill-window", "-t", args.close)
         return 0
-    if not args.task:
-        parser.error("task is required")
+    if not (args.task and args.stage and args.item):
+        parser.error("a brief, --stage, and --item are required")
     if args.project:
         args.project = os.path.abspath(os.path.expanduser(args.project))
     args.cwd = args.cwd or args.project or os.getcwd()
 
-    skills = discover_skills(args.cwd)
-    profile = choose_profile(args, skills)
+    spec = stage_spec(args.stage, args.axis)
+    skills = stage_skills(args.stage, spec, args.cwd)
+    profile = choose_profile(args, spec)
+    profile.update(skills=skills, role=spec["role"])
+    report = report_path(
+        args.cwd, args.item, args.stage, args.axis, create=not args.dry_run
+    )
+    stage = f"{args.stage} {args.axis}" if args.axis else args.stage
+    name = f"subagent-{args.stage}-{os.getpid()}"
+    tag = f"{name} · {args.item} · {stage}"
 
     if args.dry_run:
-        print(json.dumps(profile, indent=2))
+        print(json.dumps({**profile, "name": name, "report": report}, indent=2))
         return 0
 
     mux = multiplexer()
     if args.project:
         args.workspace = project_workspace(args.project, mux)
-    name = f"subagent-{profile['kind']}-{os.getpid()}"
     if is_claude(profile):
         trust_claude_dir(args.cwd)
-        kind, argv = "claude", claude_args(profile, mux)
+        kind, argv = "claude", claude_args(profile, report, mux)
     else:
         kind, argv = "pi", pi_args(profile)
-    parent_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
+    manager_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
         "PI_SESSION_ID"
     )
-    parent_pane = os.environ.get("HERDR_PANE_ID" if mux == "herdr" else "TMUX_PANE")
-    prompt = subagent_prompt(args.task, profile, parent_session, name, parent_pane, mux)
+    manager_pane = os.environ.get("HERDR_PANE_ID" if mux == "herdr" else "TMUX_PANE")
+    prompt = subagent_prompt(
+        args.task, profile, manager_session, tag, report, manager_pane, mux
+    )
 
     if mux == "tmux":
         session = args.workspace or tmux_session()
@@ -777,7 +946,7 @@ def main():
             "-t", f"{session}:", "-c", args.cwd, "-n", name,
         ).split()
         print(
-            f"[subagent] {name} window {tab_id} pane {pane_id} profile {profile}",
+            f"[subagent] {name} window {tab_id} pane {pane_id} model {profile['model']} effort {profile['effort']}",
             file=sys.stderr,
         )
         if not launch_tmux(name, pane_id, argv, prompt, args.cwd, kind=kind):
@@ -799,7 +968,7 @@ def main():
         pane_id = tab["root_pane"]["pane_id"]
         tab_id = tab["tab"]["tab_id"]
         print(
-            f"[subagent] {name} tab {tab_id} pane {pane_id} profile {profile}",
+            f"[subagent] {name} tab {tab_id} pane {pane_id} model {profile['model']} effort {profile['effort']}",
             file=sys.stderr,
         )
         if not launch(name, pane_id, argv, timeout_ms=start_timeout, kind=kind):

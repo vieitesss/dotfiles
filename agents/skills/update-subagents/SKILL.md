@@ -1,6 +1,6 @@
 ---
 name: update-subagents
-description: Pin or unpin the model profile for a subagent kind.
+description: Swap the model behind a Subagent model role (builder, writer, critic).
 disable-model-invocation: true
 ---
 
@@ -12,9 +12,9 @@ You receive a message like: "use <model> [instead of <model>]"
 
 2. Show current models
 
-Provide the models that are already available in the ../subagents/scripts/subagent.py script, in the MODELS object within the first 50 lines of code.
-The user has to decide between those models the one that's going to be replaced with the model they have indicated at the beginning.
+Provide the roles and models in the MODELS object near the top of ../subagents/scripts/subagent.py.
+The user decides which role's model is replaced with the model they indicated at the beginning.
 
 3. Update script
 
-Update the script, replacing the selected model to switch with the new one.
+Update the script, replacing that role's model with the new one. Stages pin roles, never model ids, so MODELS is the only place to change.

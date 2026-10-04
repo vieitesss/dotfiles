@@ -1,5 +1,7 @@
 # Issue 0003: Jev routing in pi-subagent
 
+**Status:** superseded by [ADR 0003](../adr/0003-subagent-is-a-stage-instance.md). The Stage now fixes kind and skills; Jev judges only the model and effort a Stage leaves open.
+
 **Skill:** `~/.agents/skills/mine/pi-subagent/SKILL.md`
 **Pattern:** model routing / harness engineering. Small fast judgments at the delegation boundary, before any expensive session is spawned.
 

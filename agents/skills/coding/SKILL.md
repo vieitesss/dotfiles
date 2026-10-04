@@ -36,6 +36,7 @@ When editing existing code:
 - Don't refactor things that aren't broken.
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
+- Cleanup beyond your change belongs to Refine, a later Stage.
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
