@@ -2,8 +2,7 @@
 
 set -euo pipefail
 
-script_dir=$(dirname "$0")
-repo_root=$(CDPATH= cd "$script_dir" && pwd -P) || exit 1
+repo_root=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 
 os=$(uname -s)
 case "$os" in
@@ -54,34 +53,25 @@ case "${1:-}" in
         ;;
 esac
 
-requested_apps=("$@")
-matched_apps=()
+# Space-separated so the script also runs on macOS's bash 3.2, where an empty
+# array trips "set -u".
+requested_apps=$*
+matched_apps=
 
 trim() {
     printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
-application_name() {
-    case "$1" in
-        */*)
-            printf '%s\n' "${1%%/*}"
-            ;;
-        *)
-            printf '%s\n' "$1"
+is_requested_application() {
+    [ -z "$requested_apps" ] && return 0
+
+    app_name=${1%%/*}
+    case " $requested_apps " in
+        *" $app_name "*)
+            matched_apps="$matched_apps $app_name"
+            return 0
             ;;
     esac
-}
-
-is_requested_application() {
-    [ "${#requested_apps[@]}" -eq 0 ] && return 0
-
-    app_name=$(application_name "$1")
-    for requested_app in "${requested_apps[@]}"; do
-        if [ "$app_name" = "$requested_app" ]; then
-            matched_apps+=("$requested_app")
-            return 0
-        fi
-    done
 
     return 1
 }
@@ -135,62 +125,23 @@ render_template() {
     fi
 }
 
-echo "Using manifest: $manifest"
-if [ "${#requested_apps[@]}" -gt 0 ]; then
-    echo "Installing applications: ${requested_apps[*]}"
-else
-    echo "Installing all applications"
-fi
-echo
-
-while IFS= read -r raw_line || [ -n "$raw_line" ]; do
-    line=$(trim "$raw_line")
-
-    case "$line" in
-        ''|'#'*)
-            continue
-            ;;
-    esac
-
-    case "$line" in
-        *'|'*)
-            # Split the manifest entry at the first "|".
-            # ${line%%|*} keeps everything before it; ${line#*|} keeps everything after it.
-            source_entry=$(trim "${line%%|*}")
-            dest_entry=$(trim "${line#*|}")
-            ;;
-        *)
-            echo "WARN: invalid manifest line: $raw_line" >&2
-            continue
-            ;;
-    esac
-
-    if [ -z "$source_entry" ] || [ -z "$dest_entry" ]; then
-        echo "WARN: invalid manifest line: $raw_line" >&2
-        continue
-    fi
-
-    if ! is_requested_application "$source_entry"; then
-        continue
-    fi
-
-    source_path="$repo_root/$source_entry"
-    dest_path=$(expand_destination "$dest_entry")
+install_entry() {
+    source_path=$1
+    dest_path=$2
 
     if [ ! -e "$source_path" ] && [ ! -L "$source_path" ]; then
-        echo "WARN: source missing: $source_entry" >&2
-        continue
+        echo "WARN: source missing: ${source_path#"$repo_root"/}" >&2
+        return
     fi
 
     if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
         echo "SKIP: $dest_path already exists"
-        continue
+        return
     fi
 
-    parent_dir=$(dirname "$dest_path")
-    mkdir -p "$parent_dir"
+    mkdir -p "$(dirname "$dest_path")"
 
-    case "$source_entry" in
+    case "$source_path" in
         *.tmpl)
             if render_template "$source_path" "$dest_path"; then
                 echo "RENDER: $dest_path <- $source_path"
@@ -206,20 +157,67 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
             fi
             ;;
     esac
+}
+
+echo "Using manifest: $manifest"
+if [ -n "$requested_apps" ]; then
+    echo "Installing applications: $requested_apps"
+else
+    echo "Installing all applications"
+fi
+echo
+
+while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+    line=$(trim "$raw_line")
+
+    case "$line" in
+        ''|'#'*)
+            continue
+            ;;
+    esac
+
+    # Split the manifest entry at the first "|"; without one, dest_entry stays empty.
+    # ${line%%|*} keeps everything before it; ${line#*|} keeps everything after it.
+    source_entry=$(trim "${line%%|*}")
+    dest_entry=
+    case "$line" in
+        *'|'*)
+            dest_entry=$(trim "${line#*|}")
+            ;;
+    esac
+
+    if [ -z "$source_entry" ] || [ -z "$dest_entry" ]; then
+        echo "WARN: invalid manifest line: $raw_line" >&2
+        continue
+    fi
+
+    if ! is_requested_application "$source_entry"; then
+        continue
+    fi
+
+    case "$source_entry|$dest_entry" in
+        */'*|'*/'*')
+            # "dir/*|dest/*" installs each entry of dir as dest/<name>.
+            # A missing or empty dir leaves the literal "*", reported as a missing source.
+            dest_dir=$(expand_destination "${dest_entry%/\*}")
+            for source_path in "$repo_root/${source_entry%/\*}"/*; do
+                install_entry "$source_path" "$dest_dir/${source_path##*/}"
+            done
+            ;;
+        *'*'*)
+            echo "WARN: wildcard must be a trailing /* on both sides: $raw_line" >&2
+            ;;
+        *)
+            install_entry "$repo_root/$source_entry" "$(expand_destination "$dest_entry")"
+            ;;
+    esac
 done < "$manifest"
 
-for requested_app in "${requested_apps[@]}"; do
-    found_app=false
-    for matched_app in "${matched_apps[@]}"; do
-        if [ "$requested_app" = "$matched_app" ]; then
-            found_app=true
-            break
-        fi
-    done
-
-    if [ "$found_app" = false ]; then
-        echo "WARN: no manifest entries for application: $requested_app" >&2
-    fi
+for requested_app in $requested_apps; do
+    case " $matched_apps " in
+        *" $requested_app "*) ;;
+        *) echo "WARN: no manifest entries for application: $requested_app" >&2 ;;
+    esac
 done
 
 echo

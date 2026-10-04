@@ -47,6 +47,10 @@ Manifest rules:
 - The destination path is the target path on the machine.
 - `~` in destinations means the user's home directory.
 - Sources may be files or directories.
+- A trailing `/*` on both sides (`agents/skills/*|~/.agents/skills/*`) links
+  each entry of the source directory individually into the destination
+  directory, instead of linking the directory itself. Hidden entries are not
+  included.
 
 ## Install script expectations
 
