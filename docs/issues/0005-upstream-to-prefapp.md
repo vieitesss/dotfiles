@@ -1,5 +1,7 @@
 # Issue 0005: move proven skills to prefapp/skills
 
+Status: done in prefapp/skills `feat/workflow-coding-refine-debt`; the three skills below were removed from this repo.
+
 Revisit once the Manager workflow (`docs/workflow.md`) has been used for a while.
 
 ## Candidates

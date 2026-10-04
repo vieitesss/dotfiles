@@ -136,9 +136,11 @@ STAGES = {
                 ),
             },
             "debt": {
-                "skills": ["review-debt"],
+                "skills": ["review"],
                 "role": (
-                    "You run the Review stage, Debt axis. Change no files."
+                    "You run the Review stage, Debt axis: you are the Debt "
+                    "sub-agent the review skill describes, so apply its brief "
+                    "yourself. Change no files."
                 ),
             },
         },
