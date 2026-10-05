@@ -124,6 +124,62 @@ class GuardDecisionTests(unittest.TestCase):
         decision = self.evaluate("tmux -L other kill-server")
         self.assertIn("-L", decision.reason)
 
+    # -- clustered and repeated global socket selectors ---------------------
+
+    def test_clustered_socket_selector_after_owned_asks(self):
+        # tmux accepts global options clustered (-2S socket) and a later -S/-L
+        # changes the server the command runs on, so the first owned selector
+        # must not authorize the call.
+        state, owned = make_owned_state(self.tmp)
+        sentinel_dir = os.path.join(self.tmp, "sentinel")
+        os.makedirs(sentinel_dir, mode=0o700)
+        os.chmod(sentinel_dir, 0o700)
+        sentinel = os.path.join(sentinel_dir, "sock")
+        commands = [
+            f"tmux -S {owned} -2S {sentinel} kill-server",
+            f"tmux -S {owned} -2S{sentinel} kill-server",
+            f"tmux -S {owned} -2L other kill-server",
+            f"tmux -S {owned} -2Lother kill-server",
+            f"tmux -S {owned} -S {sentinel} kill-server",
+            f"tmux -S {owned} -S {owned} kill-server",
+            f"tmux -L other -S {owned} kill-server",
+            f"tmux -S {owned} -2S {self.live} kill-server",
+        ]
+        for command in commands:
+            decision = self.evaluate(command)
+            self.assertEqual("ask", decision.kind, command)
+            self.assertIn("more than one socket selector", decision.reason, command)
+
+    def test_clustered_selector_without_an_owned_socket_asks(self):
+        sentinel = os.path.join(self.tmp, "sentinel", "sock")
+        for command in [f"tmux -2S {sentinel} kill-server", "tmux -2L other kill-server"]:
+            self.assertEqual("ask", self.evaluate(command).kind, command)
+
+    def test_clustered_global_flags_around_one_owned_selector_allow(self):
+        state, owned = make_owned_state(self.tmp)
+        commands = [
+            f"tmux -2S {owned} kill-server",
+            f"tmux -2S{owned} kill-server",
+            f"tmux -2f /dev/null -S {owned} kill-server",
+            f"tmux -S {owned} -2f /dev/null kill-server",
+            f"tmux -2T 256 -S {owned} kill-server",
+            f"tmux -S {owned} -2 kill-window -t @7",
+        ]
+        for command in commands:
+            self.assertEqual("allow", self.evaluate(command).kind, command)
+
+    def test_clustered_c_shell_command_is_judged(self):
+        self.assertEqual("ask", self.evaluate("tmux -2c 'tmux kill-server'").kind)
+        self.assertEqual("allow", self.evaluate("tmux -2c 'tmux ls'").kind)
+
+    def test_subcommand_socket_like_flags_are_not_global_selectors(self):
+        state, owned = make_owned_state(self.tmp)
+        for command in [
+            "tmux capture-pane -p -S -100",
+            f"tmux -S {owned} capture-pane -p -S -100",
+        ]:
+            self.assertEqual("allow", self.evaluate(command).kind, command)
+
     # -- chains and wrappers ------------------------------------------------
 
     def test_chain_with_owned_first_still_asks(self):

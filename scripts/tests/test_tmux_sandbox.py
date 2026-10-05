@@ -235,6 +235,53 @@ class SandboxTests(unittest.TestCase):
             self.assertIn(marker, proc.stdout)
         self.assertFalse(os.path.exists(foreign))
 
+    def test_shim_refuses_clustered_socket_overrides(self):
+        # tmux clusters global flags (-2S SOCKET), so a selector is not always
+        # the first letter of the option.  None of these may reach a server.
+        foreign_dir = tempfile.mkdtemp(prefix="tmux-foreign.", dir=self.tmp)
+        self.created.append(foreign_dir)
+        foreign = os.path.join(foreign_dir, "sock")
+        script = (
+            f"tmux -2S {foreign} list-sessions; echo A=$?; "
+            f"tmux -2S{foreign} list-sessions; echo B=$?; "
+            "tmux -2L other list-sessions; echo C=$?; "
+            f"tmux -2f /dev/null -S {foreign} ls; echo D=$?"
+        )
+        proc = self.run_runner("run", "--", "sh", "-c", script)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("refusing socket override", proc.stderr)
+        for marker in ("A=87", "B=87", "C=87", "D=87"):
+            self.assertIn(marker, proc.stdout)
+        self.assertFalse(os.path.exists(foreign))
+
+    def test_shim_refuses_clustered_query_against_a_foreign_private_server(self):
+        sentinel_sock = self.start_sentinel()
+        script = (
+            f"tmux -2S {sentinel_sock} show-options -g @sentinel-keep; echo Q=$?; "
+            f"tmux -S {sentinel_sock} -2S {sentinel_sock} show-options -g @sentinel-keep; "
+            "echo R=$?"
+        )
+        proc = self.run_runner("run", "--", "sh", "-c", script)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        for marker in ("Q=87", "R=87"):
+            self.assertIn(marker, proc.stdout)
+        self.assertNotIn("@sentinel-keep", proc.stdout)
+        self.assert_sentinel_untouched()
+
+    def test_shim_routes_navigation_and_subcommand_socket_values(self):
+        # `capture-pane -S -100` is a command flag, not a global selector: the
+        # shim must not consume it as one, and navigation must keep working.
+        script = (
+            "tmux new-session -d -s nav; echo new=$?; "
+            "tmux capture-pane -p -S -100 -t nav >/dev/null; echo cap=$?; "
+            "tmux -2 list-windows -t nav >/dev/null; echo win=$?"
+        )
+        proc = self.run_runner("run", "--", "sh", "-c", script)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("refusing socket override", proc.stderr)
+        for marker in ("new=0", "cap=0", "win=0"):
+            self.assertIn(marker, proc.stdout)
+
     # -- refusal to clean up anything not owned -----------------------------
 
     def test_cleanup_refuses_outside_owned_resources(self):

@@ -10,7 +10,8 @@ Decisions are conservative.  A destructive tmux operation is allowed only when
 the command explicitly targets a socket that a ``tmux-sandbox`` run owns
 (``<tmpdir>/dotfiles-tmux-sandbox.<id>/run/tmux.sock`` with a matching
 ``state.json``).  Every other destructive form -- unqualified, live, default,
-relative, ``-L``, wrapped, chained, aliased, substituted -- is ``ask``.
+relative, ``-L``, ambiguous (more than one ``-S``/``-L``, clustered or
+repeated), wrapped, chained, aliased, substituted -- is ``ask``.
 
 The guard is a deterministic speed bump, not a sandbox.  See
 ``docs/tmux-guard.md`` for the limits.
@@ -54,6 +55,11 @@ TMUX_COMMANDS = {
     "bind-key": ("commands", "bind-key"),
     "confirm-before": ("commands", "confirm-before"),
 }
+# tmux global options (before the command word).  The value-taking letters may
+# be clustered with plain flags (`-2S socket`, `-2Ssocket`); every other
+# letter is a flag that does not consume a value.
+TMUX_GLOBAL_VALUE_FLAGS = "cfLST"
+
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "mksh", "ash", "fish"}
 WRAPPERS = {
     "sudo",
@@ -393,7 +399,6 @@ class _Analyzer:
     def __init__(self, cwd: str, env: Mapping[str, str], tmpdir: Optional[str],
                  extra_live: Iterable[str] = ()):
         self.cwd = cwd
-        self.env = env
         self.tmpdir = tmpdir if tmpdir is not None else default_tmpdir(env)
         self.live = live_socket_paths(env, extra_live)
 
@@ -532,7 +537,7 @@ class _Analyzer:
     def _analyze_tmux(self, words: list[Token], depth: int) -> list[str]:
         findings: list[str] = []
         i = 0
-        socket_spec = None  # ("-S" | "-L", value)
+        selectors: list[Tuple[str, str]] = []  # (-S|-L, value), in order
         subcommand: Optional[Token] = None
         rest: list[Token] = []
         while i < len(words):
@@ -543,21 +548,29 @@ class _Analyzer:
                 i += 1
                 continue
             if text.startswith("-") and text != "-":
-                if text.startswith("-S") or text.startswith("-L"):
-                    value, i = _take_flag_value(words, i, text[2:])
-                    socket_spec = (text[:2], value)
-                    continue
-                if text.startswith("-c"):
-                    # `tmux -c shell-command` executes a shell command.
-                    value, i = _take_flag_value(words, i, text[2:])
-                    decision = self.evaluate_text(value, depth + 1)
-                    if decision.kind != "allow":
-                        findings.append(decision.reason)
-                    continue
-                if text in ("-f", "-T"):
-                    _, i = _take_flag_value(words, i, "")
-                    continue
-                i += 1
+                # Global options may be clustered: `-2S socket` is -2 and a
+                # socket selector.  A value flag takes the rest of its cluster
+                # or the next word as its value, so a value that looks like a
+                # selector is never mistaken for one.
+                cluster = text[1:]
+                while cluster:
+                    letter, cluster = cluster[0], cluster[1:]
+                    if letter not in TMUX_GLOBAL_VALUE_FLAGS:
+                        continue
+                    if cluster:
+                        value, i = cluster, i + 1
+                    else:
+                        value, i = _take_flag_value(words, i, "")
+                    if letter == "c":
+                        # `tmux -c shell-command` executes a shell command.
+                        decision = self.evaluate_text(value, depth + 1)
+                        if decision.kind != "allow":
+                            findings.append(decision.reason)
+                    elif letter in "SL":
+                        selectors.append(("-" + letter, value))
+                    break
+                else:
+                    i += 1
                 continue
             subcommand = token
             rest = words[i + 1:]
@@ -566,11 +579,11 @@ class _Analyzer:
             break
         if subcommand is None:
             return findings
-        findings.extend(self._scan_tmux_commands(subcommand, rest, socket_spec, depth))
+        findings.extend(self._scan_tmux_commands(subcommand, rest, selectors, depth))
         return findings
 
     def _scan_tmux_commands(self, subcommand: Token, rest: list[Token],
-                            socket_spec, depth: int) -> list[str]:
+                            selectors: list[Tuple[str, str]], depth: int) -> list[str]:
         r"""Decide whether a tmux invocation contains a guarded operation.
 
         Nested arguments are judged by their kind.  ``run-shell`` arguments are
@@ -599,7 +612,7 @@ class _Analyzer:
                     findings.append(decision.reason)
             guarded = self._guarded_in_words([subcommand] + _command_list_items(rest))
             if guarded is not None:
-                findings.extend(self._authorize(guarded, socket_spec))
+                findings.extend(self._authorize(guarded, selectors))
             return _dedupe(findings)
 
         if kind == "commands":
@@ -615,7 +628,7 @@ class _Analyzer:
                     continue
                 nested = self._guarded_in_words(tokenize(text) or [])
                 if nested is not None:
-                    findings.extend(self._authorize(nested, socket_spec))
+                    findings.extend(self._authorize(nested, selectors))
 
         if _canonical_tmux_word(subcommand.text) == "detach-client":
             value = _flag_value(rest, "-E")
@@ -626,18 +639,25 @@ class _Analyzer:
 
         guarded = self._guarded_in_words([subcommand] + rest)
         if guarded is not None:
-            findings.extend(self._authorize(guarded, socket_spec))
+            findings.extend(self._authorize(guarded, selectors))
         return _dedupe(findings)
 
-    def _authorize(self, guarded: str, socket_spec) -> list[str]:
+    def _authorize(self, guarded: str, selectors: list[Tuple[str, str]]) -> list[str]:
         """Judge a guarded operation against the socket the invocation targets."""
         live = self.live[0]
-        if socket_spec is None:
+        if len(selectors) > 1:
+            named = ", ".join(f"{flag} {value}" for flag, value in selectors)
+            return [
+                f"destructive tmux operation ({guarded}) names more than one socket "
+                f"selector ({named}), so the server it would run on is ambiguous; "
+                "refusing to authorize it without a human"
+            ]
+        if not selectors:
             return [
                 f"destructive tmux operation ({guarded}) targets the live/default socket "
                 f"({live}); run it through tmux-sandbox for a private server"
             ]
-        flag, value = socket_spec
+        flag, value = selectors[0]
         if flag == "-L":
             return [
                 f"destructive tmux operation ({guarded}) uses -L {value}, which cannot "

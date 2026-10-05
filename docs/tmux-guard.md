@@ -16,8 +16,9 @@ tmux-sandbox cleanup --state DIR
 
 Inside `tmux-sandbox run`, `TMUX` and `TMUX_PANE` are unset, `HOME` and
 `TMUX_TMPDIR` point at the state dir, and a `tmux` shim first on `PATH` routes
-every nested bare `tmux` call to the owned socket. The shim refuses `-S`/`-L`,
-so a nested command cannot fall back to the live/default socket. Cleanup kills
+every nested bare `tmux` call to the owned socket. The shim refuses `-S`/`-L`
+in the global options, including clustered forms such as `-2S SOCKET`, so a
+nested command cannot fall back to the live/default socket. Cleanup kills
 only the verified owned socket and refuses any path that is not an owned state
 directory.
 
@@ -36,6 +37,7 @@ destructive operation unless it explicitly targets an owned sandbox socket with
 | `pkill`/`killall` matching tmux, `kill $(pgrep tmux)` | no socket to prove |
 | `run-shell`/`if-shell`/`bind-key`/`confirm-before` carrying a guarded command | |
 | chains, wrappers (`sudo`, `env`, `sh -c`, `eval`, `xargs`), substitutions, `alias` bodies | conservative `ask` |
+| more than one `-S`/`-L` selector (clustered or repeated) | the effective server is ambiguous |
 | unparsable command with destructive tmux evidence | fail closed |
 | unknown wrapper containing an unexplained `tmux` + guarded word | fail closed |
 

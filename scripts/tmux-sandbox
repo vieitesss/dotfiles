@@ -54,13 +54,40 @@ if [ -z "${TMUX_TEST_SOCKET:-}" ] || [ -z "${REAL_TMUX:-}" ]; then
     echo "tmux-sandbox shim: TMUX_TEST_SOCKET/REAL_TMUX are not set; refusing to run" >&2
     exit 87
 fi
+# Global options come before the command word, and tmux clusters them:
+# `-2S SOCKET` is -2 plus a socket selector.  -c/-f/-L/-S/-T take the rest of
+# their cluster or the next argument as a value; every other letter is a flag
+# without one.  A selector in that prefix would override the owned -S
+# injected below, so refuse it; a selector-looking value or a subcommand's own
+# flags after the command word are not global options and pass through.
+expect_value=0
 for arg in "$@"; do
+    if [ "$expect_value" = 1 ]; then
+        expect_value=0
+        continue
+    fi
     case "$arg" in
-        -S*|-L*)
-            echo "tmux-sandbox shim: refusing socket override '$arg'; nested calls are already routed to the sandbox socket" >&2
-            exit 87
-            ;;
+        --) break ;;
+        -*) ;;
+        *) break ;;
     esac
+    rest=${arg#-}
+    while [ -n "$rest" ]; do
+        case "$rest" in
+            c*|f*|T*)
+                rest=${rest#?}
+                [ -n "$rest" ] || expect_value=1
+                break
+                ;;
+            S*|L*)
+                echo "tmux-sandbox shim: refusing socket override '$arg'; nested calls are already routed to the sandbox socket" >&2
+                exit 87
+                ;;
+            ?*)
+                rest=${rest#?}
+                ;;
+        esac
+    done
 done
 exec "$REAL_TMUX" -S "$TMUX_TEST_SOCKET" "$@"
 """
