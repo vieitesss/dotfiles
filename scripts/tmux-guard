@@ -1,59 +1,192 @@
 #!/usr/bin/env python3
-"""Decision CLI for the tmux destructive-command guard.
+"""Tmux risk guard: one executable for the CLI, Claude hooks, and the hook policy.
 
-Usage:
-    tmux-guard [--cwd DIR] [--live-socket PATH]... [--] COMMAND
+    tmux-guard [--cwd DIR] [--] COMMAND   ->  allow | ask<TAB>reason
+    tmux-guard --claude-hook              Claude PreToolUse JSON on stdin
+    tmux-guard --claude-settings          print the JSON that installs --claude-hook
 
-Prints exactly one line and exits 0:
-
-    allow
-    ask<TAB>reason
-
-Exit 2 means the guard itself failed; callers MUST treat any non-zero exit as
-blocked.  There is no approval flag: an approval comes from the harness UI.
+Only commands whose text mentions tmux are screened; their text, cwd, and live tmux
+socket path then go to TypeSafe Jev for a best-effort judgment.  A missing key, HTTP
+failure, timeout, or unusable answer asks a human; adapter failures exit 2, the only
+status Claude Code blocks on.  No flag grants approval.  Best effort, not a safety
+boundary; see docs/tmux-guard.md.
 """
 
 import argparse
+import json
+import math
 import os
+import re
+import shlex
 import sys
+import urllib.request
 
-# The scripts are symlinked from the repo; never write __pycache__ into it.
-sys.dont_write_bytecode = True
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+API_URL = "https://api.typesafe.ai/v1/systemone"
+MODEL = "jev-latest"
+QUESTION_ID = "needs_human_approval"
+TRIGGER = re.compile(r"tmux", re.IGNORECASE)  # cheap superset: paths, TMUX vars, argv text
+RISK_THRESHOLD = 0.35  # at/above: a human decides; a Noul near 0.5 is real uncertainty
+TIMEOUT = 3.0  # well below the Claude hook timeout, which fails open
+NO_PROMPT_MODES = ("bypassPermissions", "dontAsk")
+ALLOW, ASK = "allow", "ask"
 
-try:
-    from tmux_guard import evaluate  # noqa: E402
-except Exception as exc:  # noqa: BLE001 - a guard must fail closed, never exit 1
-    print(f"tmux-guard: cannot load the tmux_guard core: {exc}", file=sys.stderr)
-    sys.exit(2)
+
+def is_tmux_related(command):
+    return bool(TRIGGER.search(str(command or "")))
+
+
+def build_request(command, cwd, env):
+    """The screening payload: command, cwd, live socket, one Noul question."""
+    inherited = (env.get("TMUX") or "").split(",")[0]
+    socket = inherited or os.path.join(
+        env.get("TMUX_TMPDIR") or "/tmp", "tmux-%d" % os.getuid(), "default"
+    )
+    instructions = ("An AI coding agent wants to run the shell command in `command` "
+                    "(working directory `cwd`). Does running it require a human's approval first?")
+    return {
+        "model": MODEL,
+        "state": {"command": command, "cwd": cwd, "live_tmux_socket": socket},
+        "questions": {
+            QUESTION_ID: {
+                "type": "noul",
+                "instructions": instructions,
+                "criteria": {
+                    "true": (
+                        "Running it could kill, detach, or reconfigure live tmux sessions or the tmux "
+                        "server at `live_tmux_socket`: kill-server, kill-session, kill-window, kill-pane, "
+                        "kill-client, detach-client, source-file, pkill or killall of tmux, or killing a "
+                        "tmux process. This counts however the command is written, including chains, "
+                        "wrappers, aliases, clustered flags, substitutions, and nested shells."
+                    ),
+                    "false": (
+                        "It does not involve tmux at all, or it only reads or navigates tmux state "
+                        "(list-sessions, capture-pane, show-options, send-keys, split-window, select-pane), "
+                        "or every tmux operation in it explicitly selects its own socket that is not "
+                        "`live_tmux_socket`, or it only runs this repository's own tmux test tooling "
+                        "(`just test-tmux`, `tmux-sandbox`), which uses a private server."
+                    ),
+                },
+            }
+        },
+    }
+
+
+def _post(request, timeout):
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def _probability(body):
+    """The Noul probability from a TypeSafe response, or None when unusable."""
+    try:
+        answer = body["answers"][QUESTION_ID]
+    except (TypeError, KeyError, IndexError):
+        return None
+    if not isinstance(answer, dict) or answer.get("type") != "noul":
+        return None
+    value = answer.get("noul")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) and 0.0 <= value <= 1.0 else None
+
+
+def screen(command, cwd=None, env=None, transport=None):
+    """Return ``(kind, reason)``; ``ask`` unless a tmux command screened clean."""
+    if not is_tmux_related(command):
+        return ALLOW, ""
+    env = os.environ if env is None else env
+    key = (env.get("TYPESAFE_API_KEY") or "").strip()
+    if not key:
+        return ASK, "TypeSafe screening unavailable: TYPESAFE_API_KEY is not set, so a human decides"
+    body = json.dumps(build_request(command, cwd or os.getcwd(), env)).encode()
+    request = urllib.request.Request(
+        API_URL, data=body,
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+    )
+    try:
+        body = (transport or _post)(request, TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - a failed screen must ask, never allow
+        return ASK, f"TypeSafe screening unavailable ({exc}); so a human decides"
+    probability = _probability(body)
+    if probability is None:
+        return ASK, "TypeSafe answer could not be read; so a human decides"
+    if probability >= RISK_THRESHOLD:
+        return ASK, "TypeSafe risk %.2f >= %.2f: a human decides" % (probability, RISK_THRESHOLD)
+    return ALLOW, ""
+
+
+def claude_hook(payload, env=None, decide=None):
+    """Map one Claude PreToolUse payload to ``(exit_code, stdout)``."""
+    decide = decide or screen
+    if not isinstance(payload, dict):
+        raise ValueError("hook input is not a JSON object")
+    if payload.get("hook_event_name") not in (None, "PreToolUse"):
+        return 0, ""
+    if payload.get("tool_name") not in ("Bash", "PowerShell"):
+        return 0, ""
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str):
+        raise ValueError("Claude hook call without a command string")
+    if not command.strip():
+        return 0, ""
+
+    kind, reason = decide(command, payload.get("cwd") or os.getcwd(), env or os.environ)
+    if kind == ALLOW:
+        return 0, ""
+    if kind != ASK:
+        raise ValueError("screening returned an unexpected decision")
+    mode = payload.get("permission_mode")
+    permission = "deny" if mode in NO_PROMPT_MODES else "ask"
+    if permission == "deny":
+        reason += " (no prompt can be honoured in permission_mode=%s)" % mode
+    output = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": permission,
+                                     "permissionDecisionReason": reason}}
+    return 0, json.dumps(output, separators=(",", ":"))
+
+
+def claude_settings(guard_path=None):
+    """The ``claude --settings`` JSON that installs this guard as the Bash hook.
+
+    Needs no key and makes no network call.  The hook command pins this
+    executable's absolute path and turns a missing file or any non-zero status
+    into exit 2, the only status Claude Code blocks on.
+    """
+    guard = shlex.quote(os.path.realpath(guard_path or __file__))
+    command = (
+        'g=%s; [ -x "$g" ] || { echo "tmux-guard missing; refusing to run unguarded" >&2; exit 2; }; '
+        '"$g" --claude-hook; s=$?; [ "$s" -eq 0 ] || { echo "tmux-guard failed ($s); refusing to run unguarded" >&2; exit 2; }'
+    ) % guard
+    entry = {"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": command, "timeout": 10}]}
+    return json.dumps({"hooks": {"PreToolUse": [entry]}}, separators=(",", ":"))
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        prog="tmux-guard",
-        description="Decide whether an agent-issued shell command may run unguarded.",
-    )
+    parser = argparse.ArgumentParser(prog="tmux-guard", description="Jev screen for tmux shell commands.")
     parser.add_argument("--cwd", default=os.getcwd(), help="directory the command runs in")
-    parser.add_argument(
-        "--live-socket",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="additional socket that must never be treated as a sandbox (test seam)",
-    )
-    parser.add_argument("command", metavar="COMMAND", help="the shell command to inspect")
+    parser.add_argument("--claude-hook", action="store_true", help="read a Claude PreToolUse payload")
+    parser.add_argument("--claude-settings", action="store_true", help="print claude --settings JSON")
+    parser.add_argument("command", nargs="?", help="the shell command to inspect")
     args = parser.parse_args(argv)
 
-    decision = evaluate(
-        args.command,
-        cwd=args.cwd,
-        env=os.environ,
-        live_sockets=args.live_socket,
-    )
-    if decision.kind == "allow":
-        print("allow")
-    else:
-        print("ask\t" + decision.reason.replace("\n", " "))
+    if args.claude_settings:
+        print(claude_settings())
+        return 0
+    if args.claude_hook:
+        try:
+            payload = json.loads(sys.stdin.read())
+            code, output = claude_hook(payload)
+        except ValueError as exc:
+            print(f"tmux-guard: bad Claude hook input ({exc})", file=sys.stderr)
+            return 2
+        if output:
+            print(output)
+        return code
+    if not args.command:
+        parser.error("a COMMAND is required unless --claude-hook or --claude-settings is used")
+    kind, reason = screen(args.command, cwd=args.cwd, env=os.environ)
+    print(ALLOW if kind == ALLOW else "ask\t" + reason.replace("\n", " "))
     return 0
 
 

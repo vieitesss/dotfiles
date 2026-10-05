@@ -1,102 +1,61 @@
-# Tmux guard and sandbox
+# Tmux guard and test sandbox
 
-Agents have killed the live tmux server by running unqualified destructive
-commands after inheriting `TMUX` (2026-10-05 retrospective). This page covers
-the two mechanisms that make that deterministic: a private test server
-(`scripts/tmux-sandbox`) and a tool-level guard (`scripts/tmux-guard`).
+An agent inherited `TMUX`, ran an unqualified `tmux kill-server`, and killed the
+live server (2026-10-05 retrospective). Two small pieces reduce that risk. The
+guard is a **best-effort semantic speed bump, not a safety boundary.**
 
-## Run tmux tests safely
+## Test sandbox
 
-```sh
-just test-tmux                 # all tmux guard + sandbox tests
-tmux-sandbox run -- CMD ...    # run a command with a private tmux server
-tmux-sandbox new               # print a state dir; socket is <dir>/run/tmux.sock
-tmux-sandbox cleanup --state DIR
-```
+`tmux-sandbox -- CMD [ARGS...]` runs one command against its own private server
+(`just test-tmux` runs the tests). It creates a unique state directory under the
+real `TMPDIR` with its own socket, points `HOME`/`TMUX_TMPDIR` at it, unsets the
+inherited `TMUX`/`TMUX_PANE`, and puts a `tmux` shim first on `PATH` so every
+nested bare `tmux` call reaches only that socket; on exit that server is killed
+and the state removed. There is no other mode: cleanup never accepts a
+caller-supplied path, so no server outside the process can be aimed at.
 
-Inside `tmux-sandbox run`, `TMUX` and `TMUX_PANE` are unset, `HOME` and
-`TMUX_TMPDIR` point at the state dir, and a `tmux` shim first on `PATH` routes
-every nested bare `tmux` call to the owned socket. The shim refuses `-S`/`-L`
-in the global options, including clustered forms such as `-2S SOCKET`, so a
-nested command cannot fall back to the live/default socket. Cleanup kills
-only the verified owned socket and refuses any path that is not an owned state
-directory.
+The shim refuses **any leading global option** (`-S`, `-2S`, `-L`, `-f`, ...)
+with exit 87 rather than reimplementing tmux's `getopt`, so a clustered socket
+selector cannot slip through; subcommand flags such as `capture-pane -S -5` stay
+legal, and only the harmless fixture config is sourced, never `~/.tmux.conf`. An
+absolute path to the real tmux binary still bypasses it: a test convenience, not
+a sandbox against a hostile agent.
 
-## What the guard blocks
+## Guard
 
-For agent-issued shell tool calls, `scripts/tmux-guard` returns `ask` for a
-destructive operation unless it explicitly targets an owned sandbox socket with
-`-S <state>/run/tmux.sock`:
+`tmux-guard [--cwd DIR] -- COMMAND` prints one line, `allow` or
+`ask<TAB>reason`; `--claude-hook` reads a Claude PreToolUse payload on stdin, and
+`--claude-settings` prints the JSON for `claude --settings`. One executable owns
+all three. Commands without `tmux` in their text make no call and always run.
+Everything else goes to one Jev `noul` question -- does running it require human
+approval under this policy? -- with `state` = the command text, cwd, and live
+tmux socket path. The criteria name the destructive operations and make explicit
+non-live sockets and the repository's own test tooling (`just test-tmux`,
+`tmux-sandbox`) the false side. `noul >= 0.35` -> `ask`, below -> `allow`; `ask`
+is a real human decision (Pi confirm dialog, Claude permission prompt) and no env
+var, flag, or token grants approval.
 
-| Blocked | Notes |
-|---|---|
-| `kill-server`, `kill-session`, `kill-client` | any form, including targeted `-t` |
-| `kill-window -a`, `kill-pane -a` | targeted `kill-window -t`/`kill-pane` stay allowed |
-| `detach-client -a`, `detach-client -P` | plain `detach-client` stays allowed |
-| `source-file` (alias `source`) | config reload; allowed on an owned socket |
-| `pkill`/`killall` matching tmux, `kill $(pgrep tmux)` | no socket to prove |
-| `run-shell`/`if-shell`/`bind-key`/`confirm-before` carrying a guarded command | |
-| chains, wrappers (`sudo`, `env`, `sh -c`, `eval`, `xargs`), substitutions, `alias` bodies | conservative `ask` |
-| more than one `-S`/`-L` selector (clustered or repeated) | the effective server is ambiguous |
-| unparsable command with destructive tmux evidence | fail closed |
-| unknown wrapper containing an unexplained `tmux` + guarded word | fail closed |
+Failures never allow: a missing key, HTTP error, 3s timeout, bad JSON, or an
+unusable/NaN/out-of-range answer all ask, and with no UI (Pi headless, Claude
+headless/`bypassPermissions`/`dontAsk`) ask becomes a block; the Claude hook exits
+2 on any internal error, because exit 1 would fail open. Screened commands POST
+the command string, cwd, and live socket path to
+`https://api.typesafe.ai/v1/systemone` (`Bearer $TYPESAFE_API_KEY`, model
+`jev-latest`) -- shell commands can contain sensitive literals -- and nothing
+else from the environment is sent; typical latency ~0.3s, Python 3 stdlib only.
 
-Ordinary navigation (`ls`, `split-window`, `select-pane`, `send-keys`,
-`capture-pane`, `show-options`, `set-option -w`, ...) and the targeted
-`kill-window -t` used by `subagent.py --close` stay allowed.
+Activation: the Pi extension in the managed `~/.pi/agent/extensions` resolves this
+checkout's `scripts/tmux-guard`, then `~/.local/bin/tmux-guard`; the Subagent
+launcher and the opt-in `claude-guarded` both use `tmux-guard --claude-settings`
+(a missing guard refuses to start; `TYPESAFE_API_KEY` already reaches children via
+`PASSTHROUGH_ENV`) and neither edits `~/.claude/settings.json`. Both manifests
+install `tmux-guard`, `claude-guarded`, and `tmux-sandbox`.
 
-## Approval
-
-`ask` is a request for a real harness-human approval -- Pi shows
-`ctx.ui.confirm`, Claude Code shows its permission prompt. There is no env
-variable, flag, or token that grants approval. With no UI to prompt (Pi
-non-interactive, Claude headless/`bypassPermissions`/`dontAsk`), the call is
-blocked/denied. The Claude adapter exits `2` on any internal error; `exit 1`
-would fail open and is never used.
-
-## Activation
-
-- **Pi:** `pi/agent/extensions/tmux-guard/` is inside the already-managed
-  `~/.pi/agent/extensions` directory, so it loads automatically. It resolves
-  the guard from its own checkout first, then `~/.local/bin/tmux-guard`; if
-  neither exists it blocks guarded commands rather than passing them.
-- **Claude, launcher-spawned:** `subagent.py` passes `--settings <inline JSON>`
-  pointing at the checkout's `scripts/claude-tmux-guard`, so both tmux- and
-  herdr-launched Subagents are guarded without touching user settings. When the
-  checkout has no guard, the launcher refuses to start the session instead of
-  warning and continuing.
-- **Claude, direct sessions:** run `claude-guarded` instead of `claude`. It is
-  an explicitly named command (not a `claude` alias) that adds
-  `claude/tmux-guard.settings.json` and exports `CLAUDE_TMUX_GUARD` for the
-  current checkout. To opt in without the wrapper, link the fragment
-  (`./install.sh claude` creates `~/.claude/dotfiles-tmux-guard.json`) and run
-  `claude --settings ~/.claude/dotfiles-tmux-guard.json`. `~/.claude/settings.json`
-  is never modified. Both hook wrappers run the adapter and translate *any*
-  non-zero status (1, 126, 127, killed, ...) into exit 2, because Claude Code
-  only blocks on exit 2; the adapter's `ask`/`deny` JSON is passed through only
-  when it exits 0. A missing, non-executable, or broken guard therefore blocks
-  Bash calls instead of silently allowing them.
-- **Manifests:** both `MAC.manifest` and `LINUX.manifest` install
-  `tmux-guard`, `claude-tmux-guard`, `claude-guarded`, `tmux-sandbox`, and the
-  Claude settings fragment. Nothing needs to be installed for the tests or the
-  current checkout to be guarded.
-
-## Limits (not a sandbox)
-
-- It guards harness tool calls only. Human shells, `!` commands, other
-  extensions' own `pi.exec`, MCP servers, subprocesses inside a tool, other
-  harnesses, and remote (`ssh`/`docker exec`) commands are outside it.
-- String analysis is a deterministic speed bump: variable indirection
-  (`$CMD`), tmux `command-alias`, `eval` inside data, base64/`printf`
-  obfuscation, and process renaming can evade it. When the guard cannot prove
-  the target it asks instead of allowing. Nested shell arguments (`run-shell`,
-  `if-shell` conditions, `detach-client -E`) are judged on their own terms: an
-  owned outer socket never authorizes a nested command that names the live or
-  an unrelated socket. tmux command lists (`if-shell`'s second argument,
-  `bind-key`/`confirm-before` bodies) do run against the outer server, so an
-  owned outer `-S` authorizes them.
-- Ownership is a marker check (`state.json` + uid + mode 0700 + exact socket
-  path under `TMPDIR`), not cryptography; it separates the runner's own
-  private socket from unrelated private sockets, nothing more.
-- The guard and adapters are repo files the agent can edit. OS user isolation
-  or a container is the only real boundary.
+Limits: hidden tmux calls (opaque scripts, dynamic names, aliases defined
+elsewhere, a program running tmux itself) are outside the prefilter; the model can
+be wrong either way; only harness tool calls are covered, not human shells, other
+harnesses, MCP servers, or `pi.exec`; the guard can be edited, and OS user
+isolation is the only real boundary. `run-shell`/`if-shell` bodies run real
+processes. `just test-tmux` is hermetic (HTTP stubbed, no key, private sockets
+with a `TMUX` sentinel that must survive untouched); for a live judgment:
+`TYPESAFE_API_KEY=... scripts/tmux-guard 'tmux kill-server'`.

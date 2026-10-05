@@ -1,433 +1,243 @@
 #!/usr/bin/env python3
-"""Tests for the shared tmux destructive-command guard (scripts/lib/tmux_guard.py).
+"""Tests for scripts/tmux-guard and the Claude launchers that use it.
 
-Run from the repository root:
-
-    python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+Hermetic: a transport stub replaces HTTP, so no key or network is used.
 """
 
+import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from importlib.machinery import SourceFileLoader
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO, "scripts", "lib"))
-
-import tmux_guard  # noqa: E402
-
-
-def make_owned_state(tmpdir, name="dotfiles-tmux-sandbox.test01"):
-    """Build a sandbox state directory by hand, mirroring tmux-sandbox's layout.
-
-    Created independently of tmux_guard's own writer so the ownership tests
-    exercise the reader against real files, not a shared helper.
-    """
-    state = os.path.join(tmpdir, name)
-    run_dir = os.path.join(state, "run")
-    os.makedirs(run_dir, mode=0o700)
-    os.chmod(state, 0o700)
-    os.chmod(run_dir, 0o700)
-    socket = os.path.join(run_dir, "tmux.sock")
-    with open(os.path.join(state, "state.json"), "w", encoding="utf-8") as handle:
-        json.dump({"version": 1, "socket": socket, "runner": "tmux-sandbox"}, handle)
-    os.chmod(os.path.join(state, "state.json"), 0o600)
-    return state, socket
+GUARD = os.path.join(REPO, "scripts", "tmux-guard")
+LAUNCHER = os.path.join(REPO, "scripts", "claude-guarded")
+SECRET = "ts_secret_do_not_log"
 
 
-class GuardDecisionTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="tmux-guard-test.", dir="/tmp"))
-        os.chmod(self.tmp, 0o700)
-        self.addCleanup(self._cleanup_tmp)
-        self.live = "/tmp/live-owner/default"
+def load(path, name):
+    loader = SourceFileLoader(name, path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    loader.exec_module(module)
+    return module
 
-    def _cleanup_tmp(self):
-        import shutil
 
-        shutil.rmtree(self.tmp, ignore_errors=True)
+guard = load(GUARD, "tmux_guard_under_test")
+subagent = load(
+    os.path.join(REPO, "agents", "skills", "subagents", "scripts", "subagent.py"),
+    "subagent_under_test",
+)
 
-    def evaluate(self, command, **kwargs):
-        env = {"TMUX": f"{self.live},123,0"}
-        env.update(kwargs.pop("env", {}))
-        return tmux_guard.evaluate(
-            command,
-            cwd=kwargs.pop("cwd", "/work"),
-            env=env,
-            tmpdir=kwargs.pop("tmpdir", self.tmp),
-            **kwargs,
-        )
 
-    # -- the guarded set ----------------------------------------------------
+def transport_stub(body=None, error=None):
+    """A urllib stand-in: records (request, timeout) pairs, returns canned JSON."""
+    requests = []
 
-    def test_live_and_default_destructive_calls_ask(self):
-        commands = [
-            "tmux kill-server",
-            "tmux kill-session",
-            "tmux kill-session -t work",
-            "tmux kill-server -f /dev/null",
-            "tmux source-file ~/.tmux.conf",
-            "tmux source ~/.tmux.conf",
-            "tmux kill-client -t /dev/ttys001",
-            "tmux kill-window -a",
-            "tmux kill-window -at @1",
-            "tmux killw -a",
-            "tmux kill-pane -a",
-            "tmux killp -a",
-            "tmux detach-client -a",
-            "tmux detach -P",
-            "tmux kill-serv",
-            "tmux kill-s",
-            "tmux kill-session -C -t work",
-        ]
-        for command in commands:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
+    def transport(request, timeout):
+        requests.append((request, timeout))
+        if error is not None:
+            raise error
+        return body
 
-    def test_explicit_owned_socket_is_allowed(self):
-        state, socket = make_owned_state(self.tmp)
-        self.assertEqual("allow", self.evaluate(f"tmux -S {socket} kill-server").kind)
-        self.assertEqual("allow", self.evaluate(f"tmux -S {socket} source-file /dev/null").kind)
+    return transport, requests
 
-    def test_relative_owned_socket_resolves_against_cwd(self):
-        state, socket = make_owned_state(self.tmp)
+
+def noul(value):
+    return {"answers": {"needs_human_approval": {"type": "noul", "noul": value}}}
+
+
+def screen(command, body=None, error=None, env=None):
+    transport, requests = transport_stub(body, error)
+    env = {"TYPESAFE_API_KEY": SECRET} if env is None else env
+    return guard.screen(command, cwd="/work", env=env, transport=transport), requests
+
+
+def no_key_env():
+    return {k: v for k, v in os.environ.items() if k != "TYPESAFE_API_KEY"}
+
+
+def payload(command="tmux kill-server", **extra):
+    return {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/work",
+            "tool_input": {"command": command}, **extra}
+
+
+def hook_command(settings_json):
+    return json.loads(settings_json)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+
+class ScreenTests(unittest.TestCase):
+    def test_prefilter_and_failures(self):
+        for command in ("git status", "npm run build", "pkill -f node", ""):
+            decision, requests = screen(command, error=AssertionError("called"), env={})
+            self.assertEqual((decision, requests), (("allow", ""), []), command)
+        for command in ("tmux kill-server", "pkill -f tmux", "echo tmux"):
+            # A tmux command reaches the screen even without a key, where it
+            # asks; an unrelated command never gets there.
+            self.assertEqual(screen(command, error=AssertionError("called"), env={})[0][0], "ask", command)
+        missing, requests = screen("tmux kill-server", env={})
+        self.assertEqual((missing[0], requests), ("ask", []))
+        self.assertIn("TYPESAFE_API_KEY", missing[1])
+        failed, _ = screen("tmux kill-server", error=OSError("connection timed out"))
+        self.assertTrue(failed[1].endswith("so a human decides"))
+        self.assertIn("connection timed out", failed[1])
+        self.assertNotIn(SECRET, failed[1])
+
+    def test_probability_maps_to_allow_or_ask_at_the_threshold(self):
+        for value, kind in ((0.02, "allow"), (0.34, "allow"), (0.35, "ask"), (0.5, "ask"), (0.95, "ask")):
+            decision, requests = screen("tmux kill-server", body=noul(value))
+            self.assertEqual((decision[0], len(requests)), (kind, 1), value)
+
+    def test_unusable_answers_ask(self):
+        def answer(value):
+            return {"answers": {"needs_human_approval": {"type": "noul", "noul": value}}}
+
+        bodies = [None, {}, {"answers": {}}, {"answers": {"needs_human_approval": {}}},
+                  answer("0.9"), answer(True), answer(None)]
+        bodies += [answer(value) for value in (float("nan"), float("inf"), -0.01, 1.01)]
+        for body in bodies:
+            decision, _ = screen("tmux kill-server", body=body)
+            self.assertEqual((decision[0], "could not be read" in decision[1]), ("ask", True), body)
+
+    def test_request_shape_carries_policy_context_but_no_other_environment(self):
+        command = "tmux -S /tmp/private.sock kill-server"
+        transport, requests = transport_stub(noul(0.0))
+        env = {"TYPESAFE_API_KEY": SECRET, "TMUX": "/tmp/live.sock,4,0", "EXTRA": "not-for-typesafe"}
+        guard.screen(command, cwd="/work/dir", env=env, transport=transport)
+        request, timeout = requests[0]
+        self.assertEqual((request.full_url, request.get_method()), (guard.API_URL, "POST"))
         self.assertEqual(
-            "allow",
-            self.evaluate("tmux -S run/tmux.sock kill-server", cwd=state).kind,
+            (request.get_header("Authorization"), request.get_header("Content-type")),
+            ("Bearer " + SECRET, "application/json"),
         )
+        self.assertTrue(0 < timeout <= 5)
+        data = json.loads(request.data)
+        self.assertEqual(data["model"], "jev-latest")
+        self.assertEqual(data["state"], {"command": command, "cwd": "/work/dir", "live_tmux_socket": "/tmp/live.sock"})
+        question = data["questions"]["needs_human_approval"]
+        self.assertEqual((question["type"], set(question["criteria"])), ("noul", {"true", "false"}))
+        self.assertNotIn("not-for-typesafe", request.data.decode())
 
-    def test_unrelated_private_socket_asks(self):
-        other = os.path.join(self.tmp, "not-a-sandbox")
-        os.makedirs(other, mode=0o700)
-        socket = os.path.join(other, "tmux.sock")
-        decision = self.evaluate(f"tmux -S {socket} kill-server")
-        self.assertEqual("ask", decision.kind)
-        self.assertIn("not an owned", decision.reason)
-
-    def test_sandbox_looking_directory_without_marker_asks(self):
-        # A directory named like a sandbox is not enough to prove ownership.
-        fake = os.path.join(self.tmp, "dotfiles-tmux-sandbox.deadbeef")
-        os.makedirs(os.path.join(fake, "run"), mode=0o700)
-        os.chmod(fake, 0o700)
-        socket = os.path.join(fake, "run", "tmux.sock")
-        self.assertEqual("ask", self.evaluate(f"tmux -S {socket} kill-server").kind)
-
-    def test_owned_socket_equal_to_live_still_asks(self):
-        state, socket = make_owned_state(self.tmp)
-        decision = self.evaluate(f"tmux -S {socket} kill-server", env={"TMUX": f"{socket},1,0"})
-        self.assertEqual("ask", decision.kind)
-        self.assertIn("live", decision.reason)
-
-    def test_l_takes_precedence_and_asks(self):
-        self.assertEqual("ask", self.evaluate("tmux -L other kill-server").kind)
-        decision = self.evaluate("tmux -L other kill-server")
-        self.assertIn("-L", decision.reason)
-
-    # -- clustered and repeated global socket selectors ---------------------
-
-    def test_clustered_socket_selector_after_owned_asks(self):
-        # tmux accepts global options clustered (-2S socket) and a later -S/-L
-        # changes the server the command runs on, so the first owned selector
-        # must not authorize the call.
-        state, owned = make_owned_state(self.tmp)
-        sentinel_dir = os.path.join(self.tmp, "sentinel")
-        os.makedirs(sentinel_dir, mode=0o700)
-        os.chmod(sentinel_dir, 0o700)
-        sentinel = os.path.join(sentinel_dir, "sock")
-        commands = [
-            f"tmux -S {owned} -2S {sentinel} kill-server",
-            f"tmux -S {owned} -2S{sentinel} kill-server",
-            f"tmux -S {owned} -2L other kill-server",
-            f"tmux -S {owned} -2Lother kill-server",
-            f"tmux -S {owned} -S {sentinel} kill-server",
-            f"tmux -S {owned} -S {owned} kill-server",
-            f"tmux -L other -S {owned} kill-server",
-            f"tmux -S {owned} -2S {self.live} kill-server",
-        ]
-        for command in commands:
-            decision = self.evaluate(command)
-            self.assertEqual("ask", decision.kind, command)
-            self.assertIn("more than one socket selector", decision.reason, command)
-
-    def test_clustered_selector_without_an_owned_socket_asks(self):
-        sentinel = os.path.join(self.tmp, "sentinel", "sock")
-        for command in [f"tmux -2S {sentinel} kill-server", "tmux -2L other kill-server"]:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-
-    def test_clustered_global_flags_around_one_owned_selector_allow(self):
-        state, owned = make_owned_state(self.tmp)
-        commands = [
-            f"tmux -2S {owned} kill-server",
-            f"tmux -2S{owned} kill-server",
-            f"tmux -2f /dev/null -S {owned} kill-server",
-            f"tmux -S {owned} -2f /dev/null kill-server",
-            f"tmux -2T 256 -S {owned} kill-server",
-            f"tmux -S {owned} -2 kill-window -t @7",
-        ]
-        for command in commands:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    def test_clustered_c_shell_command_is_judged(self):
-        self.assertEqual("ask", self.evaluate("tmux -2c 'tmux kill-server'").kind)
-        self.assertEqual("allow", self.evaluate("tmux -2c 'tmux ls'").kind)
-
-    def test_subcommand_socket_like_flags_are_not_global_selectors(self):
-        state, owned = make_owned_state(self.tmp)
-        for command in [
-            "tmux capture-pane -p -S -100",
-            f"tmux -S {owned} capture-pane -p -S -100",
-        ]:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    # -- chains and wrappers ------------------------------------------------
-
-    def test_chain_with_owned_first_still_asks(self):
-        state, socket = make_owned_state(self.tmp)
-        command = f"tmux -S {socket} list-sessions; tmux kill-server"
-        self.assertEqual("ask", self.evaluate(command).kind)
-
-    def test_chain_of_owned_operations_allowed(self):
-        state, socket = make_owned_state(self.tmp)
-        command = f"tmux -S {socket} list-sessions && tmux -S {socket} kill-server"
-        self.assertEqual("allow", self.evaluate(command).kind)
-
-    def test_wrapped_commands_request_approval(self):
-        commands = [
-            "command tmux kill-server",
-            "sudo tmux kill-server",
-            "env FOO=bar tmux kill-server",
-            "sh -c 'tmux kill-server'",
-            "bash -lc \"tmux kill-server\"",
-            "eval 'tmux kill-server'",
-            "$(tmux kill-server)",
-            "echo $(tmux kill-server)",
-            "xargs tmux kill-server",
-            "timeout 5 tmux kill-server",
-            "some-wrapper tmux kill-server",
-            "tmux run-shell 'tmux kill-server'",
-            "tmux if-shell 'true' 'kill-server'",
-            "tmux bind-key k kill-server",
-            "tmux confirm-before -p 'sure?' kill-server",
-            "tmux kill-window -t @1 \\; kill-server",
-        ]
-        for command in commands:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-
-    def test_wrapped_owned_commands_allowed(self):
-        state, socket = make_owned_state(self.tmp)
-        commands = [
-            f"sudo tmux -S {socket} kill-server",
-            f"bash -lc 'tmux -S {socket} kill-server'",
-            f"tmux -S {socket} run-shell 'echo hi'",
-            f"tmux -S {socket} if-shell 'true' 'list-sessions'",
-        ]
-        for command in commands:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    def test_process_killing_requests_approval(self):
-        for command in ["pkill -f tmux", "pkill tmux", "killall tmux", "kill $(pgrep tmux)"]:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-        self.assertEqual("allow", self.evaluate("pgrep tmux").kind)
-
-    def test_shell_alias_definitions_request_approval(self):
-        self.assertEqual(
-            "ask", self.evaluate("alias kk='tmux kill-server'; kk").kind
-        )
-
-    def test_quoted_data_is_not_an_operation(self):
-        commands = [
-            'echo "tmux kill-server"',
-            "grep -rn 'tmux kill-server' docs/",
-            'printf "%s" "tmux kill-server"',
-        ]
-        for command in commands:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    def test_unparsable_destructive_command_asks(self):
-        self.assertEqual("ask", self.evaluate("tmux kill-server 'unbalanced").kind)
-
-    def test_unparsable_harmless_command_allowed(self):
-        self.assertEqual("allow", self.evaluate("tmux ls 'unbalanced").kind)
-
-    def test_dangling_socket_flag_does_not_crash(self):
-        for command in ["tmux -S", "tmux -L", "tmux -S '' ls"]:
-            self.assertIn(self.evaluate(command).kind, ("allow", "ask"), command)
-
-    def test_unrelated_commands_allowed(self):
-        for command in ["ls -la", "git status", "echo hello", "kill -9 1234", "grep kill-server docs/"]:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    def test_substitution_used_as_a_command_word_asks(self):
-        for command in ["$(which tmux) kill-server", "`which tmux` kill-server"]:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-
-    def test_redirects_and_conditionals_do_not_hide_operations(self):
-        commands = [
-            "tmux kill-server > /dev/null 2>&1",
-            "if true; then tmux kill-server; fi",
-            "cd /tmp && tmux kill-server",
-            "noop || tmux kill-session -t work",
-        ]
-        for command in commands:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-
-    def test_attached_socket_flag_is_understood(self):
-        state, socket = make_owned_state(self.tmp)
-        self.assertEqual("allow", self.evaluate(f"tmux -S{socket} kill-server").kind)
-        self.assertEqual("ask", self.evaluate("tmux -S/tmp/elsewhere/sock kill-server").kind)
-
-    def test_tmux_wrapped_in_env_assignment_asks(self):
-        self.assertEqual("ask", self.evaluate("TMUX=/tmp/x tmux kill-server").kind)
-        self.assertEqual(
-            "ask", self.evaluate("TMUX_TMPDIR=/tmp/x tmux kill-server").kind
-        )
-
-    def test_on_server_command_lists_are_guarded(self):
-        state, socket = make_owned_state(self.tmp)
-        self.assertEqual(
-            "allow",
-            self.evaluate(f"tmux -S {socket} new-session \\; list-sessions").kind,
-        )
-        self.assertEqual(
-            "ask",
-            self.evaluate(f"tmux -S {socket} new-session \\; kill-server; tmux kill-server").kind,
-        )
-
-    def test_exported_variable_with_destructive_body_asks(self):
-        self.assertEqual(
-            "ask", self.evaluate("export X='tmux kill-server'; $X").kind
-        )
-
-    def test_nested_shell_side_effects_are_never_scoped_by_the_outer_socket(self):
-        # An owned outer socket must not authorize a nested shell command that
-        # names a foreign or live target; tmux command lists still may, because
-        # they run against the outer server itself.
-        state, owned = make_owned_state(self.tmp)
-        sentinel_dir = os.path.join(self.tmp, "sentinel")
-        os.makedirs(sentinel_dir, mode=0o700)
-        os.chmod(sentinel_dir, 0o700)
-        sentinel = os.path.join(sentinel_dir, "sock")
-
-        ask = [
-            f"tmux -S {owned} run-shell 'tmux kill-server'",
-            f"tmux -S {owned} run-shell 'tmux -S {sentinel} kill-server'",
-            f"tmux -S {owned} run-shell 'tmux -S {self.live} kill-server'",
-            f"tmux -S {owned} if-shell 'tmux -S {sentinel} kill-server' 'list-sessions'",
-            f"tmux -S {owned} detach-client -E 'tmux kill-server'",
-            "tmux run-shell 'echo hi' \\; kill-server",
-            "tmux bind-key k kill-server",
-            "tmux if-shell 'true' 'kill-server'",
-        ]
-        for command in ask:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-
-        allow = [
-            f"tmux -S {owned} run-shell 'echo hi'",
-            f"tmux -S {owned} run-shell 'tmux -S {owned} kill-server'",
-            f"tmux -S {owned} if-shell 'true' 'kill-server'",
-            f"tmux -S {owned} if-shell 'true' 'list-sessions; kill-server'",
-            f"tmux -S {owned} bind-key k kill-server",
-            f"tmux -S {owned} detach-client -a",
-            f"tmux -S {owned} run-shell 'echo hi' \\; kill-server",
-        ]
-        for command in allow:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
-
-    def test_tmux_abbreviations_and_command_lists(self):
-        for command in [
-            "tmux kill-serv",
-            "tmux kill-ses -t work",
-            "tmux run-sh 'tmux kill-server'",
-            "tmux if-sh 'true' 'kill-server'",
-            "tmux bind k kill-server",
-            "tmux kill-serv 'unbalanced",
-        ]:
-            self.assertEqual("ask", self.evaluate(command).kind, command)
-        self.assertEqual("allow", self.evaluate("tmux bind-key k new-window").kind)
-        self.assertEqual("allow", self.evaluate("tmux bind-key j select-pane -D").kind)
-
-    def test_unqualified_kill_server_asks(self):
-        decision = self.evaluate("tmux kill-server")
-        self.assertEqual("ask", decision.kind)
-        self.assertIn("live", decision.reason)
-
-    def test_navigation_and_targeted_close_allowed(self):
-        commands = [
-            "tmux ls",
-            "tmux display-message -p '#{session_id}'",
-            "tmux split-window -h -c '#{pane_current_path}'",
-            "tmux new-window -d -t work: -n build",
-            "tmux send-keys -t %3 Enter",
-            "tmux capture-pane -p -t %3",
-            "tmux load-buffer -b x -",
-            "tmux paste-buffer -p -d -b x -t %3",
-            "tmux set-option -w remain-on-exit on",
-            "tmux kill-window -t @7",
-            "tmux kill-pane -t %9",
-            "tmux killw -t @7",
-            "tmux killp -t %9",
-            "tmux show-options -g",
-        ]
-        for command in commands:
-            self.assertEqual("allow", self.evaluate(command).kind, command)
+        fallback, requests = transport_stub(noul(0.0))
+        guard.screen("tmux ls", env={"TYPESAFE_API_KEY": SECRET, "TMUX_TMPDIR": "/custom"}, transport=fallback)
+        socket = json.loads(requests[0][0].data)["state"]["live_tmux_socket"]
+        self.assertEqual(socket, "/custom/tmux-%d/default" % os.getuid())
 
 
-class GuardCliTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="tmux-guard-cli.", dir="/tmp"))
-        self.addCleanup(self._cleanup)
-        self.guard = os.path.join(REPO, "scripts", "tmux-guard")
-        self.env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_TMPDIR")}
-        self.env["TMUX_TMPDIR"] = self.tmp + "/no-such-tmux"
+class CliTests(unittest.TestCase):
+    def test_one_line_decisions_and_a_missing_command_exits_two(self):
+        def run(*args):
+            return subprocess.run([sys.executable, GUARD, *args], env=no_key_env(), capture_output=True, text=True)
 
-    def _cleanup(self):
-        import shutil
+        allow = run("git status")
+        self.assertEqual((allow.returncode, allow.stdout, allow.stderr), (0, "allow\n", ""))
+        ask = run("--cwd", "/tmp", "tmux kill-server")
+        self.assertEqual((ask.returncode, ask.stderr, run().returncode), (0, "", 2))
+        self.assertTrue(ask.stdout.startswith("ask\t"), ask.stdout)
+        self.assertIn("TYPESAFE_API_KEY", ask.stdout)
 
-        shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_guard(self, *args):
-        import subprocess
+class ClaudeHookTests(unittest.TestCase):
+    def hook(self, data, decision=("ask", "risk 0.80")):
+        return guard.claude_hook(data, env={}, decide=lambda command, cwd, env: decision)
 
+    def test_maps_decisions_and_ignores_other_tools_and_events(self):
+        self.assertEqual(self.hook(payload(), ("allow", "")), (0, ""))
+        code, out = self.hook(payload())
+        decision = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual((code, decision["hookEventName"], decision["permissionDecision"]), (0, "PreToolUse", "ask"))
+        self.assertEqual(decision["permissionDecisionReason"], "risk 0.80")
+        for mode in ("bypassPermissions", "dontAsk"):
+            reply = self.hook(payload(permission_mode=mode))
+            self.assertEqual(json.loads(reply[1])["hookSpecificOutput"]["permissionDecision"], "deny", mode)
+        for data in (payload(tool_name="Edit"), payload(hook_event_name="PostToolUse")):
+            self.assertEqual(self.hook(data), (0, ""))
+        with self.assertRaises(ValueError):
+            self.hook({"tool_name": "Bash", "tool_input": {}})
+
+    def test_stdin_mode_answers_offline_and_fails_closed_on_bad_input(self):
+        def run(raw):
+            return subprocess.run(
+                [sys.executable, GUARD, "--claude-hook"], input=raw, capture_output=True, text=True, env=no_key_env()
+            )
+
+        bad = run("{not json")
+        self.assertEqual((bad.returncode, "bad Claude hook input" in bad.stderr), (2, True))
+        offline = run(json.dumps(payload("git status")))
+        self.assertEqual((offline.returncode, offline.stdout), (0, ""))
+        ask = run(json.dumps(payload("tmux kill-server")))
+        self.assertEqual(json.loads(ask.stdout)["hookSpecificOutput"]["permissionDecision"], "ask")
+
+
+class ClaudeSettingsTests(unittest.TestCase):
+    def run_hook_command(self, command, stdin=None):
         return subprocess.run(
-            [sys.executable, self.guard, *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=self.env,
+            ["sh", "-c", command], input=stdin, capture_output=True, text=True, env=no_key_env()
         )
 
-    def test_destructive_command_prints_ask(self):
-        proc = self.run_guard("--", "tmux kill-server")
-        self.assertEqual(0, proc.returncode)
-        self.assertTrue(proc.stdout.startswith("ask\t"), proc.stdout)
-        self.assertEqual(1, len(proc.stdout.splitlines()))
-
-    def test_harmless_command_prints_allow(self):
-        proc = self.run_guard("--", "tmux ls")
-        self.assertEqual(0, proc.returncode)
-        self.assertEqual("allow\n", proc.stdout)
-
-    def test_owned_socket_prints_allow(self):
-        state, socket = make_owned_state(self.tmp)
-        self.env["TMPDIR"] = self.tmp
-        proc = self.run_guard("--", f"tmux -S {socket} kill-server")
-        self.assertEqual(0, proc.returncode)
-        self.assertEqual("allow\n", proc.stdout, proc.stderr)
-
-    def test_missing_command_exits_two(self):
-        proc = self.run_guard("--")
-        self.assertEqual(2, proc.returncode)
-
-    def test_injected_live_socket_is_never_owned(self):
-        state, socket = make_owned_state(self.tmp)
-        proc = self.run_guard(
-            "--live-socket",
-            socket,
-            "--",
-            f"tmux -S {socket} kill-server",
+    def test_policy_is_valid_offline_names_this_guard_and_runs(self):
+        proc = subprocess.run(
+            [sys.executable, GUARD, "--claude-settings"], capture_output=True, text=True, env=no_key_env()
         )
-        self.assertEqual("ask\t", proc.stdout[:4])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        settings = json.loads(guard.claude_settings())
+        self.assertEqual(json.loads(proc.stdout), settings)
+        entry = settings["hooks"]["PreToolUse"][0]
+        command = entry["hooks"][0]["command"]
+        self.assertEqual(entry["matcher"], "Bash|PowerShell")
+        self.assertTrue(0 < entry["hooks"][0]["timeout"] <= 10)
+        for expected in (os.path.realpath(GUARD), "--claude-hook", "exit 2"):
+            self.assertIn(expected, command)
+        offline = self.run_hook_command(command, json.dumps(payload("git status")))
+        self.assertEqual((offline.returncode, offline.stdout), (0, ""))
+
+    def test_the_generated_hook_command_blocks_on_a_failing_guard(self):
+        tmp = tempfile.mkdtemp(prefix="guard-stub.")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        stub = os.path.join(tmp, "guard")
+        with open(stub, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexit 1\n")
+        os.chmod(stub, 0o755)
+        proc = self.run_hook_command(hook_command(guard.claude_settings(stub)), "{}")
+
+        self.assertEqual((proc.returncode, "refusing to run unguarded" in proc.stderr), (2, True))
+
+
+class LauncherTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="claude-guarded-test.")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = os.path.join(self.tmp, "bin")
+        os.makedirs(self.bin)
+        stub = os.path.join(self.bin, "claude")
+        with open(stub, "w", encoding="utf-8") as handle:
+            handle.write('#!/bin/sh\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n')
+        os.chmod(stub, 0o755)
+
+    def test_claude_guarded_attaches_the_generated_policy(self):
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""))
+        proc = subprocess.run([LAUNCHER, "--version"], env=env, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        lines = proc.stdout.splitlines()
+        command = hook_command(lines[lines.index("ARG=--settings") + 1].removeprefix("ARG="))
+        self.assertIn(os.path.realpath(GUARD), command)
+        self.assertIn("ARG=--version", lines)
+        missing = subprocess.run(
+            [LAUNCHER], env={"PATH": "/usr/bin:/bin", "HOME": self.tmp}, capture_output=True, text=True
+        )
+        self.assertEqual((missing.returncode, "claude not found" in missing.stderr), (2, True))
+
+    def test_the_subagent_launcher_uses_the_same_policy(self):
+        settings = subagent.tmux_guard_settings()
+        self.assertIn(os.path.realpath(GUARD), hook_command(settings))
+        profile = {"role": "test role", "model": "claude-code/sonnet", "effort": None}
+        args = subagent.claude_args(profile, "/tmp/report.md")
+        self.assertEqual(json.loads(args[args.index("--settings") + 1]), json.loads(settings))
 
 
 if __name__ == "__main__":

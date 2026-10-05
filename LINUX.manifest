@@ -14,7 +14,6 @@ scripts/herdr-last-space|~/.local/bin/herdr-last-space
 scripts/herdr-break-pane|~/.local/bin/herdr-break-pane
 scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
 scripts/tmux-guard|~/.local/bin/tmux-guard
-scripts/claude-tmux-guard|~/.local/bin/claude-tmux-guard
 scripts/claude-guarded|~/.local/bin/claude-guarded
 scripts/tmux-sandbox|~/.local/bin/tmux-sandbox
 scripts/lib|~/.local/bin/lib
@@ -28,7 +27,6 @@ agents/skills/*|~/.agents/skills/*
 agents/skills/*|~/.claude/skills/*
 
 claude/statusline.sh|~/.claude/statusline.sh
-claude/tmux-guard.settings.json|~/.claude/dotfiles-tmux-guard.json
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/AGENTS.md|~/.pi/agent/AGENTS.md
