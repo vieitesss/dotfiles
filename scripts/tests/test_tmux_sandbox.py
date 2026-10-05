@@ -129,6 +129,23 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn(os.path.join(self.state_from(proc), "run", "tmux.sock"), proc.stdout)
 
+    def test_an_inherited_xdg_config_is_never_sourced(self):
+        xdg = os.path.realpath(tempfile.mkdtemp(prefix="tmux-sandbox-xdg.", dir=self.tmp))
+        self.created.append(xdg)
+        os.makedirs(os.path.join(xdg, "tmux"))
+        with open(os.path.join(xdg, "tmux", "tmux.conf"), "w", encoding="utf-8") as handle:
+            handle.write("set -g @review-inherited-xdg yes\n")
+        proc = self.run_runner(
+            "--",
+            "sh",
+            "-c",
+            "tmux new-session -d -s solo\ntmux show-options -g @review-inherited-xdg 2>&1 || true\n",
+            env=clean_env(XDG_CONFIG_HOME=xdg),
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.state_from(proc)
+        self.assertNotIn("yes", proc.stdout, "the private server sourced the inherited XDG config")
+
     def test_no_mode_operates_on_a_caller_supplied_path(self):
         bad = ((), ("new",), ("cleanup", "--state", "/"), ("--state", "/tmp", "--", "echo", "hi"), ("run", "--", "echo", "hi"))
         for args in bad:

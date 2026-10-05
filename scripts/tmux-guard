@@ -7,7 +7,7 @@
 
 Only commands whose text mentions tmux are screened; their text, cwd, and live tmux
 socket path then go to TypeSafe Jev for a best-effort judgment.  A missing key, HTTP
-failure, timeout, or unusable answer asks a human; adapter failures exit 2, the only
+failure, deadline, or unusable answer asks a human; adapter failures exit 2, the only
 status Claude Code blocks on.  No flag grants approval.  Best effort, not a safety
 boundary; see docs/tmux-guard.md.
 """
@@ -18,6 +18,7 @@ import math
 import os
 import re
 import shlex
+import signal
 import sys
 import urllib.request
 
@@ -26,7 +27,8 @@ MODEL = "jev-latest"
 QUESTION_ID = "needs_human_approval"
 TRIGGER = re.compile(r"tmux", re.IGNORECASE)  # cheap superset: paths, TMUX vars, argv text
 RISK_THRESHOLD = 0.35  # at/above: a human decides; a Noul near 0.5 is real uncertainty
-TIMEOUT = 3.0  # well below the Claude hook timeout, which fails open
+TIMEOUT = 3.0  # urllib socket inactivity timeout for one read, not a total deadline
+DEADLINE = 5.0  # total wall-clock budget for one screen, inside Claude's 10s hook timeout
 NO_PROMPT_MODES = ("bypassPermissions", "dontAsk")
 ALLOW, ASK = "allow", "ask"
 
@@ -76,6 +78,26 @@ def _post(request, timeout):
         return json.load(response)
 
 
+def _with_deadline(call, deadline):
+    """Run ``call()`` under a SIGALRM wall-clock deadline, raising when it expires.
+
+    SIGALRM/setitimer exist only on Unix, so the guard is Unix-only (macOS/Linux),
+    and both the CLI and the Claude hook must be in the interpreter's main thread.
+    Where that does not hold ``screen`` asks instead of allowing.  The previous
+    handler is restored and this timer is cancelled when the screen finishes.
+    """
+    def expired(signum, frame):
+        raise TimeoutError("screening deadline %.1fs exceeded" % deadline)
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, deadline)
+        return call()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def _probability(body):
     """The Noul probability from a TypeSafe response, or None when unusable."""
     try:
@@ -105,7 +127,7 @@ def screen(command, cwd=None, env=None, transport=None):
         headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
     )
     try:
-        body = (transport or _post)(request, TIMEOUT)
+        body = _with_deadline(lambda: (transport or _post)(request, TIMEOUT), DEADLINE)
     except Exception as exc:  # noqa: BLE001 - a failed screen must ask, never allow
         return ASK, f"TypeSafe screening unavailable ({exc}); so a human decides"
     probability = _probability(body)

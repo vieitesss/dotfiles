@@ -8,10 +8,16 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 
 sys.dont_write_bytecode = True
@@ -50,6 +56,44 @@ def transport_stub(body=None, error=None):
 
 def noul(value):
     return {"answers": {"needs_human_approval": {"type": "noul", "noul": value}}}
+
+
+def loopback_server(gap):
+    """A test-owned 127.0.0.1 server sending one valid Jev body byte by byte.
+
+    ``gap`` seconds between bytes: 0 for an immediate response, and otherwise
+    under urllib's inactivity timeout so only a total deadline can stop it.  The
+    body length times ``gap`` bounds the whole response, so a test here cannot
+    hang even when the deadline fails.
+    """
+    body = json.dumps(noul(0.0)).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                for byte in body:
+                    self.wfile.write(bytes([byte]))
+                    self.wfile.flush()
+                    if gap:
+                        time.sleep(gap)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # the client hit its deadline and closed the connection
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, "http://127.0.0.1:%d" % server.server_address[1]
 
 
 def screen(command, body=None, error=None, env=None):
@@ -127,6 +171,98 @@ class ScreenTests(unittest.TestCase):
         guard.screen("tmux ls", env={"TYPESAFE_API_KEY": SECRET, "TMUX_TMPDIR": "/custom"}, transport=fallback)
         socket = json.loads(requests[0][0].data)["state"]["live_tmux_socket"]
         self.assertEqual(socket, "/custom/tmux-%d/default" % os.getuid())
+
+    def test_the_total_deadline_sits_well_inside_the_hook_timeout(self):
+        hook_timeout = json.loads(guard.claude_settings())["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"]
+        self.assertTrue(0 < guard.DEADLINE <= hook_timeout / 2)
+
+
+class ScreeningDeadlineTests(unittest.TestCase):
+    """The wall-clock deadline, proved against a test-owned loopback server.
+
+    No key reaches TypeSafe and no external host is contacted: ``API_URL`` is
+    redirected to 127.0.0.1, and the short deadline keeps the suite fast.
+    """
+
+    deadline = 0.5
+    gap = 0.02  # byte interval; the full body needs gap * len(BODY) seconds
+
+    def setUp(self):
+        self.default = (guard.DEADLINE, guard.API_URL)
+        guard.DEADLINE = self.deadline
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        guard.DEADLINE, guard.API_URL = self.default
+
+    def serve(self, gap=None):
+        server, thread, url = loopback_server(self.gap if gap is None else gap)
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.shutdown)
+        guard.API_URL = url
+        return url
+
+    def test_a_socket_timeout_alone_is_not_a_total_deadline(self):
+        """The old client: urllib's inactivity timeout never trips on trickle."""
+        url = self.serve()
+        request = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"})
+        started = time.monotonic()
+        with urllib.request.urlopen(request, timeout=guard.TIMEOUT) as response:
+            body = json.load(response)
+        elapsed = time.monotonic() - started
+        self.assertEqual(body, noul(0.0))
+        self.assertGreater(elapsed, self.deadline, "the trickle should outlive the deadline")
+
+    def test_expiry_asks_before_the_body_finishes_and_leaves_no_timer(self):
+        self.serve()
+        sentinel = lambda *args: None
+        previous = signal.signal(signal.SIGALRM, sentinel)
+        try:
+            started = time.monotonic()
+            decision = guard.screen("tmux kill-server", cwd="/work", env={"TYPESAFE_API_KEY": SECRET})
+            elapsed = time.monotonic() - started
+            self.assertEqual(decision[0], "ask")
+            self.assertIn("deadline", decision[1])
+            self.assertNotIn(SECRET, decision[1])
+            self.assertGreaterEqual(elapsed, self.deadline * 0.9)
+            self.assertLess(elapsed, len(json.dumps(noul(0.0)).encode()) * self.gap, "expiry should cut the trickle")
+            self.assertIs(signal.getsignal(signal.SIGALRM), sentinel)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
+    def test_a_completed_screen_allows_and_leaves_no_timer(self):
+        self.serve(gap=0)
+        sentinel = lambda *args: None
+        previous = signal.signal(signal.SIGALRM, sentinel)
+        try:
+            decision = guard.screen("tmux kill-server", cwd="/work", env={"TYPESAFE_API_KEY": SECRET})
+            self.assertEqual(decision, ("allow", ""))
+            self.assertIs(signal.getsignal(signal.SIGALRM), sentinel)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        finally:
+            signal.signal(signal.SIGALRM, previous)
+
+    def test_a_refused_connection_asks_without_arming_a_timer(self):
+        bound = socket.socket()
+        bound.bind(("127.0.0.1", 0))
+        self.addCleanup(bound.close)  # bound but never listening: connect is refused
+        guard.API_URL = "http://127.0.0.1:%d" % bound.getsockname()[1]
+        decision = guard.screen("tmux kill-server", cwd="/work", env={"TYPESAFE_API_KEY": SECRET})
+        self.assertEqual(decision[0], "ask")
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
+    def test_unrelated_commands_arm_no_timer(self):
+        sentinel = lambda *args: None
+        previous = signal.signal(signal.SIGALRM, sentinel)
+        try:
+            decision = guard.screen("git status", cwd="/work", env={})
+            self.assertEqual(decision, ("allow", ""))
+            self.assertIs(signal.getsignal(signal.SIGALRM), sentinel)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+        finally:
+            signal.signal(signal.SIGALRM, previous)
 
 
 class CliTests(unittest.TestCase):

@@ -17,9 +17,13 @@ caller-supplied path, so no server outside the process can be aimed at.
 The shim refuses **any leading global option** (`-S`, `-2S`, `-L`, `-f`, ...)
 with exit 87 rather than reimplementing tmux's `getopt`, so a clustered socket
 selector cannot slip through; subcommand flags such as `capture-pane -S -5` stay
-legal, and only the harmless fixture config is sourced, never `~/.tmux.conf`. An
-absolute path to the real tmux binary still bypasses it: a test convenience, not
-a sandbox against a hostile agent.
+legal, and the private server is always started with an explicit empty config
+(`-f /dev/null`), which replaces tmux's whole default config list (system config,
+`~/.tmux.conf`, `$XDG_CONFIG_HOME/tmux/tmux.conf`), so an inherited
+`XDG_CONFIG_HOME` cannot run caller configuration. The harmless fixture config is
+still loaded explicitly with `source-file`. An absolute path to the real tmux
+binary still bypasses it: a test convenience, not a sandbox against a hostile
+agent.
 
 ## Guard
 
@@ -35,8 +39,11 @@ non-live sockets and the repository's own test tooling (`just test-tmux`,
 is a real human decision (Pi confirm dialog, Claude permission prompt) and no env
 var, flag, or token grants approval.
 
-Failures never allow: a missing key, HTTP error, 3s timeout, bad JSON, or an
-unusable/NaN/out-of-range answer all ask, and with no UI (Pi headless, Claude
+Failures never allow: a missing key, HTTP error, bad JSON, or an
+unusable/NaN/out-of-range answer all ask, and so does a screen that outlives a 5s
+total wall-clock deadline (POSIX `SIGALRM`/`setitimer` around the request, plus
+urllib's 3s per-read inactivity timeout; the deadline needs a Unix main thread,
+and where that does not hold screening asks); with no UI (Pi headless, Claude
 headless/`bypassPermissions`/`dontAsk`) ask becomes a block; the Claude hook exits
 2 on any internal error, because exit 1 would fail open. Screened commands POST
 the command string, cwd, and live socket path to

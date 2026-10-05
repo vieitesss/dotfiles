@@ -6,6 +6,8 @@
 # One instance creates a unique state directory under the real TMPDIR with its
 # own socket, points HOME/TMUX_TMPDIR at it, unsets the inherited TMUX/TMUX_PANE,
 # and puts a shim first on PATH so nested bare tmux calls reach only that socket.
+# The shim starts the private server with an explicit empty config (-f /dev/null),
+# so no inherited system, user, or XDG configuration can run in it.
 # The shim refuses any leading global option (-S, -L, clustered -2S) while a
 # subcommand's own flags such as `capture-pane -S` stay legal.  Server and state
 # are removed on exit, and cleanup never takes a caller-supplied path.  Not a
@@ -53,7 +55,11 @@ if [ "${1:-}" != "${1#-}" ]; then
     echo "tmux-sandbox shim: refusing global option '${1}'; nested calls already use the sandbox socket" >&2
     exit 87
 fi
-exec "$state/bin/tmux.real" -S "$state/run/tmux.sock" "$@"
+# The first -f replaces tmux's whole default config list (system config,
+# ~/.tmux.conf, $XDG_CONFIG_HOME/tmux/tmux.conf), so an inherited
+# XDG_CONFIG_HOME cannot run caller configuration in this private server.
+# Fixtures are still loaded explicitly with source-file.
+exec "$state/bin/tmux.real" -S "$state/run/tmux.sock" -f /dev/null "$@"
 SHIM
 chmod 755 "$state/bin/tmux"
 
