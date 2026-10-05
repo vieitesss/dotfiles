@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Claude Code PreToolUse adapter for the tmux destructive-command guard.
+
+Registered by claude/tmux-guard.settings.json (installed as
+~/.claude/dotfiles-tmux-guard.json and used automatically by claude-guarded and
+by launcher-spawned Claude sessions).  It reads Claude Code's PreToolUse JSON on
+stdin and:
+
+  allow -> exit 0 with no output (no decision; other hooks still apply)
+  ask   -> exit 0 with permissionDecision "ask" (a human decides; headless runs
+           deny it), or "deny" when no prompt can be honoured
+           (permission_mode bypassPermissions/dontAsk)
+  error -> exit 2 with a reason on stderr
+
+Exit 2 blocks the tool call.  Anything non-zero must be treated as blocked:
+exit 1 would fail open, so internal failures deliberately use exit 2.
+"""
+
+import json
+import os
+import sys
+
+# The scripts are symlinked from the repo; never write __pycache__ into it.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+
+try:
+    from tmux_guard import evaluate  # noqa: E402
+except Exception as exc:  # noqa: BLE001 - import errors must fail closed, not exit 1
+    evaluate = None
+    _CORE_ERROR = exc
+else:
+    _CORE_ERROR = None
+
+NO_PROMPT_MODES = {"bypassPermissions", "dontAsk"}
+
+
+def _decision_json(permission: str, reason: str) -> str:
+    payload = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": permission,
+            "permissionDecisionReason": reason,
+        }
+    }
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def respond(payload, evaluator=None):
+    """Map one hook payload to ``(exit_code, stdout, stderr)``.
+
+    ``evaluator`` is injectable for tests; it must return an object with a
+    ``kind`` of ``allow`` or ``ask`` and a ``reason``.
+    """
+    if evaluator is None:
+        evaluator = evaluate
+    if evaluator is None:
+        return 2, "", f"claude-tmux-guard: cannot load the tmux_guard core ({_CORE_ERROR})"
+    if not isinstance(payload, dict):
+        return 2, "", "claude-tmux-guard: hook input is not a JSON object"
+    event = payload.get("hook_event_name")
+    if event is not None and event != "PreToolUse":
+        return 0, "", ""
+    tool = payload.get("tool_name")
+    if tool not in ("Bash", "PowerShell"):
+        return 0, "", ""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
+        return 2, "", f"claude-tmux-guard: {tool} call without a command string"
+    command = tool_input["command"]
+    if not command.strip():
+        return 0, "", ""
+    cwd = payload.get("cwd") or os.getcwd()
+    decision = evaluator(command, cwd=cwd, env=os.environ)
+    kind = getattr(decision, "kind", None)
+    reason = getattr(decision, "reason", "") or "destructive tmux command"
+    if kind not in ("allow", "ask"):
+        return 2, "", "claude-tmux-guard: evaluator returned an unexpected decision"
+    if kind == "allow":
+        return 0, "", ""
+    mode = payload.get("permission_mode")
+    if mode in NO_PROMPT_MODES:
+        reason = (
+            f"{reason} (permission_mode={mode}: no prompt can be honoured, "
+            "so the call is denied)"
+        )
+        return 0, _decision_json("deny", reason), ""
+    return 0, _decision_json("ask", reason), ""
+
+
+def main(stdin=None, evaluator=None):
+    raw = (stdin if stdin is not None else sys.stdin).read()
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        print(f"claude-tmux-guard: could not parse hook input ({exc})", file=sys.stderr)
+        return 2
+    try:
+        code, out, err = respond(payload, evaluator)
+    except Exception as exc:  # noqa: BLE001 - a hook must fail closed
+        print(f"claude-tmux-guard: internal error: {exc}", file=sys.stderr)
+        return 2
+    if out:
+        print(out)
+    if err:
+        print(err, file=sys.stderr)
+    return code
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a hook must fail closed, never exit 1
+        print(f"claude-tmux-guard: internal error: {exc}", file=sys.stderr)
+        sys.exit(2)

@@ -1,3 +1,4 @@
 .env.local
 node_modules/
 .pi-subagent-runs/
+__pycache__/

@@ -30,6 +30,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 # Role: (model, when Jev should pick it). A Stage may pin a role.
 MODELS = {
@@ -581,6 +582,53 @@ def is_claude(profile):
     return (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER
 
 
+def tmux_guard_settings(guard=None):
+    """Inline --settings JSON attaching this checkout's tmux guard to Claude.
+
+    Claude Code takes a JSON string on --settings, so a launcher-spawned
+    session gets the guard without touching ~/.claude/settings.json and
+    without depending on anything having been installed yet.  The guard path
+    is this checkout's own, resolved through symlinks.  A missing guard is a
+    refusal, not a warning: a Claude session must not start unguarded.  The
+    hook command is shell-quoted and maps any non-zero adapter status (1, 126,
+    127, ...) to exit 2, because Claude Code only blocks on exit 2.
+    """
+    path = (
+        Path(guard)
+        if guard
+        else Path(__file__).resolve().parents[4] / "scripts" / "claude-tmux-guard"
+    )
+    if not path.is_file():
+        sys.exit(
+            f"[subagent] refusing to launch Claude without the tmux guard: "
+            f"{path} is missing"
+        )
+    quoted = shlex.quote(str(path))
+    command = (
+        f"if [ ! -x {quoted} ]; then "
+        f"echo 'claude-tmux-guard missing; refusing to run unguarded' >&2; "
+        f"exit 2; fi; {quoted}; status=$?; "
+        'if [ "$status" -ne 0 ]; then '
+        'echo "claude-tmux-guard failed (exit $status); refusing to run unguarded" >&2; '
+        "exit 2; fi"
+    )
+    return json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash|PowerShell",
+                        "hooks": [
+                            {"type": "command", "command": command, "timeout": 10}
+                        ],
+                    }
+                ]
+            }
+        },
+        separators=(",", ":"),
+    )
+
+
 def claude_args(profile, report, mux="herdr"):
     args = ["--append-system-prompt", profile["role"]]
     if profile["model"]:
@@ -591,6 +639,10 @@ def claude_args(profile, report, mux="herdr"):
     # stall. Edit rules take absolute paths with a leading "//".
     send = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
     args += ["--allowedTools", f"Bash({send} *)", f"Edit(/{report})"]
+    guard = tmux_guard_settings()
+    if not guard:
+        sys.exit("[subagent] refusing to launch Claude without the tmux guard")
+    args += ["--settings", guard]
     return args
 
 

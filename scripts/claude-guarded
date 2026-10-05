@@ -1,0 +1,43 @@
+#!/bin/sh
+# Launch Claude Code with the dotfiles tmux guard attached.
+#
+#   claude-guarded [claude arguments...]
+#
+# This is deliberately not a `claude` alias: it is an explicitly named command
+# so the real binary stays in reach.  It points Claude Code at this checkout's
+# claude/tmux-guard.settings.json (installed copies live at
+# ~/.claude/dotfiles-tmux-guard.json) and exports CLAUDE_TMUX_GUARD so the hook
+# finds this checkout's guard even before anything is installed.
+
+set -eu
+
+target=$0
+while [ -L "$target" ]; do
+    base=$(CDPATH='' cd -- "$(dirname -- "$target")" && pwd -P)
+    target=$(readlink "$target")
+    case $target in
+        /*) ;;
+        *) target=$base/$target ;;
+    esac
+done
+repo=$(CDPATH='' cd -- "$(dirname -- "$target")/.." && pwd -P)
+
+guard=$repo/scripts/claude-tmux-guard
+settings=$repo/claude/tmux-guard.settings.json
+
+if [ ! -x "$guard" ]; then
+    echo "claude-guarded: guard is not executable: $guard" >&2
+    exit 2
+fi
+if [ ! -f "$settings" ]; then
+    echo "claude-guarded: guard settings not found: $settings" >&2
+    exit 2
+fi
+if ! command -v claude >/dev/null 2>&1; then
+    echo "claude-guarded: claude not found on PATH" >&2
+    exit 2
+fi
+
+CLAUDE_TMUX_GUARD=$guard
+export CLAUDE_TMUX_GUARD
+exec claude --settings "$settings" "$@"

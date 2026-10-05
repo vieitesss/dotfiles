@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Decision CLI for the tmux destructive-command guard.
+
+Usage:
+    tmux-guard [--cwd DIR] [--live-socket PATH]... [--] COMMAND
+
+Prints exactly one line and exits 0:
+
+    allow
+    ask<TAB>reason
+
+Exit 2 means the guard itself failed; callers MUST treat any non-zero exit as
+blocked.  There is no approval flag: an approval comes from the harness UI.
+"""
+
+import argparse
+import os
+import sys
+
+# The scripts are symlinked from the repo; never write __pycache__ into it.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+
+try:
+    from tmux_guard import evaluate  # noqa: E402
+except Exception as exc:  # noqa: BLE001 - a guard must fail closed, never exit 1
+    print(f"tmux-guard: cannot load the tmux_guard core: {exc}", file=sys.stderr)
+    sys.exit(2)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="tmux-guard",
+        description="Decide whether an agent-issued shell command may run unguarded.",
+    )
+    parser.add_argument("--cwd", default=os.getcwd(), help="directory the command runs in")
+    parser.add_argument(
+        "--live-socket",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="additional socket that must never be treated as a sandbox (test seam)",
+    )
+    parser.add_argument("command", metavar="COMMAND", help="the shell command to inspect")
+    args = parser.parse_args(argv)
+
+    decision = evaluate(
+        args.command,
+        cwd=args.cwd,
+        env=os.environ,
+        live_sockets=args.live_socket,
+    )
+    if decision.kind == "allow":
+        print("allow")
+    else:
+        print("ask\t" + decision.reason.replace("\n", " "))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail closed on anything unexpected
+        print(f"tmux-guard: internal error: {exc}", file=sys.stderr)
+        sys.exit(2)

@@ -75,3 +75,5 @@ The install script should:
 - Prefer small, readable code over clever abstractions.
 - Preserve existing config directory names and root-level layout.
 - When adding new managed configs, add them to the appropriate OS manifest instead of moving them under another directory.
+
+Tmux tests: run `just test-tmux` (private socket; guard and activation notes in `docs/tmux-guard.md`).
