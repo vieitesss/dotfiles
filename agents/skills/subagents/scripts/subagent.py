@@ -335,22 +335,32 @@ def remove_temp(*paths):
 
 
 def read_frontmatter(path):
+    """(name, description, model_invocable) from a SKILL.md.
+
+    model_invocable is False when the frontmatter opts the skill out of model
+    invocation with `disable-model-invocation: true`, so a Subagent cannot
+    load it.
+    """
     try:
         with open(path, encoding="utf-8") as handle:
             text = handle.read(8192)
     except OSError:
-        return None, None
+        return None, None, True
     if not text.startswith("---"):
-        return None, None
+        return None, None, True
     end = text.find("\n---", 3)
     if end == -1:
-        return None, None
+        return None, None, True
 
     name = description = None
+    model_invocable = True
     lines = text[3:end].splitlines()
     for index, line in enumerate(lines):
         if line.startswith("name:"):
             name = line.split(":", 1)[1].strip().strip("\"'")
+        elif line.startswith("disable-model-invocation:"):
+            value = line.split(":", 1)[1].strip().strip("\"'").lower()
+            model_invocable = value != "true"
         elif line.startswith("description:"):
             value = line.split(":", 1)[1].strip()
             if value in ("|", ">", "|-", ">-"):
@@ -363,7 +373,7 @@ def read_frontmatter(path):
                 description = " ".join(parts)
             else:
                 description = value.strip("\"'")
-    return name, description
+    return name, description, model_invocable
 
 
 def discover_skills(cwd):
@@ -394,7 +404,7 @@ def discover_skills(cwd):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
             if "SKILL.md" not in filenames:
                 continue
-            name, _ = read_frontmatter(os.path.join(dirpath, "SKILL.md"))
+            name, *_ = read_frontmatter(os.path.join(dirpath, "SKILL.md"))
             if name and name not in skills:
                 skills[name] = dirpath
             dirnames[:] = []  # a skill directory contains no nested skills
@@ -428,6 +438,16 @@ def stage_skills(stage, spec, cwd):
     missing = [name for name in skills if name not in installed]
     if missing:
         sys.exit(f"skills not installed for {cwd}: {', '.join(missing)}")
+    unloadable = [
+        name
+        for name in skills
+        if not read_frontmatter(os.path.join(installed[name], "SKILL.md"))[2]
+    ]
+    if unloadable:
+        sys.exit(
+            "skills a Subagent cannot load (disable-model-invocation: true): "
+            f"{', '.join(unloadable)}"
+        )
     return {name: os.path.join(installed[name], "SKILL.md") for name in skills}
 
 
