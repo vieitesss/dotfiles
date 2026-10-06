@@ -33,9 +33,9 @@ skip in the Ledger.
 | Diagnose | Subagent                                | a bug's cause is unknown                                         |
 | Build    | Subagent                                | the Work Item changes code                                       |
 | Write    | Subagent                                | the Work Item is prose: docs, skills, agent instructions         |
-| Refine   | a fresh Subagent                        | Build added behaviour or reshaped a module; skip it for hotfixes, security backports, and small fixes |
+| Refine   | a fresh Subagent                        | Build reshaped an existing module; skip it for new code, hotfixes, security backports, and small fixes |
 | Prove    | you; Subagent for `verify-<app>`        | always, scaled by the proof budget                               |
-| Review   | one Subagent per axis                   | the proof budget says so, once per Change Set                    |
+| Review   | one Subagent per axis it needs          | the proof budget says so, once per Change Set                    |
 | Ship     | you, with `commit-changes`, `visual-pr` | the user asks                                                    |
 
 `scripts/subagent.py --stages` (in the `subagents` skill) prints the skills and
@@ -125,6 +125,10 @@ a scratch file and pass it as `"$(cat FILE)"`. It carries:
   `file:line`, earlier reports), so the Subagent builds on it instead of
   re-deriving it;
 - where: worktree path and branch, the diff base, and what to leave alone;
+- the **cheapest fix** that meets the acceptance criteria, naming any
+  existing tool, skill, or script that already covers part of it; the
+  Subagent sends a Question before building machinery the brief did not
+  name (a parser, a framework, a new config format);
 - a checkable done criterion: named tests, lint, pass counts (`10/10`);
 - the decisions it brings back as a Question instead of making.
 
@@ -138,15 +142,17 @@ mode when:
 
 - **parallel worktrees**: Work Items touch disjoint code. One worktree and one
   editing Subagent each; Review still runs once, over the merged Change Set.
-- **review per PR**: Work Items ship as separate PRs (`gh-stack`). Each one is
-  its own Change Set and gets its own Review.
+- **review per PR**: Work Items ship as separate PRs. Each one is its own
+  Change Set and gets its own Review. Branch each from main; stack it
+  (`gh-stack`) only when its code builds on another Work Item's code, so a
+  rejected PR blocks nothing else.
 
 At most one Subagent edits a worktree at a time. Review and Research
 Subagents only read, so they share one.
 
 ## Proof budget
 
-Proof Stages are the expensive ones: Review runs three critique sessions,
+Proof Stages are the expensive ones: Review runs up to three critique sessions,
 `verify-<app>` drives the whole app, and each round costs minutes and the
 user's attention. Spend them where a defect would be costly and the cheap
 checks cannot see it.
@@ -166,10 +172,16 @@ checks cannot see it.
 ## Review
 
 Run the `review` skill's steps 1 to 3 yourself (fixed point, spec, standards
-sources), then launch one read-only Subagent per axis in parallel:
-`--stage review --axis standards`, `spec`, and `debt`, with the Change Set as
-`--item`. Put the diff command, commit list, and spec or standards sources in
-each brief. Present the three reports side by side, as `review` step 5 does.
+sources), then launch one read-only Subagent per axis in parallel, with the
+Change Set as `--item`:
+
+- `--stage review --axis spec` on every Review;
+- `--axis standards` and `--axis debt` as well when the Change Set spans
+  several modules or reshapes one; a Change Set confined to new, focused
+  code gets Spec alone.
+
+Put the diff command, commit list, and spec or standards sources in each
+brief. Present the reports side by side, as `review` step 5 does.
 
 Then loop over the findings:
 
