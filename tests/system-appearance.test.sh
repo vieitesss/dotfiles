@@ -95,6 +95,12 @@ expect_stderr() {
     grep -qF -- "$1" "$tmp/stderr" || fail "stderr missing: $1 (got: $(cat "$tmp/stderr"))"
 }
 
+refute_stderr() {
+    if grep -qF -- "$1" "$tmp/stderr"; then
+        fail "stderr should not contain: $1 (got: $(cat "$tmp/stderr"))"
+    fi
+}
+
 count_matches() {
     grep -c -- "$2" "$1" 2>/dev/null || true
 }
@@ -177,6 +183,56 @@ TOML
     [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed config still contacted a host'
 }
 
+# An array element that is not a double-quoted string is a malformed host
+# list, not an empty one: it must fail before any host or local change, and
+# must not be misreported as the zero-hosts warning.
+case_unquoted_element() {
+    reset
+    cat > "$home/.config/nexo/config.toml" <<'TOML'
+[remote]
+machines = [alpha]
+TOML
+
+    run dark
+
+    expect_status 1
+    expect_stderr 'malformed nexo config'
+    refute_stderr 'no remote hosts configured'
+    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed array still contacted a host'
+}
+
+# Elements must be separated by commas; a space is not a separator.
+case_missing_comma() {
+    reset
+    cat > "$home/.config/nexo/config.toml" <<'TOML'
+[remote]
+machines = ["alpha" "beta"]
+TOML
+
+    run dark
+
+    expect_status 1
+    expect_stderr 'malformed nexo config'
+    refute_stderr 'no remote hosts configured'
+    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed array still contacted a host'
+}
+
+# An empty array is valid and means zero hosts, unlike a malformed array.
+case_empty_array() {
+    reset
+    cat > "$home/.config/nexo/config.toml" <<'TOML'
+[remote]
+machines = []
+TOML
+
+    run dark
+
+    expect_status 0
+    [ "$(count_matches "$tmp/stderr" 'no remote hosts configured')" -eq 1 ] ||
+        fail "expected one no-hosts warning (got: $(cat "$tmp/stderr"))"
+    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'empty array still contacted a host'
+}
+
 # An array left open at the end of the file is malformed too.
 case_unclosed_array() {
     reset
@@ -213,6 +269,9 @@ case_valid_config
 case_multiline_hosts
 case_missing_config
 case_malformed_config
+case_unquoted_element
+case_missing_comma
+case_empty_array
 case_unclosed_array
 case_no_hosts
 printf 'ok: %s\n' "$0"

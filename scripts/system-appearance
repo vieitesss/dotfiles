@@ -59,29 +59,69 @@ remote_hosts=$(awk '
         failed = 1
         exit 3
     }
-    /^[ \t]*\[/ {
-        if (in_machines) fail("array is not closed")
-        in_remote = ($0 ~ /^[ \t]*\[remote\][ \t]*(#.*)?$/)
-        in_machines = 0
+    function is_space(c) {
+        return c == " " || c == "\t" || c == "\r"
     }
-    in_remote && /^[ \t]*machines[ \t]*=/ {
+    # Advance the machines-array grammar one character. Valid arrays are double
+    # quoted strings separated by commas, with an optional trailing comma;
+    # whitespace and newlines are allowed between tokens, comments end a line
+    # and [] is valid and empty. Returns 0 once the closing bracket is reached,
+    # 2 at a comment and 1 otherwise.
+    function array_char(c) {
+        if (state == "open") {
+            if (is_space(c)) return 1
+            if (c == "]") return 0
+            if (c == "#") return 2
+            if (c == "\"") { state = "string"; element = ""; return 1 }
+            fail("expected a quoted string or the end of the array")
+        }
+        if (state == "string") {
+            if (c == "\"") { print element; state = "value"; return 1 }
+            element = element c
+            return 1
+        }
+        if (state == "value") {
+            if (is_space(c)) return 1
+            if (c == ",") { state = "comma"; return 1 }
+            if (c == "]") return 0
+            if (c == "#") return 2
+            fail("expected a comma or ] after the element")
+        }
+        if (state == "comma") {
+            if (is_space(c)) return 1
+            if (c == "]") return 0
+            if (c == "#") return 2
+            if (c == "\"") { state = "string"; element = ""; return 1 }
+            fail("expected a quoted string or ] after the comma")
+        }
+    }
+    function scan(line,    i, r) {
+        r = 1
+        for (i = 1; i <= length(line); i++) {
+            r = array_char(substr(line, i, 1))
+            if (r != 1) break
+        }
+        if (r == 0) {
+            if (substr(line, i + 1) !~ /^[ \t\r]*(#.*)?$/)
+                fail("unexpected text after the array")
+            state = ""
+        }
+    }
+    /^[ \t]*\[/ {
+        if (state != "") fail("array is not closed")
+        in_remote = ($0 ~ /^[ \t]*\[remote\][ \t]*(#.*)?$/)
+        state = ""
+    }
+    in_remote && state == "" && /^[ \t]*machines[ \t]*=/ {
         value = $0
         sub(/^[^=]*=[ \t]*/, "", value)
-        if (value !~ /^\[/) fail("value must be an array of quoted strings")
-        in_machines = 1
-        first = 1
+        if (substr(value, 1, 1) != "[") fail("value must be an array of quoted strings")
+        state = "open"
+        scan(substr(value, 2))
+        next
     }
-    in_machines {
-        line = $0
-        if (first) { sub(/^[^=]*=[ \t]*/, "", line); first = 0 }
-        sub(/#.*/, "", line)
-        while (match(line, /"[^"]*"/)) {
-            print substr(line, RSTART + 1, RLENGTH - 2)
-            line = substr(line, RSTART + RLENGTH)
-        }
-        if (line ~ /\]/) in_machines = 0
-    }
-    END { if (in_machines && !failed) fail("array is not closed") }
+    state != "" { scan($0) }
+    END { if (state != "" && !failed) fail("array is not closed") }
 ' "$nexo_config") || {
     echo "ERROR: malformed nexo config: $nexo_config" >&2
     exit 1
