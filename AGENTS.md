@@ -75,3 +75,6 @@ The install script should:
 - Prefer small, readable code over clever abstractions.
 - Preserve existing config directory names and root-level layout.
 - When adding new managed configs, add them to the appropriate OS manifest instead of moving them under another directory.
+- When changing skill routing or Manager/Subagent behaviour, first read
+  `GLOSSARY.md`, `docs/workflow.md` and `docs/adr/`; `STAGES` in
+  `agents/skills/subagents/scripts/subagent.py` is the routing source of truth.

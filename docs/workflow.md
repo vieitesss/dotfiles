@@ -87,6 +87,11 @@ Defaults the flow leaves implicit:
   user, when a finding comes back after its fix, or when reviewers disagree
   with the spec itself.
 
+Some Stage skills (grilling, tdd, review, zero-tech-debt and others) are not in
+this repository: they come from the shared checkout at `~/work/prefapp/skills`.
+`ls -l ~/.agents/skills` (or `just doctor`, once it exists) shows which checkout
+supplies each installed skill.
+
 ## Sessions
 
 Every Subagent talks only to the Manager; the user talks only to the Manager.
