@@ -7,5 +7,10 @@ _default:
 install *args="":
     ./install.sh {{args}}
 
+check:
+    ./scripts/check-shell.sh
+    ./scripts/test-install.sh
+    cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
+
 update_neovim *args="":
     ./scripts/update-nvim-nightly.sh {{args}}
