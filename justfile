@@ -10,6 +10,7 @@ install *args="":
 check:
     ./scripts/check-shell.sh
     ./tests/install.test.sh
+    python3 -m unittest discover -s agents/skills/subagents/scripts
     cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
 
 update_neovim *args="":
