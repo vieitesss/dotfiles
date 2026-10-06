@@ -12,5 +12,8 @@ check:
     ./tests/install.test.sh
     cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
 
+doctor:
+    ./scripts/doctor
+
 update_neovim *args="":
     ./scripts/update-nvim-nightly.sh {{args}}
