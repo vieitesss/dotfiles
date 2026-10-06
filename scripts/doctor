@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Read-only health check for this dotfiles repo: reports manifest sources that
+# no longer exist and dangling repo-owned symlinks. Never changes anything.
+
+set -u
+
+repo_root=$(CDPATH='' cd "$(dirname "$0")/.." && pwd -P)
+
+: "${HOME:?HOME is not set}"
+
+manifest_names="MAC.manifest LINUX.manifest"
+skills_dirs="$HOME/.agents/skills $HOME/.claude/skills"
+
+problems=0
+
+# Links installed from the main checkout point at that root, so it counts as
+# repo-owned too when doctor runs from a linked worktree. Git is optional.
+repo_roots=$repo_root
+if command -v git >/dev/null 2>&1; then
+    common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+        || common_dir=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null) \
+        || common_dir=
+    case "$common_dir" in
+        /*) ;;
+        '') ;;
+        *) common_dir=$repo_root/$common_dir ;;
+    esac
+    case "$common_dir" in
+        */.git) main_root=${common_dir%/.git} ;;
+        *) main_root= ;;
+    esac
+    if [ -n "$main_root" ] && [ "$main_root" != "$repo_root" ]; then
+        repo_roots="$repo_roots $main_root"
+    fi
+fi
+
+trim() {
+    printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+report_missing_source() {
+    printf 'MISSING SOURCE: %s (%s)\n' "$2" "$1"
+    problems=$((problems + 1))
+}
+
+report_dangling_link() {
+    printf 'DANGLING LINK: %s -> %s\n' "$1" "$2"
+    printf "  fix: rm '%s' && ./install.sh\n" "$1"
+    problems=$((problems + 1))
+}
+
+# A source is missing when it does not exist, or when a "dir/*" wildcard entry
+# has no entries at all. Mirrors install.sh's manifest conventions.
+source_missing() {
+    sm_source=$1
+
+    case "$sm_source" in
+        */'*')
+            sm_base=$repo_root/${sm_source%/\*}
+            for sm_match in "$sm_base"/*; do
+                if [ -e "$sm_match" ] || [ -L "$sm_match" ]; then
+                    return 1
+                fi
+            done
+            return 0
+            ;;
+        *)
+            if [ -e "$repo_root/$sm_source" ] || [ -L "$repo_root/$sm_source" ]; then
+                return 1
+            fi
+            return 0
+            ;;
+    esac
+}
+
+check_manifest() {
+    cm_manifest=$repo_root/$1
+
+    [ -f "$cm_manifest" ] || return 0
+
+    while IFS= read -r cm_raw_line || [ -n "$cm_raw_line" ]; do
+        cm_line=$(trim "$cm_raw_line")
+
+        case "$cm_line" in
+            ''|'#'*) continue ;;
+        esac
+
+        cm_source=$(trim "${cm_line%%|*}")
+
+        if [ -n "$cm_source" ] && source_missing "$cm_source"; then
+            report_missing_source "$1" "$cm_source"
+        fi
+    done < "$cm_manifest"
+}
+
+for manifest_name in $manifest_names; do
+    check_manifest "$manifest_name"
+done
+
+# Collapse "." and ".." lexically; the path may not exist, so realpath is out.
+normalize_path() {
+    case "$1" in
+        /*) np_work=${1#/}; np_absolute=1 ;;
+        *) np_work=$1; np_absolute=0 ;;
+    esac
+
+    np_out=
+    while [ -n "$np_work" ]; do
+        case "$np_work" in
+            */*) np_component=${np_work%%/*}; np_work=${np_work#*/} ;;
+            *) np_component=$np_work; np_work= ;;
+        esac
+
+        case "$np_component" in
+            ''|'.')
+                continue
+                ;;
+            '..')
+                np_out=${np_out%/*}
+                ;;
+            *)
+                np_out="$np_out/$np_component"
+                ;;
+        esac
+    done
+
+    if [ "$np_absolute" -eq 1 ]; then
+        printf '/%s\n' "${np_out#/}"
+    else
+        printf '%s\n' "${np_out#/}"
+    fi
+}
+
+# Repo-owned means the link points into this repository, as opposed to an
+# external checkout such as a skills package.
+is_repo_owned() {
+    for ird_root in $repo_roots; do
+        case "$1" in
+            "$ird_root"/*) return 0 ;;
+        esac
+    done
+
+    return 1
+}
+
+check_skills_dir() {
+    cs_dir=$1
+
+    [ -d "$cs_dir" ] || return 0
+
+    for cs_link in "$cs_dir"/*; do
+        # Real directories and plain files are not ours to judge.
+        [ -L "$cs_link" ] || continue
+        [ -e "$cs_link" ] && continue
+
+        cs_target=$(readlink "$cs_link") || continue
+        case "$cs_target" in
+            /*) cs_absolute=$cs_target ;;
+            *) cs_absolute=$cs_dir/$cs_target ;;
+        esac
+        cs_absolute=$(normalize_path "$cs_absolute")
+
+        if is_repo_owned "$cs_absolute"; then
+            report_dangling_link "$cs_link" "$cs_target"
+        fi
+    done
+}
+
+for skills_dir in $skills_dirs; do
+    check_skills_dir "$skills_dir"
+done
+
+if [ "$problems" -gt 0 ]; then
+    printf '\ndoctor: %s problem(s) found\n' "$problems"
+    exit 1
+fi
+
+printf 'doctor: OK\n'
