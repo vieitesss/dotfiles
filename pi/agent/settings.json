@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "1.0.3",
+  "lastChangelogVersion": "1.0.4",
   "hideThinkingBlock": true,
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-sol",
+  "defaultProvider": "github-copilot",
+  "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
