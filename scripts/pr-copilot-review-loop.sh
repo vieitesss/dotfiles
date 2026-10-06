@@ -95,12 +95,12 @@ parse_args() {
   while (( $# )); do
     case "$1" in
       --model)
-        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--model requires a value."
+        if (( $# < 2 )) || [[ "$2" == --* ]]; then die "--model requires a value."; fi
         [[ "$AGENT" == opencode ]] && OPENCODE_MODEL="$2" || PI_MODEL="$2"
         shift 2
         ;;
       --thinking)
-        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--thinking requires a value."
+        if (( $# < 2 )) || [[ "$2" == --* ]]; then die "--thinking requires a value."; fi
         MODEL_THINKING="$2"
         shift 2
         ;;
