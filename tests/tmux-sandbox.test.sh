@@ -69,6 +69,8 @@ expect_missing() { # path message
 "$tmux_bin" -S "$sentinel_sock" -f /dev/null new-session -d -s sentinel
 "$tmux_bin" -S "$sentinel_sock" set-option -g @sentinel keep-me
 sentinel_pid=$("$tmux_bin" -S "$sentinel_sock" display-message -p '#{pid}')
+# The whole global config, so a stray reload of tmux/.tmux.conf would show.
+"$tmux_bin" -S "$sentinel_sock" show-options -g > "$out/sentinel-before"
 
 # --- a command inside the sandbox starts a server, reloads the config, and
 #     runs a bare kill-server ------------------------------------------------
@@ -109,6 +111,10 @@ checks=$((checks + 1))
     fail 'the sentinel server is still running'
 expect_eq 'keep-me' "$("$tmux_bin" -S "$sentinel_sock" show-options -gv @sentinel)" \
     'the sentinel server options are unchanged'
+"$tmux_bin" -S "$sentinel_sock" show-options -g > "$out/sentinel-after"
+checks=$((checks + 1))
+cmp -s "$out/sentinel-before" "$out/sentinel-after" ||
+    fail 'the sentinel server global config is unchanged'
 
 if [ "$failures" -gt 0 ]; then
     printf '\n%s of %s checks failed\n' "$failures" "$checks"
