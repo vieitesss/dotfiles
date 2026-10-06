@@ -8,6 +8,11 @@
 # stub; ssh also records the args and stdin it was handed.
 set -eu
 
+if [ "$(uname -s)" != Darwin ]; then
+    printf 'skip: %s (system-appearance is macOS only)\n' "$0"
+    exit 0
+fi
+
 repo_root=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 script="$repo_root/scripts/system-appearance"
 
