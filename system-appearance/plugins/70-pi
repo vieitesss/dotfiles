@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pi hot-reloads the active custom theme file. Build that stable file from the
+# installed Gruber package so running and future sessions use the same name.
+set -eu
+
+package="$HOME/.pi/agent/git/github.com/vieitesss/pi-theme-gruber-darker"
+source="$package/themes/gruber-${1}er.json"
+theme_dir="$HOME/.pi/agent/themes"
+theme_file="$theme_dir/gruber-system.json"
+
+if [ ! -f "$source" ]; then
+    echo "WARN: Pi Gruber theme package is not installed; skipped Pi" >&2
+    exit 0
+fi
+
+mkdir -p "$theme_dir"
+tmp="$theme_file.tmp.$$"
+sed 's/"name": "gruber-[^"]*"/"name": "gruber-system"/' "$source" > "$tmp"
+mv "$tmp" "$theme_file"
