@@ -10,6 +10,7 @@ install *args="":
 check:
     ./scripts/check-shell.sh
     ./tests/install.test.sh
+    ./tests/tmux-sandbox.test.sh
     ./tests/system-appearance.test.sh
     python3 -m unittest discover -s agents/skills/subagents/scripts
     ./tests/doctor.test.sh
