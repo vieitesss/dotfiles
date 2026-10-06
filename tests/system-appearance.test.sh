@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fixture test for scripts/system-appearance. Run: sh scripts/system-appearance.test.sh
+# Fixture test for scripts/system-appearance. Run: sh tests/system-appearance.test.sh
 #
 # The script under test is macOS-only and otherwise mutates the real machine
 # (wallpaper, appearance, remote hosts). The test runs it against a throwaway
