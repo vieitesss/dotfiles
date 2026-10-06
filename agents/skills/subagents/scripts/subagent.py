@@ -359,8 +359,10 @@ def read_frontmatter(path):
         if line.startswith("name:"):
             name = line.split(":", 1)[1].strip().strip("\"'")
         elif line.startswith("disable-model-invocation:"):
-            value = line.split(":", 1)[1].strip().strip("\"'").lower()
-            model_invocable = value != "true"
+            value = line.split(":", 1)[1].strip()
+            if value[:1] not in ("'", '"'):
+                value = value.split(" #", 1)[0].strip()
+            model_invocable = value.strip("\"'").lower() != "true"
         elif line.startswith("description:"):
             value = line.split(":", 1)[1].strip()
             if value in ("|", ">", "|-", ">-"):

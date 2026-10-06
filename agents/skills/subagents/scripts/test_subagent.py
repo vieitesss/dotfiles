@@ -120,6 +120,14 @@ class StageSkillsTest(TempRepoTest):
             subagent.stage_skills("build", {"skills": ["visible", "hidden"]}, self.repo)
         self.assertIn("hidden", str(caught.exception))
 
+    def test_stage_skills_rejects_a_disabled_skill_with_an_inline_comment(self):
+        write_skill(self.repo, "visible")
+        write_skill(self.repo, "hidden", "disable-model-invocation: true # user-only\n")
+
+        with self.assertRaises(SystemExit) as caught:
+            subagent.stage_skills("build", {"skills": ["visible", "hidden"]}, self.repo)
+        self.assertIn("hidden", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
