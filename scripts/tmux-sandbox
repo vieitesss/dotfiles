@@ -39,7 +39,7 @@ export TMUX_SANDBOX_TMUX="$tmux_bin"
 export TMUX_SOCK="$sock"
 export PATH="$tmpdir/bin:$PATH"
 
-# shellcheck disable=SC2329  # invoked from the EXIT trap below
+# shellcheck disable=SC2317,SC2329  # invoked from the EXIT trap below (ShellCheck <0.10 reports SC2317)
 cleanup() {
     "$tmux_bin" -S "$sock" kill-server 2>/dev/null || true
     rm -rf "$tmpdir"

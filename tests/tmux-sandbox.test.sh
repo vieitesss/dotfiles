@@ -101,7 +101,9 @@ expect_contains "$out/killed" 'dead' 'bare kill-server reached the sandboxed com
 
 sock=$(cat "$out/sock")
 checks=$((checks + 1))
-[ -n "$sock" ] && [ "$sock" != "$sentinel_sock" ] || fail "TMUX_SOCK must be a private socket, got '$sock'"
+if [ -z "$sock" ] || [ "$sock" = "$sentinel_sock" ]; then
+    fail "TMUX_SOCK must be a private socket, got '$sock'"
+fi
 expect_missing "$(dirname "$sock")" 'the runner removes its temporary directory'
 
 # --- the sentinel is untouched ----------------------------------------------
