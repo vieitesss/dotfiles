@@ -1,0 +1,38 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: just check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS runs /bin/bash 3.2, the oldest shell the installer supports;
+        # Ubuntu runs bash 5.x. Both run the same `just check`.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Install ShellCheck and zsh
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # zsh is a lint target on both jobs (`zsh -n` in check-shell.sh).
+            # Install it explicitly so a runner image without it fails here
+            # instead of the check silently skipping zsh files.
+            sudo apt-get update
+            sudo apt-get install -y shellcheck zsh
+          else
+            # macOS ships zsh at /bin/zsh.
+            brew install shellcheck
+          fi
+
+      # Node ships with both runner images.
+      - name: Check
+        run: just check

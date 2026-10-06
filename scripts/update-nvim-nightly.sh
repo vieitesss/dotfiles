@@ -25,6 +25,9 @@ EOF
 }
 
 expand_path() {
+    # The tilde is a literal --link value to match, not an unexpanded home
+    # path, so expanding it here would be wrong.
+    # shellcheck disable=SC2088
     case "$1" in
         '~')
             printf '%s\n' "$HOME"

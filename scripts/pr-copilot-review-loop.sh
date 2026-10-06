@@ -29,7 +29,10 @@ while [[ -L "$_src" ]]; do
 done
 ENV_FILE="$(cd -P "$(dirname "$_src")" && pwd)/pr-copilot-review-loop.env"
 if [[ -f "$ENV_FILE" ]]; then
-  set -a; source "$ENV_FILE"; set +a
+  set -a
+  # shellcheck disable=SC1090  # optional user config, path resolved at runtime
+  source "$ENV_FILE"
+  set +a
 else
   log "WARN: no ${ENV_FILE##*/} found — using built-in defaults."
 fi
@@ -92,12 +95,12 @@ parse_args() {
   while (( $# )); do
     case "$1" in
       --model)
-        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--model requires a value."
+        if (( $# < 2 )) || [[ "$2" == --* ]]; then die "--model requires a value."; fi
         [[ "$AGENT" == opencode ]] && OPENCODE_MODEL="$2" || PI_MODEL="$2"
         shift 2
         ;;
       --thinking)
-        (( $# >= 2 )) && [[ "$2" != --* ]] || die "--thinking requires a value."
+        if (( $# < 2 )) || [[ "$2" == --* ]]; then die "--thinking requires a value."; fi
         MODEL_THINKING="$2"
         shift 2
         ;;
@@ -204,13 +207,13 @@ print_brief() {
     echo "── Cycle ${n} ─────────────────────────────────"
     if [[ -n "${CYCLE_COMMITS[$i]:-}" ]]; then
       echo "Commits pushed:"
-      echo "${CYCLE_COMMITS[$i]}" | sed 's/^/  /'
+      printf '  %s\n' "${CYCLE_COMMITS[$i]//$'\n'/$'\n'  }"
     else
       echo "Commits pushed: none (all comments rejected/deferred/handled)"
     fi
     echo ""
     echo "Triage output:"
-    echo "${CYCLE_PI_OUTPUT[$i]}" | sed 's/^/  /'
+    printf '  %s\n' "${CYCLE_PI_OUTPUT[$i]//$'\n'/$'\n'  }"
     echo ""
   done
   echo "────────────────────────────────────────────"
@@ -233,15 +236,18 @@ show_config() {
 self_check() {
   local failed=0
 
-  # ISO timestamp string ordering (used by poll logic)
-  if [[ "2025-01-01T00:00:00Z" > "2024-01-01T00:00:00Z" ]]; then
+  # ISO timestamp string ordering (used by poll logic). Compared through
+  # variables, as the poll logic does; literals would be constant-folded.
+  local older="2024-01-01T00:00:00Z" newer="2025-01-01T00:00:00Z"
+  if [[ "$newer" > "$older" ]]; then
     echo "PASS: timestamp ordering"
   else
     echo "FAIL: timestamp ordering"; failed=1
   fi
 
   # Empty baseline: any timestamp is newer
-  if [[ "2025-01-01T00:00:00Z" > "" ]]; then
+  local nothing=""
+  if [[ "$newer" > "$nothing" ]]; then
     echo "PASS: empty baseline"
   else
     echo "FAIL: empty baseline"; failed=1
