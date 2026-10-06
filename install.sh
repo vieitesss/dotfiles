@@ -2,7 +2,10 @@
 
 set -euo pipefail
 
-repo_root=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+# DOTFILES_ROOT points the installer at another repo tree. The fixture in
+# scripts/test-install.sh uses it to install a throwaway manifest.
+repo_root=$(CDPATH='' cd "$(dirname "$0")" && pwd -P)
+repo_root=${DOTFILES_ROOT:-$repo_root}
 
 os=$(uname -s)
 case "$os" in
@@ -77,6 +80,9 @@ is_requested_application() {
 }
 
 expand_destination() {
+    # The tilde is a literal manifest destination prefix to match, not an
+    # unexpanded home path, so expanding it here would be wrong.
+    # shellcheck disable=SC2088
     case "$1" in
         '~')
             printf '%s\n' "$HOME"
