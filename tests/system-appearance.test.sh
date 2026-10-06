@@ -1,11 +1,12 @@
 #!/bin/sh
-# Fixture test for scripts/system-appearance. Run: sh tests/system-appearance.test.sh
+# Fixture test for scripts/system-appearance and its plugins in
+# system-appearance/. Run: sh tests/system-appearance.test.sh
 #
-# The script under test is macOS-only and otherwise mutates the real machine
-# (wallpaper, appearance, remote hosts). The test runs it against a throwaway
-# HOME whose .local/bin is first on PATH, so every side-effecting command
-# (ssh, osascript, open, pgrep, pkill, tmux, herdr, sleep) is replaced by a
-# stub; ssh also records the args and stdin it was handed.
+# The plugins otherwise mutate the real machine (wallpaper, appearance, remote
+# hosts). The test runs against a throwaway HOME whose .local/bin is first on
+# PATH, so every side-effecting command (ssh, osascript, open, pgrep, pkill,
+# tmux, herdr, sleep) is replaced by a stub; ssh also records the args and
+# stdin it was handed. Each case gets its own copy of the plugin directory.
 set -eu
 
 if [ "$(uname -s)" != Darwin ]; then
@@ -20,6 +21,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 home="$tmp/home"
+dir="$tmp/system-appearance"
 record="$tmp/ssh.log"
 
 fail() {
@@ -33,10 +35,11 @@ write_fake() {
     chmod +x "$home/.local/bin/$name"
 }
 
-# Rebuild the throwaway machine before each case.
+# Rebuild the throwaway machine and plugin directory before each case.
 reset() {
-    rm -rf "$home" "$record" "$tmp/stdout" "$tmp/stderr"
-    mkdir -p "$home/.local/bin" "$home/.config/nexo" "$home/Pictures" "$home/.local/state"
+    rm -rf "$home" "$dir" "$record" "$tmp/stdout" "$tmp/stderr" "$tmp/added.log"
+    mkdir -p "$home/.local/bin" "$home/Pictures" "$home/.local/state"
+    cp -R "$repo_root/system-appearance" "$dir"
     : > "$home/Pictures/astronaut_umbraline.png"
     : > "$home/Pictures/astronaut_light.png"
     : > "$record"
@@ -55,35 +58,15 @@ SH
 #!/bin/sh
 printf 'false\n'
 SH
-    write_fake open <<'SH'
-#!/bin/sh
-exit 0
-SH
-    write_fake pgrep <<'SH'
-#!/bin/sh
-exit 0
-SH
-    write_fake pkill <<'SH'
-#!/bin/sh
-exit 0
-SH
-    write_fake tmux <<'SH'
-#!/bin/sh
-exit 0
-SH
-    write_fake herdr <<'SH'
-#!/bin/sh
-exit 0
-SH
-    write_fake sleep <<'SH'
-#!/bin/sh
-exit 0
-SH
+    for name in open pgrep pkill tmux herdr sleep; do
+        printf '#!/bin/sh\nexit 0\n' | write_fake "$name"
+    done
 }
 
 run() {
     set +e
-    HOME="$home" SSH_RECORD="$record" sh "$script" "$@" >"$tmp/stdout" 2>"$tmp/stderr"
+    HOME="$home" SYSTEM_APPEARANCE_DIR="$dir" SSH_RECORD="$record" \
+        sh "$script" "$@" >"$tmp/stdout" 2>"$tmp/stderr"
     status=$?
     set -e
 }
@@ -100,183 +83,132 @@ expect_stderr() {
     grep -qF -- "$1" "$tmp/stderr" || fail "stderr missing: $1 (got: $(cat "$tmp/stderr"))"
 }
 
-refute_stderr() {
-    if grep -qF -- "$1" "$tmp/stderr"; then
-        fail "stderr should not contain: $1 (got: $(cat "$tmp/stderr"))"
-    fi
-}
-
 count_matches() {
     grep -c -- "$2" "$1" 2>/dev/null || true
+}
+
+expect_ssh_calls() {
+    [ "$(count_matches "$record" '^ARGS:')" -eq "$1" ] ||
+        fail "expected $1 ssh call(s) (got: $(cat "$record"))"
 }
 
 expect_record() {
     grep -q -- "$1" "$record" || fail "ssh record missing: $1 (got: $(cat "$record"))"
 }
 
-# The per-host remote command: every configured host gets one ssh call that
-# pins nexo's theme and reloads tmux in the target mode.
-case_valid_config() {
+# Add a plugin that records the mode it was called with.
+add_recording_plugin() {
+    cat > "$dir/plugins/$1" <<'SH'
+#!/bin/sh
+printf '%s %s\n' "$(basename "$0")" "$1" >> "$ADDED_LOG"
+SH
+    chmod +x "$dir/plugins/$1"
+}
+
+# The shipped hosts file targets vieitesrpi alone, with one ssh call that
+# carries every remote/ script and the mode.
+case_default_hosts() {
     reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = ["alpha", "beta"]
-TOML
 
     run dark
 
     expect_status 0
-    [ "$(count_matches "$record" '^ARGS:')" -eq 2 ] ||
-        fail "expected one ssh call per host (got: $(cat "$record"))"
-    expect_record 'ARGS:.* -o BatchMode=yes -o ConnectTimeout=3 alpha sh -s dark'
-    expect_record 'ARGS:.* -o BatchMode=yes -o ConnectTimeout=3 beta sh -s dark'
+    expect_ssh_calls 1
+    expect_record 'ARGS: -o BatchMode=yes -o ConnectTimeout=3 vieitesrpi sh -s dark'
     expect_record 'SYSTEM_APPEARANCE'
     expect_record 'nexo/config.toml'
     expect_stdout 'System appearance: dark'
 }
 
-# A missing nexo config must not be swallowed: the script reports it and fails
-# before it touches any host.
-case_missing_config() {
+# Hosts are configurable: one per line, with comments and blank lines.
+case_configured_hosts() {
     reset
+    cat > "$dir/hosts" <<'HOSTS'
+# primary
+alpha
 
-    run dark
-
-    expect_status 1
-    expect_stderr 'nexo config not found'
-    expect_stderr "$home/.config/nexo/config.toml"
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'missing config still contacted a host'
-}
-
-# A multi-line machines array (with a comment and a following section) parses
-# the same way.
-case_multiline_hosts() {
-    reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = [
-    "alpha", # primary
-    "beta",
-]
-
-[remote.backends]
-alpha = "tmux"
-TOML
+beta # backup
+HOSTS
 
     run light
 
     expect_status 0
-    [ "$(count_matches "$record" '^ARGS:')" -eq 2 ] ||
-        fail "expected one ssh call per host (got: $(cat "$record"))"
+    expect_ssh_calls 2
     expect_record 'ARGS:.* alpha sh -s light'
     expect_record 'ARGS:.* beta sh -s light'
 }
 
-# A malformed [remote] machines value must surface the parse error instead of
-# silently looping over zero hosts.
-case_malformed_config() {
+# Without a hosts file the remote plugin warns and the switch still succeeds.
+case_missing_hosts() {
     reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = "alpha"
-TOML
-
-    run dark
-
-    expect_status 1
-    expect_stderr 'malformed nexo config'
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed config still contacted a host'
-}
-
-# An array element that is not a double-quoted string is a malformed host
-# list, not an empty one: it must fail before any host or local change, and
-# must not be misreported as the zero-hosts warning.
-case_unquoted_element() {
-    reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = [alpha]
-TOML
-
-    run dark
-
-    expect_status 1
-    expect_stderr 'malformed nexo config'
-    refute_stderr 'no remote hosts configured'
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed array still contacted a host'
-}
-
-# Elements must be separated by commas; a space is not a separator.
-case_missing_comma() {
-    reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = ["alpha" "beta"]
-TOML
-
-    run dark
-
-    expect_status 1
-    expect_stderr 'malformed nexo config'
-    refute_stderr 'no remote hosts configured'
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'malformed array still contacted a host'
-}
-
-# An empty array is valid and means zero hosts, unlike a malformed array.
-case_empty_array() {
-    reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = []
-TOML
+    rm "$dir/hosts"
 
     run dark
 
     expect_status 0
-    [ "$(count_matches "$tmp/stderr" 'no remote hosts configured')" -eq 1 ] ||
-        fail "expected one no-hosts warning (got: $(cat "$tmp/stderr"))"
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'empty array still contacted a host'
+    expect_ssh_calls 0
+    expect_stderr 'no remote hosts file'
 }
 
-# An array left open at the end of the file is malformed too.
-case_unclosed_array() {
+# Deleting a plugin file drops that element: no remote plugin, no ssh; no
+# wallpaper plugin, so missing pictures no longer matter.
+case_removed_plugins() {
     reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-machines = [
-    "alpha",
-TOML
-
-    run dark
-
-    expect_status 1
-    expect_stderr 'malformed nexo config'
-    expect_stderr 'array is not closed'
-}
-
-# Zero configured hosts is not an error: warn once and keep the local switch.
-case_no_hosts() {
-    reset
-    cat > "$home/.config/nexo/config.toml" <<'TOML'
-[remote]
-ssh-config = ""
-TOML
+    rm "$dir/plugins/"*-remote "$dir/plugins/"*-wallpaper "$home/Pictures/"*
 
     run dark
 
     expect_status 0
-    [ "$(count_matches "$tmp/stderr" 'no remote hosts configured')" -eq 1 ] ||
-        fail "expected one no-hosts warning (got: $(cat "$tmp/stderr"))"
-    [ "$(count_matches "$record" '^ARGS:')" -eq 0 ] || fail 'no-hosts config still contacted a host'
+    expect_ssh_calls 0
 }
 
-case_valid_config
-case_multiline_hosts
-case_missing_config
-case_malformed_config
-case_unquoted_element
-case_missing_comma
-case_empty_array
-case_unclosed_array
-case_no_hosts
+# Adding an executable file adds an element; it receives the mode and runs in
+# name order. A non-executable file is ignored.
+case_added_plugin() {
+    reset
+    add_recording_plugin 00-first
+    add_recording_plugin 99-last
+    printf '#!/bin/sh\nexit 1\n' > "$dir/plugins/55-disabled"
+
+    ADDED_LOG="$tmp/added.log"
+    export ADDED_LOG
+    run light
+
+    expect_status 0
+    [ "$(cat "$tmp/added.log")" = "00-first light
+99-last light" ] || fail "added plugins ran wrong: $(cat "$tmp/added.log")"
+}
+
+# A failing plugin is reported by name; the rest still run and the runner
+# exits nonzero so the shortcut can alert.
+case_failing_plugin() {
+    reset
+    printf '#!/bin/sh\nexit 3\n' > "$dir/plugins/15-broken"
+    chmod +x "$dir/plugins/15-broken"
+
+    run dark
+
+    expect_status 1
+    expect_stderr 'plugin 15-broken failed (exit 3)'
+    expect_ssh_calls 1
+}
+
+# A missing plugin directory fails loudly before anything changes.
+case_missing_plugins_dir() {
+    reset
+    rm -r "$dir/plugins"
+
+    run dark
+
+    expect_status 1
+    expect_stderr "plugin directory not found: $dir/plugins"
+}
+
+case_default_hosts
+case_configured_hosts
+case_missing_hosts
+case_removed_plugins
+case_added_plugin
+case_failing_plugin
+case_missing_plugins_dir
 printf 'ok: %s\n' "$0"

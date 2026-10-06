@@ -1,0 +1,10 @@
+#!/bin/sh
+# Switch macOS's own light/dark appearance.
+set -eu
+
+case "$1" in
+    dark) dark_mode=true ;;
+    *) dark_mode=false ;;
+esac
+
+osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark_mode"

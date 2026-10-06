@@ -1,0 +1,33 @@
+#!/bin/sh
+# MonitorControl manages brightness for the external display. Its accessible
+# slider accepts a normalized value without opening the menu bar popover.
+set -eu
+
+case "$1" in
+    dark) brightness=0.7 ;;
+    *) brightness=0.4 ;;
+esac
+
+if [ ! -d /Applications/MonitorControl.app ]; then
+    echo "WARN: MonitorControl is not installed; skipped display brightness" >&2
+    exit 0
+fi
+
+if ! pgrep -x MonitorControl >/dev/null 2>&1; then
+    open -gja MonitorControl
+    sleep 1
+fi
+if ! osascript - "$brightness" <<'APPLESCRIPT'
+on run argv
+    set brightnessValue to item 1 of argv as real
+    tell application "System Events"
+        tell process "MonitorControl"
+            set brightnessSlider to slider 1 of menu item 1 of menu 1 of menu bar item 1 of menu bar 1
+            set value of brightnessSlider to brightnessValue
+        end tell
+    end tell
+end run
+APPLESCRIPT
+then
+    echo "WARN: Could not set display brightness with MonitorControl" >&2
+fi
