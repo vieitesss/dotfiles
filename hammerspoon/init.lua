@@ -68,8 +68,31 @@ hs.hotkey.bind({ "alt", "ctrl", "shift" }, "R", function()
 	hs.reload()
 end)
 
+-- system-appearance failures are otherwise invisible from the shortcut: log
+-- every run and alert when the switch fails.
+local system_appearance_log = function(exitCode, stdOut, stdErr)
+	local log_path = os.getenv("HOME") .. "/Library/Logs/system-appearance.log"
+	local log = io.open(log_path, "a")
+	if not log then
+		return
+	end
+	log:write(string.format("[%s] system-appearance exited %d\n", os.date("%Y-%m-%d %H:%M:%S"), exitCode))
+	if stdOut and stdOut ~= "" then
+		log:write("stdout: " .. stdOut:gsub("%s+$", "") .. "\n")
+	end
+	if stdErr and stdErr ~= "" then
+		log:write("stderr: " .. stdErr:gsub("%s+$", "") .. "\n")
+	end
+	log:close()
+end
+
 hs.hotkey.bind({ "alt", "shift" }, "D", function()
-	hs.task.new(os.getenv("HOME") .. "/.local/bin/system-appearance", nil, { "toggle" }):start()
+	hs.task.new(os.getenv("HOME") .. "/.local/bin/system-appearance", function(exitCode, stdOut, stdErr)
+		system_appearance_log(exitCode, stdOut, stdErr)
+		if exitCode ~= 0 then
+			hs.alert.show("system-appearance failed (exit " .. exitCode .. ")")
+		end
+	end, { "toggle" }):start()
 end)
 
 -- Ask-AI: open a fresh Ghostty window running a vanilla pi scratch session,
