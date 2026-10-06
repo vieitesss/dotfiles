@@ -45,6 +45,51 @@ if [ ! -f "$wallpaper" ]; then
     exit 1
 fi
 
+# nexo's [remote] machines drive the remote tmux/theme update below. Read them
+# before touching the machine so a missing or malformed config fails loudly
+# instead of silently updating only the local appearance.
+nexo_config="$HOME/.config/nexo/config.toml"
+if [ ! -f "$nexo_config" ]; then
+    echo "ERROR: nexo config not found: $nexo_config" >&2
+    exit 1
+fi
+remote_hosts=$(awk '
+    function fail(message) {
+        printf "ERROR: nexo [remote] machines: %s (line %d)\n", message, NR > "/dev/stderr"
+        failed = 1
+        exit 3
+    }
+    /^[ \t]*\[/ {
+        if (in_machines) fail("array is not closed")
+        in_remote = ($0 ~ /^[ \t]*\[remote\][ \t]*(#.*)?$/)
+        in_machines = 0
+    }
+    in_remote && /^[ \t]*machines[ \t]*=/ {
+        value = $0
+        sub(/^[^=]*=[ \t]*/, "", value)
+        if (value !~ /^\[/) fail("value must be an array of quoted strings")
+        in_machines = 1
+        first = 1
+    }
+    in_machines {
+        line = $0
+        if (first) { sub(/^[^=]*=[ \t]*/, "", line); first = 0 }
+        sub(/#.*/, "", line)
+        while (match(line, /"[^"]*"/)) {
+            print substr(line, RSTART + 1, RLENGTH - 2)
+            line = substr(line, RSTART + RLENGTH)
+        }
+        if (line ~ /\]/) in_machines = 0
+    }
+    END { if (in_machines && !failed) fail("array is not closed") }
+' "$nexo_config") || {
+    echo "ERROR: malformed nexo config: $nexo_config" >&2
+    exit 1
+}
+if [ -z "$remote_hosts" ]; then
+    echo "WARN: no remote hosts configured: $nexo_config; skipped remote hosts" >&2
+fi
+
 # MonitorControl manages brightness for the external display. Its accessible
 # slider accepts a normalized value without opening the menu bar popover.
 if [ -d /Applications/MonitorControl.app ]; then
@@ -160,21 +205,8 @@ SH
 )
 
 # Remote tmux servers opened through nexo proxies draw inside this terminal, so
-# they must use the same palette. The hosts are nexo's [remote] machines. Never
-# prompt, so an unreachable host cannot block the switch.
-remote_hosts=$(awk '
-    /^[ \t]*\[/ { in_remote = ($0 ~ /^[ \t]*\[remote\][ \t]*(#.*)?$/) }
-    in_remote && /^[ \t]*machines[ \t]*=/ { in_machines = 1 }
-    in_machines {
-        line = $0
-        sub(/#.*/, "", line)
-        while (match(line, /"[^"]*"/)) {
-            print substr(line, RSTART + 1, RLENGTH - 2)
-            line = substr(line, RSTART + RLENGTH)
-        }
-        if ($0 ~ /\]/) in_machines = 0
-    }
-' "$HOME/.config/nexo/config.toml" 2>/dev/null || true)
+# they must use the same palette. The hosts are nexo's [remote] machines, read
+# above. Never prompt, so an unreachable host cannot block the switch.
 for host in $remote_hosts; do
     if ! printf '%s\n%s' "$nexo_theme" "$tmux_reload" | ssh -o BatchMode=yes \
         -o ConnectTimeout=3 "$host" sh -s "$mode"; then
