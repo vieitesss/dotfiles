@@ -59,7 +59,7 @@ EFFORTS = {
 # Hard ceilings: a model listed here is never launched above this effort,
 # whatever Jev asks for. Only ever lowers an effort, never raises it. Keyed by
 # model name without provider, so the cap holds whichever provider serves it.
-MODEL_MAX_EFFORT = {"gpt-6.1-sol": "medium"}
+MODEL_MAX_EFFORT = {"gpt-6.1-sol": "medium", "deepseek-v4.1-flash": "high"}
 
 # Every Stage a Subagent can run. Shape, Plan, and Ship stay with the Manager.
 # "skills" are loaded in order; "model" pins a MODELS role, else Jev picks.
