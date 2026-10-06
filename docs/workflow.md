@@ -89,8 +89,8 @@ Defaults the flow leaves implicit:
 
 Some Stage skills (grilling, tdd, review, zero-tech-debt and others) are not in
 this repository: they come from the shared checkout at `~/work/prefapp/skills`.
-`ls -l ~/.agents/skills` (or `just doctor`, once it exists) shows which checkout
-supplies each installed skill.
+`ls -l ~/.agents/skills` shows which checkout supplies each installed skill, and
+`just doctor` reports repo-owned links that dangle.
 
 ## Sessions
 
