@@ -45,8 +45,9 @@ of Pi. `--dry-run` prints the profile, the Subagent's name, and its report
 path without launching.
 
 The launch fails before opening a tab when a Stage's skill is not installed
-for `--cwd`. Prove loads the repo's `verify-*` skills, so it needs at least
-one.
+for `--cwd`, or when its `SKILL.md` sets `disable-model-invocation: true`, so
+a Subagent could not load it. Prove loads the repo's `verify-*` skills, so it
+needs at least one.
 
 ## Reports
 

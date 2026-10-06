@@ -1,0 +1,3 @@
+# Hosts whose tmux (and other remote/ scripts) follow this machine's
+# appearance, one ssh destination per line.
+vieitesrpi

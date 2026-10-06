@@ -11,7 +11,7 @@ Rosé Pine configuration so it can be restored.
 | Pi      | `rosepine-dawn`  | `rosepine`    | `gruber-lighter`                     | `gruber-darker`                      |
 
 Auto-switching (`light:`/`dark:` in Ghostty, `auto_switch = true` in Herdr, and
-`scripts/system-appearance` for Pi) is unchanged.
+the `system-appearance/plugins/70-pi` plugin) is unchanged.
 
 ## Ghostty
 
@@ -53,7 +53,7 @@ Previous `pi/agent/settings.json` value:
 - `"theme": "rosepine-system"`
 - package `npm:@inobit/pi-themes` is still present, kept for easy revert.
 
-The previous Pi generation block in `scripts/system-appearance` was:
+The previous Pi generation block (now `system-appearance/plugins/70-pi`) was:
 
 ```sh
 # Pi hot-reloads the active custom theme file. Build that stable file from the
@@ -83,7 +83,7 @@ and reload.
 
 ## Wallpapers
 
-Previous wallpapers in `scripts/system-appearance`:
+Previous wallpapers (now in `system-appearance/plugins/30-wallpaper`):
 
 - dark: `$HOME/Pictures/astronaut_rosepine.png`
 - light: `$HOME/Pictures/astronaut_rosepinedawn.png`

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Remote tmux servers opened from this terminal draw inside it, so they must
+# use the same palette. Run every script in remote/ on every host listed in
+# hosts, one ssh call per host. Never prompt, so an unreachable host cannot
+# block the switch.
+set -eu
+
+mode=$1
+hosts_file="$SYSTEM_APPEARANCE_DIR/hosts"
+remote_dir="$SYSTEM_APPEARANCE_DIR/remote"
+
+if [ ! -f "$hosts_file" ]; then
+    echo "WARN: no remote hosts file: $hosts_file; skipped remote hosts" >&2
+    exit 0
+fi
+
+# Each script runs in its own subshell so one cannot end or leak into the
+# next; all of them receive the mode as $1.
+payload=
+for script in "$remote_dir"/*; do
+    [ -f "$script" ] || continue
+    payload="$payload(
+$(cat "$script")
+)
+"
+done
+
+sed 's/#.*//' "$hosts_file" | while read -r host; do
+    [ -n "$host" ] || continue
+    if ! printf '%s' "$payload" | ssh -o BatchMode=yes -o ConnectTimeout=3 \
+        "$host" sh -s "$mode"; then
+        echo "WARN: Could not update appearance on $host" >&2
+    fi
+done

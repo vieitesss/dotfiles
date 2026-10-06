@@ -78,3 +78,4 @@ The install script should:
 - When changing skill routing or Manager/Subagent behaviour, first read
   `GLOSSARY.md`, `docs/workflow.md` and `docs/adr/`; `STAGES` in
   `agents/skills/subagents/scripts/subagent.py` is the routing source of truth.
+- Run any command that exercises tmux config through `scripts/tmux-sandbox` (`tests/tmux-sandbox.test.sh`), never against the live server.

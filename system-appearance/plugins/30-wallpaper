@@ -1,0 +1,24 @@
+#!/bin/sh
+# Set every desktop's wallpaper to the mode's picture.
+set -eu
+
+case "$1" in
+    dark) wallpaper="$HOME/Pictures/astronaut_umbraline.png" ;;
+    *) wallpaper="$HOME/Pictures/astronaut_light.png" ;;
+esac
+
+if [ ! -f "$wallpaper" ]; then
+    echo "Wallpaper not found: $wallpaper" >&2
+    exit 1
+fi
+
+osascript - "$wallpaper" <<'APPLESCRIPT'
+on run argv
+    set wallpaperFile to POSIX file (item 1 of argv)
+    tell application "System Events"
+        repeat with desktopItem in desktops
+            set picture of desktopItem to wallpaperFile
+        end repeat
+    end tell
+end run
+APPLESCRIPT
