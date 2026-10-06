@@ -9,7 +9,7 @@ install *args="":
 
 check:
     ./scripts/check-shell.sh
-    ./scripts/test-install.sh
+    ./tests/install.test.sh
     cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
 
 update_neovim *args="":

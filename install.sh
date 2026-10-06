@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # DOTFILES_ROOT points the installer at another repo tree. The fixture in
-# scripts/test-install.sh uses it to install a throwaway manifest.
+# tests/install.test.sh uses it to install a throwaway manifest.
 repo_root=$(CDPATH='' cd "$(dirname "$0")" && pwd -P)
 repo_root=${DOTFILES_ROOT:-$repo_root}
 
