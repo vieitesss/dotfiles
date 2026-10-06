@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Run a command against a private tmux server.
+#
+# Usage: scripts/tmux-sandbox <command...>
+#
+# The command sees TMUX and TMUX_PANE unset, a private socket exported as
+# TMUX_SOCK, and a `tmux` shim first on PATH that always targets that socket.
+# A bare `tmux kill-server` therefore reaches only the sandbox's own server.
+# On exit the sandbox server is killed and its temporary directory removed.
+
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    printf 'usage: %s <command...>\n' "${0##*/}" >&2
+    exit 2
+fi
+
+tmux_bin=$(command -v tmux) || {
+    printf '%s: tmux not found\n' "${0##*/}" >&2
+    exit 127
+}
+
+# A server is addressed through TMUX; drop it and let the shim pick the socket.
+unset TMUX TMUX_PANE
+
+# tmux sockets live under a ~104 character path limit, so use /tmp rather than
+# a possibly long TMPDIR.
+tmpdir=$(mktemp -d /tmp/tmux-sandbox.XXXXXX)
+sock="$tmpdir/tmux.sock"
+
+mkdir "$tmpdir/bin"
+cat > "$tmpdir/bin/tmux" <<'EOF'
+#!/bin/sh
+exec "$TMUX_SANDBOX_TMUX" -S "$TMUX_SOCK" "$@"
+EOF
+chmod +x "$tmpdir/bin/tmux"
+
+export TMUX_SANDBOX_TMUX="$tmux_bin"
+export TMUX_SOCK="$sock"
+export PATH="$tmpdir/bin:$PATH"
+
+# shellcheck disable=SC2329  # invoked from the EXIT trap below
+cleanup() {
+    "$tmux_bin" -S "$sock" kill-server 2>/dev/null || true
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+status=0
+"$@" || status=$?
+exit "$status"
