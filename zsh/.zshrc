@@ -392,17 +392,13 @@ if [ -s "$NVM_DIR/nvm.sh" ]; then
     fi
     unset _nvm_lazy_version
 
-    _load_nvm() {
-        unset -f nvm node npm npx _load_nvm
+    # Lazy load nvm itself; node/npm/npx resolve through PATH above.
+    nvm() {
+        unset -f nvm
         \. "$NVM_DIR/nvm.sh"
-        [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+        [ -r "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+        nvm "$@"
     }
-
-    # Lazy load nvm when called
-    nvm() { _load_nvm && nvm "$@" }
-    node() { _load_nvm && node "$@" }
-    npm() { _load_nvm && npm "$@" }
-    npx() { _load_nvm && npx "$@" }
 fi
 
 # Ruby version manager (macOS with Homebrew) - lazy loaded
