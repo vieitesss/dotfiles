@@ -8,14 +8,16 @@ repo_root=$(CDPATH='' cd "$(dirname "$0")/.." && pwd -P)
 
 : "${HOME:?HOME is not set}"
 
+# Whitespace-safe lists: a path may contain spaces. Keep them non-empty; bash
+# 3.2 under set -u aborts when expanding an empty array.
 manifest_names="MAC.manifest LINUX.manifest"
-skills_dirs="$HOME/.agents/skills $HOME/.claude/skills"
+skills_dirs=("$HOME/.agents/skills" "$HOME/.claude/skills")
 
 problems=0
 
 # Links installed from the main checkout point at that root, so it counts as
 # repo-owned too when doctor runs from a linked worktree. Git is optional.
-repo_roots=$repo_root
+repo_roots=("$repo_root")
 if command -v git >/dev/null 2>&1; then
     common_dir=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
         || common_dir=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null) \
@@ -30,7 +32,7 @@ if command -v git >/dev/null 2>&1; then
         *) main_root= ;;
     esac
     if [ -n "$main_root" ] && [ "$main_root" != "$repo_root" ]; then
-        repo_roots="$repo_roots $main_root"
+        repo_roots+=("$main_root")
     fi
 fi
 
@@ -45,7 +47,9 @@ report_missing_source() {
 
 report_dangling_link() {
     printf 'DANGLING LINK: %s -> %s\n' "$1" "$2"
-    printf "  fix: rm '%s' && ./install.sh\n" "$1"
+    # %q shell-escapes the path, so apostrophes and spaces stay parseable.
+    # Printed only; never executed here.
+    printf '  fix: rm %q && ./install.sh\n' "$1"
     problems=$((problems + 1))
 }
 
@@ -134,7 +138,7 @@ normalize_path() {
 # Repo-owned means the link points into this repository, as opposed to an
 # external checkout such as a skills package.
 is_repo_owned() {
-    for ird_root in $repo_roots; do
+    for ird_root in "${repo_roots[@]}"; do
         case "$1" in
             "$ird_root"/*) return 0 ;;
         esac
@@ -166,7 +170,7 @@ check_skills_dir() {
     done
 }
 
-for skills_dir in $skills_dirs; do
+for skills_dir in "${skills_dirs[@]}"; do
     check_skills_dir "$skills_dir"
 done
 

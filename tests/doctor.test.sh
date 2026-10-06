@@ -15,8 +15,11 @@ failures=0
 checks=0
 
 new_fixture() {
+    # The name may contain spaces: paths with spaces must survive unquoted
+    # string splitting in the doctor.
+    fixture_name=${1:-doctor-test}
     # install.sh records canonical source paths (pwd -P), so the fixture must too.
-    fixture_tmp=$(CDPATH='' cd "$(mktemp -d "${TMPDIR:-/tmp}/doctor-test.XXXXXX")" && pwd -P)
+    fixture_tmp=$(CDPATH='' cd "$(mktemp -d "${TMPDIR:-/tmp}/$fixture_name.XXXXXX")" && pwd -P)
     fixture_repo="$fixture_tmp/repo"
     fixture_home="$fixture_tmp/home"
 
@@ -77,6 +80,17 @@ expect_count() {
 $output"
 }
 
+expect_fix_command_parses() {
+    checks=$((checks + 1))
+    fix_line=$(printf '%s\n' "$output" | sed -n 's/^  fix: //p' | head -n 1)
+    if [ -z "$fix_line" ]; then
+        fail "expected a printed fix command; got:
+$output"
+    elif ! bash -n -c "$fix_line" 2>/dev/null; then
+        fail "printed fix command is not parseable bash: $fix_line"
+    fi
+}
+
 # --- missing manifest source is reported -------------------------------------
 
 new_fixture
@@ -114,7 +128,7 @@ run_doctor "$fixture_repo/scripts/doctor"
 expect_status 1
 expect_count '^DANGLING LINK: ' 1
 expect_contains "DANGLING LINK: $fixture_home/.agents/skills/gone -> $fixture_repo/agents/skills/mine/gone"
-expect_contains "fix: rm '$fixture_home/.agents/skills/gone' && ./install.sh"
+expect_contains "fix: rm $fixture_home/.agents/skills/gone && ./install.sh"
 expect_not_contains 'external-dangling'
 expect_not_contains 'real-dir'
 expect_not_contains "skills/valid"
@@ -132,6 +146,31 @@ expect_status 0
 expect_not_contains 'MISSING SOURCE'
 expect_not_contains 'DANGLING LINK'
 expect_contains 'doctor: OK'
+
+rm -rf "$fixture_tmp"
+
+# --- a HOME and repo root containing spaces still report dangling links ------
+
+spaced_name='doctor test'
+new_fixture "$spaced_name"
+ln -s "$fixture_repo/agents/skills/mine/gone" "$fixture_home/.agents/skills/gone"
+run_doctor "$fixture_repo/scripts/doctor"
+expect_status 1
+expect_not_contains 'MISSING SOURCE'
+expect_count '^DANGLING LINK: ' 1
+expect_contains "DANGLING LINK: $fixture_home/.agents/skills/gone -> $fixture_repo/agents/skills/mine/gone"
+
+rm -rf "$fixture_tmp"
+
+# --- a link named with an apostrophe prints a parseable fix command ----------
+
+new_fixture
+ln -s "$fixture_repo/agents/skills/mine/gone" "$fixture_home/.agents/skills/user's-skill"
+run_doctor "$fixture_repo/scripts/doctor"
+expect_status 1
+expect_count '^DANGLING LINK: ' 1
+expect_contains "DANGLING LINK: $fixture_home/.agents/skills/user's-skill -> $fixture_repo/agents/skills/mine/gone"
+expect_fix_command_parses
 
 rm -rf "$fixture_tmp"
 
