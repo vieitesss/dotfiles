@@ -1,0 +1,8 @@
+#!/bin/sh
+# Herdr auto_switch follows the host terminal appearance after a config reload.
+set -eu
+
+command -v herdr >/dev/null 2>&1 || exit 0
+if ! herdr server reload-config >/dev/null 2>&1; then
+    echo "WARN: Could not reload Herdr config" >&2
+fi

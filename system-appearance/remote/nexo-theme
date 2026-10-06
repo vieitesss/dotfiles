@@ -1,0 +1,26 @@
+#!/bin/sh
+# nexo's auto theme queries the terminal, which a remote popup inside a proxy
+# cannot reach, so pin [tui] theme to the mode instead. A host without nexo is
+# left alone.
+set -eu
+
+config="$HOME/.config/nexo/config.toml"
+[ -f "$config" ] || exit 0
+awk -v theme="$1" '
+    /^[ \t]*\[/ {
+        if (in_tui && !done) { print "theme = \"" theme "\""; done = 1 }
+        in_tui = ($0 ~ /^[ \t]*\[tui\][ \t]*(#.*)?$/)
+    }
+    in_tui && /^[ \t]*theme[ \t]*=/ {
+        if (!done) print "theme = \"" theme "\""
+        done = 1
+        next
+    }
+    { print }
+    END {
+        if (!done) {
+            if (!in_tui) { if (NR) print ""; print "[tui]" }
+            print "theme = \"" theme "\""
+        }
+    }
+' "$config" > "$config.tmp.$$" && mv "$config.tmp.$$" "$config"

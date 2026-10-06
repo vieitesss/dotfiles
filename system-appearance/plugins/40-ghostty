@@ -1,0 +1,9 @@
+#!/bin/sh
+# Ghostty's paired theme follows the system appearance after a config reload.
+# Runs before tmux, which repaints inside Ghostty.
+set -eu
+
+if pgrep -x ghostty >/dev/null 2>&1; then
+    pkill -USR2 -x ghostty
+    sleep 0.2
+fi
