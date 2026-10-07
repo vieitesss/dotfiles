@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import subagent
 from test_support import prepare_spec
 
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -606,7 +607,12 @@ class TmuxSandboxTest(unittest.TestCase):
             "subagent.py", "--stage", "build", "--item", "wi-sbx", "--cwd", repo,
             "--extension", extension, "--dry-run", "sandbox brief",
         ]
-        return prepare_spec(argv)
+        # Keep this fake-pi transport fixture independent of the default model.
+        with mock.patch.dict(
+            subagent.MODELS,
+            {"builder": ("github-copilot/gpt-6.1-sol", "Sandbox Pi fixture.")},
+        ):
+            return prepare_spec(argv)
 
     def test_launch_runs_through_a_private_tmux_server(self):
         spec = self.build_spec()

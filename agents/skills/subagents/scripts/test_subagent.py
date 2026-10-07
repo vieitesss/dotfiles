@@ -135,7 +135,7 @@ class PreparedSpecTest(TempRepoTest):
         self.assertNotIn("mux", self.spec)
 
     def test_the_prompt_carries_the_role_without_rereading_engine_argv(self):
-        self.assertEqual(self.spec["engine"]["kind"], "pi")
+        self.assertEqual(self.spec["engine"]["kind"], "claude")
         self.assertNotIn("kind", self.spec)
         self.assertTrue(self.spec["prompt"].startswith(self.spec["role"]))
 
@@ -283,8 +283,7 @@ class EngineSpecTest(TempRepoTest):
 class EffortCapTest(TempRepoTest):
     """The effort ceiling is keyed by model name, so the same model is capped
     on every provider (regression: it used to be keyed provider/model, so the
-    cap stopped applying when a model moved provider, and the deepseek cap
-    never applied at all)."""
+    cap stopped applying when a model moved provider)."""
 
     def choose(self, model_id, effort):
         answers = {"effort": {"choice": effort}, "model": {"choice": "builder"}}
@@ -294,13 +293,37 @@ class EffortCapTest(TempRepoTest):
                     return subagent.choose_profile("do the thing", "build", None)
 
     def test_the_cap_holds_for_the_same_model_on_any_provider(self):
-        for provider in ("opencode-go", "another-provider"):
-            with self.subTest(provider=provider):
-                profile = self.choose(f"{provider}/deepseek-v4.1-flash", "max")
-                self.assertEqual(profile["effort"], "high")
+        for provider in ("github-copilot", "another-provider"):
+            for effort in ("xhigh", "max"):
+                with self.subTest(provider=provider, effort=effort):
+                    profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
+                    self.assertEqual(profile["effort"], "medium")
+
+    def test_builder_and_writer_use_haiku_5_5_without_effort_ceiling(self):
+        answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
+        for stage in ("build", "write"):
+            with self.subTest(stage=stage):
+                spec = subagent.stage_spec(stage, None)
+                with mock.patch.object(subagent, "jev", return_value=answers):
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        profile = subagent.choose_profile("brief", stage, spec["model"])
+                self.assertEqual(profile["model"], "claude-code/claude-haiku-5-5")
+                self.assertEqual(profile["effort"], "max")
+                profile["role"] = spec["role"]
+                engine = subagent.engine_spec(profile)
+                self.assertEqual(engine["kind"], "claude")
+                self.assertEqual(
+                    engine["argv"][engine["argv"].index("--model") + 1],
+                    "claude-haiku-5-5",
+                )
+                self.assertEqual(engine["argv"][engine["argv"].index("--effort") + 1], "max")
+
+    def test_the_critic_keeps_its_existing_effort_ceiling(self):
+        profile = self.choose("github-copilot/gpt-6.1-sol", "max")
+        self.assertEqual(profile["effort"], "medium")
 
     def test_the_cap_only_ever_lowers_an_effort(self):
-        profile = self.choose("opencode-go/deepseek-v4.1-flash", "low")
+        profile = self.choose("github-copilot/gpt-6.1-sol", "low")
         self.assertEqual(profile["effort"], "low")
         profile = self.choose("opencode-go/some-uncapped-model", "max")
         self.assertEqual(profile["effort"], "max")
@@ -357,7 +380,7 @@ class StagesTableTest(TempRepoTest):
         table = stdout.getvalue()
         for stage in subagent.STAGES:
             self.assertIn(stage, table)
-        self.assertIn("writer: claude-code/sonnet", table)
+        self.assertIn("writer: claude-code/claude-haiku-5-5", table)
 
 
 if __name__ == "__main__":
