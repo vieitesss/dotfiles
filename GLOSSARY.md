@@ -23,8 +23,12 @@ The agent the user has put in charge of a session with `/manager`; it owns every
 _Avoid_: Supervisor, parent, orchestrator
 
 **Subagent**:
-An agent the Manager launches in its own tab to run one Stage of one Work Item and report back; it never delegates.
+An agent the Manager launches in its own session to run one Stage of one Work Item and report back; it never delegates.
 _Avoid_: Child, worker, delegate
+
+**Host extension**:
+A Markdown file the Manager and its Subagents read that explains how one session host, such as Paseo, herdr, or tmux, starts, messages, and closes Subagent sessions.
+_Avoid_: Adapter, plugin, backend
 
 **Work Item**:
 One thing to deliver in a session, small enough to pass through the Stages on its own.

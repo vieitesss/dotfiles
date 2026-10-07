@@ -1,108 +1,97 @@
 ---
 name: subagents
-description: Launch a Subagent for one Stage of a Work Item in its own tab, exchange messages with it, and close it. Use when the Manager delegates a Stage.
+description: Launch a Subagent for one Stage of a Work Item in its own session, exchange messages with it, and close it. Use when the Manager delegates a Stage.
 ---
 
 Launching is the Manager's move: the `manager` skill decides when to delegate
-and what a brief carries. A Subagent runs one Stage and reports; the launcher
-already tells it so.
+and what a brief carries. A Subagent runs one Stage and reports; the prepared
+prompt already tells it so.
 
-Run `scripts/subagent.py` from the herdr or tmux pane where the Manager (Pi or
-Claude) runs.
+Two parts do the work. `scripts/subagent.py` prepares the Stage the same way on
+every host: it validates the Stage, picks the model and effort, and prints one
+JSON launch spec whose `prompt` carries the Stage role, skills, report path and
+how to reach you. A host extension, a Markdown file you read, starts the
+session from that spec.
 
 ```bash
-scripts/subagent.py --stages                 # Stages, their skills and models
+SKILL=~/.agents/skills/subagents
 
-scripts/subagent.py --stage STAGE [--axis AXIS] --item ITEM "$(cat BRIEF_FILE)" \
-  [--cwd DIR] [--workspace ID | --project DIR] [--timeout MS] [--dry-run]
+python3 "$SKILL/scripts/subagent.py" --stages     # Stages, skills, models
 
-scripts/subagent.py --notify PANE "message"   # prompt a pane (tmux)
-scripts/subagent.py --close TAB_ID
+spec=$(python3 "$SKILL/scripts/subagent.py" \
+  --stage STAGE [--axis AXIS] --item ITEM \
+  --cwd DIR --extension "$SKILL/extensions/HOST.md" \
+  --manager MANAGER_ADDRESS \
+  "$(cat BRIEF_FILE)")
 ```
 
-It detects the multiplexer (herdr if `HERDR_ENV` is set, else tmux) and
-creates a tab for the Subagent in the calling agent's workspace:
+`--cwd` defaults to the current directory. `--dry-run` prints the same spec
+without creating the report directory or editing `.git/info/exclude`, so it
+runs anywhere.
 
-- herdr: a tab in the workspace from `HERDR_WORKSPACE_ID`, not whichever
-  workspace is focused in the UI.
-- tmux: a window in the session of `TMUX_PANE`, not whichever session is
-  attached.
+## Extensions
 
-It starts the agent there, prompts it with the brief, prints the tab id (a
-tmux window id such as `@18`) and the Subagent's pane id, and exits. Keep
-both: the pane id addresses follow-ups, the tab id closes the tab. Launch failures exit 2 and
-leave the tab open. `--workspace` overrides the target: a herdr
-`workspace_id`, or a tmux session name or id.
+[`extensions.md`](extensions.md) picks the host file for the session you run in
+(Paseo, herdr or tmux) and says how to write one for another host. Read the
+chosen `extensions/<host>.md` and follow it: it gives the launch, follow-up
+and close commands, and what the Subagent runs to reach you. A file anywhere
+else works as an `--extension` too.
+
+`--manager` is your own native address on that host; the extension names it.
+The prepared prompt carries the address and the extension's path, so the
+Subagent reports through it.
 
 ## Stage and profile
 
 `--stage` decides the Subagent's skills and instructions; Review also takes
 `--axis`. A Stage that pins a model (Write, Review) uses it; for the rest,
 Jev picks the model, and Jev picks the thinking effort for every Stage. Jev
-needs `TYPESAFE_API_KEY`; without it the launcher uses the default model and
-its default effort. A `claude-code/<model>` model starts Claude Code instead
-of Pi. `--dry-run` prints the profile, the Subagent's name, and its report
-path without launching.
+needs `TYPESAFE_API_KEY`; without it preparation uses the default model and its
+default effort. A `claude-code/<model>` model starts Claude Code instead
+of Pi; the extension maps the spec's engine, model and effort onto its host.
 
-The launch fails before opening a tab when a Stage's skill is not installed
-for `--cwd`, or when its `SKILL.md` sets `disable-model-invocation: true`, so
-a Subagent could not load it. Prove loads the repo's `verify-*` skills, so it
-needs at least one.
+Preparation fails before anything launches when a Stage's skill is not
+installed for `--cwd`, when its `SKILL.md` sets
+`disable-model-invocation: true`, or when `--extension` is missing or not a
+file. Prove loads the repo's `verify-*` skills, so it needs at least one.
 
 ## Reports
 
 Each Subagent writes its full report to
 `.agents/reports/<item>-<stage>[-<axis>].md` in the main checkout, even when
 it works in a worktree, and sends a one-line TASK COMPLETE pointing at it.
-The launcher adds `.agents/ledger.md` and `.agents/reports/` to the repo's
+Preparation adds `.agents/ledger.md` and `.agents/reports/` to the repo's
 `.git/info/exclude`.
 
-## Workspaces
-
-`--project DIR` puts the Subagent in DIR's own session instead, and runs it in
-DIR unless `--cwd` says otherwise. The launcher runs
-`nexo --json --backend <mux> open --no-focus DIR`, which creates the session
-(or herdr workspace) without switching your view to it. DIR must be a project
-nexo discovers.
-
-Create a fresh worktree with:
-
-```bash
-nexo --json worktree create --no-focus --new-branch --add-parent \
-  REPO BRANCH <repo-parent>/<repo>-wt/<name>
-```
-
-The branch starts from REPO's current HEAD, so update main first. The command
-opens the worktree without focus; pass its `.container.id` as `--workspace`.
-`--add-parent` adds the `-wt` folder to nexo's paths, so `--project` then
-works for every worktree in it.
-
-A fresh worktree holds tracked files only. The launcher also finds untracked
+A fresh worktree holds tracked files only. Preparation also finds untracked
 project skills (`.agents/skills/…`) in the main checkout and hands every
 Subagent its skills by absolute path.
 
+To work in a worktree, create it first, then pass its path as `--cwd`; the
+extension says where its host puts the session.
+
 ## Messages
 
-Every message starts with the Subagent's tag, `[subagent-<stage>-<pid> ·
-<item> · <stage>]`, so you always know which Work Item and Stage it is about.
-The Subagent reports over pi-intercom only when both it and the Manager are
-Pi: its report arrives as a plain message, its questions as intercom asks you
-answer with `intercom reply`. Otherwise it types into your pane, so its
-messages arrive as prompts:
+Every message starts with the Subagent's tag,
+`[subagent-<stage>-<pid> · <item> · <stage>]`, so you always know which Work
+Item and Stage it is about. The extension says how messages travel:
 
 - `[…] TASK COMPLETE: <summary>`: the Stage is done; the report file holds
   the detail.
 - `[…] QUESTION: <question>`: it waits for your answer.
 
 Any other tagged message that asks for a choice is a question too. Answer, or
-send a follow-up after a report, with `herdr agent prompt <agent-name> "..."`
-in herdr, or `scripts/subagent.py --notify <subagent-pane-id> "..."` in tmux.
-A follow-up earns a fresh TASK COMPLETE.
+send a follow-up after a report, with the extension's follow-up command. A
+follow-up earns a fresh TASK COMPLETE.
 
 ## Waiting
 
 After launching or messaging a Subagent, end your turn. Its next message
-resumes you; that message is the only signal to act on, so leave its pane,
-tab status and intercom queue unread.
+resumes you; that message is the only signal to act on, so leave its session
+status and any message queue unread.
 
-Close the tab with `--close` once you have accepted the report.
+A host can hold a Subagent on an approval only the user can give; when the user
+reports a stall, the extension says how to surface it. A launch that fails
+leaves what the host created; the extension says what that is and how to
+inspect or close it. Close the Subagent's session with the extension's close
+command once you have accepted the report.

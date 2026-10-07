@@ -57,8 +57,10 @@ then read your own diff. It still gets its Ledger row.
 
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
 outlives `/clear`, compaction, a handoff, and resuming from another device,
-so it is the one place the state of the work lives. The launcher keeps it,
-and the reports beside it, out of git.
+so it is the one place the state of the work lives. Preparing a Stage keeps
+it, and the reports beside it, out of git. In the Subagent column keep the
+name and the id the extension's `launch` printed (a Paseo `agentId`, a tmux
+window and pane, a herdr tab): follow-ups and closing need it.
 
 ```md
 # Ledger
@@ -68,7 +70,7 @@ Mode: serial | parallel worktrees | review per PR
 
 | Item       | Stage  | Status   | Subagent                   | Worktree / branch       | Report                                    |
 | ---------- | ------ | -------- | -------------------------- | ----------------------- | ----------------------------------------- |
-| login-form | build  | running  | subagent-build-4123 @18 %4 | ../app-wt/login (login) | .agents/reports/login-form-build.md       |
+| login-form | build  | running  | subagent-build-4123 7f3a9c | ../app-wt/login (login) | .agents/reports/login-form-build.md       |
 | session    | refine | accepted | subagent-refine-4188       | ../app-wt/login (login) | .agents/reports/session-refine.md         |
 
 ## Decisions
@@ -113,8 +115,8 @@ choice sends a Question, and you answer.
 
 Every Stage, and every fix round, gets a fresh Subagent. Until you accept a
 report, follow-ups go to the Subagent that wrote it; once you accept, close
-its tab. Stages hand over through files: the next Subagent's brief points at
-the previous report, the diff base, and the worktree.
+its session. Stages hand over through files: the next Subagent's brief points
+at the previous report, the diff base, and the worktree.
 
 ## Briefs
 
@@ -132,7 +134,7 @@ a scratch file and pass it as `"$(cat FILE)"`. It carries:
 - a checkable done criterion: named tests, lint, pass counts (`10/10`);
 - the decisions it brings back as a Question instead of making.
 
-The launcher adds the Stage's skills, the report path, and how to reach you.
+Preparation adds the Stage's skills, the report path, and how to reach you.
 
 ## Loops over Work Items
 
@@ -204,8 +206,8 @@ user` in the Ledger while you wait.
 - Check that the next report covers your follow-up; one sent just as the
   Subagent finished can go unread. Apply a missed small change yourself,
   otherwise send it again.
-- On acceptance, close the tab and move the Work Item to its next Stage in the
-  Ledger.
+- On acceptance, close the Subagent's session and move the Work Item to its
+  next Stage in the Ledger.
 
 ## Report
 

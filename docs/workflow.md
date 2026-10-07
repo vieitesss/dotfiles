@@ -2,14 +2,16 @@
 
 How a goal moves from the user's request to a shipped change. Terms are
 defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape are
-[ADR 0002](adr/0002-manager-on-request.md) and
-[ADR 0003](adr/0003-subagent-is-a-stage-instance.md).
+[ADR 0002](adr/0002-manager-on-request.md),
+[ADR 0003](adr/0003-subagent-is-a-stage-instance.md), and
+[ADR 0004](adr/0004-host-extensions-are-markdown.md).
 
 ## Flow
 
 Rounded boxes run in the Manager's own session. Hexagons are Subagents: each
-is a fresh session for one Stage of one Work Item, launched with
-`subagent.py --stage <stage>`.
+is a fresh session for one Stage of one Work Item, prepared with
+`subagent.py --stage <stage>` and started through the host extension for the
+Manager's session.
 
 ```mermaid
 flowchart TD
@@ -96,7 +98,8 @@ this repository: they come from the shared checkout at `~/work/prefapp/skills`.
 
 Every Subagent talks only to the Manager; the user talks only to the Manager.
 Sessions hand work over through files: the brief going in, the report coming
-out, the diff in the worktree, and the Ledger.
+out, the diff in the worktree, and the Ledger. Messages travel over the
+session host's own channel, as its extension says.
 
 ```mermaid
 sequenceDiagram

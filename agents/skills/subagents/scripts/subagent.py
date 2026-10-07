@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
-"""Launch a Subagent for one Stage of one Work Item in a new herdr tab or tmux
-window, and return immediately.
+"""Prepare one Stage of one Work Item for a Subagent and print its launch spec.
 
 The Stage decides the Subagent's skills and instructions, and pins the model
 for Write and Review. Jev (TypeSafe) judges only what the Stage leaves open:
 the model, and the thinking effort.
 
-Usage:
-    subagent.py --stage STAGE [--axis AXIS] --item ITEM "brief"
-                [--cwd DIR] [--workspace ID | --project DIR]
-                [--timeout MS] [--dry-run]
-    subagent.py --stages
-    subagent.py --close TAB_ID
-    subagent.py --notify PANE_ID MESSAGE
+This script never touches a session host. It prints one JSON launch spec on
+stdout; the Markdown extension named by --extension says how the host in use
+launches, addresses, and closes the Subagent.
 
-Creates a new tab (herdr) or window (tmux) in the calling agent's workspace or
-session, starts the agent there, submits the brief, prints the tab id, and
-exits. The Manager does not wait. Close the tab later with --close. In tmux,
-Subagents report back with --notify, which types MESSAGE into the Manager pane.
+Usage:
+    subagent.py --stages
+
+    subagent.py --stage STAGE [--axis AXIS] --item ITEM --extension FILE
+                [--cwd DIR] [--manager ADDRESS] [--dry-run] "brief"
+
+A dry run prints the same spec without creating the report directory or
+editing .git/info/exclude.
 """
 
 import argparse
 import json
 import os
-import shlex
 import subprocess
 import sys
-import tempfile
-import time
 import urllib.error
 import urllib.request
 
@@ -147,16 +143,6 @@ STAGES = {
     },
 }
 
-SCRIPT = os.path.abspath(__file__)
-STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
-# Allow slow login shells (including 35s startup) without retaining orphaned keys
-# indefinitely. Only the secret-bearing env file is age-swept, never the task.
-TEMP_FILE_SWEEP = 120
-
-# Parent variables a child must inherit even though tmux spawns it from the
-# server's environment; the child sources them from a 0600 temp file.
-PASSTHROUGH_ENV = ["TYPESAFE_API_KEY"]
-
 CLAUDE_PROVIDER = "claude-code"
 CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -208,127 +194,33 @@ def clamp_effort(level, supported):
     return supported[0] if supported else None
 
 
-# --------------------------------------------------------------- herdr
+# --------------------------------------------------------- engine helpers
 
 
-def herdr(*args, check=True):
-    proc = subprocess.run(["herdr", *args], capture_output=True, text=True, check=False)
-    if check and proc.returncode != 0:
-        sys.exit(
-            f"herdr {' '.join(args)} failed: {proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return proc.stdout
+def is_claude(profile):
+    return (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER
 
 
-def herdr_json(*args):
-    return json.loads(herdr(*args))
+def engine_spec(profile):
+    """The engine and its argv for a profile: no session host is assumed.
 
-
-def parent_workspace():
-    """Workspace the calling agent runs in, not whichever one has UI focus.
-
-    Herdr sets HERDR_WORKSPACE_ID in every pane, so prefer that. The focused
-    workspace is only a fallback for callers running outside a herdr pane.
+    The role travels as a system prompt here. A host without such a flag
+    (Paseo) inlines the spec's role instead.
     """
-    workspace = os.environ.get("HERDR_WORKSPACE_ID")
-    if workspace:
-        return workspace
-    for ws in herdr_json("workspace", "list")["result"]["workspaces"]:
-        if ws["focused"]:
-            return ws["workspace_id"]
-    sys.exit("no focused herdr workspace")
-
-
-def project_workspace(path, mux):
-    """Create or reuse the project's session/workspace without focusing it.
-
-    nexo prints the container it opened; its id is a tmux session id or a herdr
-    workspace_id, which is exactly what --workspace expects.
-    """
-    cmd = ["nexo", "--json", f"--backend={mux}", "open", "--no-focus", path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        sys.exit(f"nexo open failed for {path}: {result.stderr.strip()}")
-    container = json.loads(result.stdout)
-    print(
-        f"[subagent] project {container['name']} ({container['id']})"
-        f"{' created' if container.get('created') else ''}",
-        file=sys.stderr,
-    )
-    return container["id"]
-
-
-# --------------------------------------------------------------- tmux
-
-
-def multiplexer():
-    """herdr or tmux, whichever the calling agent runs in (herdr wins)."""
-    if os.environ.get("HERDR_ENV"):
-        return "herdr"
-    if os.environ.get("TMUX"):
-        return "tmux"
-    sys.exit("subagent.py must run inside herdr or tmux")
-
-
-def tmux(*args, check=True, input=None):
-    proc = subprocess.run(
-        ["tmux", *args], capture_output=True, text=True, check=False, input=input
-    )
-    if check and proc.returncode != 0:
-        sys.exit(
-            f"tmux {' '.join(args)} failed: {proc.stderr.strip() or proc.stdout.strip()}"
-        )
-    return proc.stdout.strip()
-
-
-def tmux_session():
-    """tmux session of the calling agent's pane, not whichever one is attached."""
-    pane = os.environ.get("TMUX_PANE")
-    return tmux("display-message", "-p", *(["-t", pane] if pane else []), "#{session_id}")
-
-
-def tmux_notify(pane, message):
-    """Type message into pane and submit it, like `herdr agent prompt`.
-
-    A bracketed paste keeps multi-line messages from submitting line by line.
-    """
-    buffer = f"subagent-{os.getpid()}"
-    tmux("load-buffer", "-b", buffer, "-", input=message)
-    tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane)
-    time.sleep(0.3)  # let the TUI finish the paste before Enter submits it
-    tmux("send-keys", "-t", pane, "Enter")
-
-
-def child_env_file(path=None):
-    """0600 temp file exporting allowlisted parent variables for a child."""
-    if path is None:
-        fd, path = tempfile.mkstemp(prefix="subagent-env-")
-    else:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
-        handle = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
-    except BaseException:
-        os.close(fd)
-        remove_temp(path)
-        raise
-    try:
-        with handle:
-            for var in PASSTHROUGH_ENV:
-                value = os.environ.get(var)
-                if value is not None:
-                    handle.write(f"export {var}={shlex.quote(value)}\n")
-    except BaseException:
-        remove_temp(path)
-        raise
-    return path
-
-
-def remove_temp(*paths):
-    for path in paths:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    role = profile["role"]
+    if is_claude(profile):
+        argv = ["--append-system-prompt", role]
+        if profile["model"]:
+            argv += ["--model", profile["model"].partition("/")[2]]
+        if profile["effort"]:
+            argv += ["--effort", clamp_effort(profile["effort"], CLAUDE_EFFORTS)]
+        return {"kind": "claude", "argv": argv}
+    argv = ["--append-system-prompt", role]
+    if profile["model"]:
+        argv += ["--model", profile["model"]]
+    if profile["effort"]:
+        argv += ["--thinking", profile["effort"]]
+    return {"kind": "pi", "argv": argv}
 
 
 # --------------------------------------------------------------- skills
@@ -558,10 +450,10 @@ def jev_profile(brief, stage, pinned):
     }
 
 
-def choose_profile(args, spec):
-    pinned = spec["model"]
+def choose_profile(brief, stage, pinned):
+    """The model and effort a Stage runs with, capped and clamped to what exists."""
     try:
-        profile = jev_profile(args.task, args.stage, pinned)
+        profile = jev_profile(brief, stage, pinned)
     except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
         print(
             f"[subagent] jev unavailable ({err}); using the model's default effort",
@@ -599,58 +491,10 @@ def choose_profile(args, spec):
     return profile
 
 
-def is_claude(profile):
-    return (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER
+# --------------------------------------------------------------- prompt
 
 
-def claude_args(profile, report, mux="herdr"):
-    args = ["--append-system-prompt", profile["role"]]
-    if profile["model"]:
-        args += ["--model", profile["model"].partition("/")[2]]
-    if profile["effort"]:
-        args += ["--effort", clamp_effort(profile["effort"], CLAUDE_EFFORTS)]
-    # Let reports to the Manager run without a permission prompt, or they
-    # stall. Edit rules take absolute paths with a leading "//".
-    send = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
-    args += ["--allowedTools", f"Bash({send} *)", f"Edit(/{report})"]
-    return args
-
-
-def trust_claude_dir(cwd):
-    """Pre-accept Claude Code's workspace trust dialog for cwd.
-
-    Interactive claude has no flag to skip the dialog; it reads
-    projects[<path>].hasTrustDialogAccepted from ~/.claude.json.
-    """
-    path = os.path.expanduser("~/.claude.json")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            config = json.load(handle)
-    except FileNotFoundError:
-        config = {}
-    except (OSError, ValueError) as err:
-        print(f"[subagent] cannot read {path} ({err}); skipping trust", file=sys.stderr)
-        return
-    project = config.setdefault("projects", {}).setdefault(os.path.realpath(cwd), {})
-    if project.get("hasTrustDialogAccepted"):
-        return
-    project["hasTrustDialogAccepted"] = True
-    tmp = f"{path}.subagent-{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=2)
-    os.replace(tmp, path)
-
-
-def pi_args(profile):
-    args = ["--append-system-prompt", profile["role"]]
-    if profile["model"]:
-        args += ["--model", profile["model"]]
-    if profile["effort"]:
-        args += ["--thinking", profile["effort"]]
-    return args
-
-
-# What every Subagent is told, whichever way it reports.
+# What every Subagent is told, whichever host it runs on.
 SUBAGENT_RULES = (
     "The Manager runs the workflow; you run this one Stage and report. Send "
     "the Manager two kinds of message only: the completion report, and "
@@ -662,347 +506,133 @@ SUBAGENT_RULES = (
 )
 
 
-def pane_lines(manager_pane, tag, mux="herdr"):
-    """How a Subagent reaches the Manager without intercom: typing into its pane."""
-    target = manager_pane or "<manager-pane-id>"
-    send = "herdr agent prompt" if mux == "herdr" else f"{SCRIPT} --notify"
-    lines = []
-    if not manager_pane:
-        lines.append("Find the Manager's pane id with `herdr agent list`.")
-    lines += [
-        f"The Manager runs in {mux} pane {target}. Reach it by prompting its "
-        "pane through Bash:",
-        "",
-        "```sh",
-        f'{send} {target} "[{tag}] TASK COMPLETE: <one-line summary>"',
-        f'{send} {target} "[{tag}] QUESTION: <question>"',
-        "```",
-        "",
-        "When the Stage is finished, send the completion report that way. "
-        "When blocked on a question, send it, then end your turn; the "
-        "Manager's answer arrives as your next prompt. Always start the "
-        f"message with `[{tag}]`.",
-    ]
-    if mux == "herdr":
-        lines[-1] += (
-            " If herdr rejects the prompt (for example `agent_blocked`), wait "
-            "a few seconds and retry."
-        )
-    lines[-1] += " Reporting this way is mandatory, not optional."
-    return lines
+def subagent_prompt(brief, role, skills, report, extension, manager, tag):
+    """The brief, prefixed with the Stage role, skills, report, and how to report.
 
-
-def subagent_prompt(brief, profile, manager_session, tag, report, manager_pane=None, mux="herdr"):
-    """Brief, prefixed with the Stage, its skills, the report file, and how to reach the Manager."""
-    lines = [f"You are {tag}."]
-    if profile["skills"]:
+    The Stage role travels inside the prompt as well as in engine.argv, so a
+    host whose own CLI has no append-system-prompt flag still delivers it.
+    The host commands themselves live in the extension file, not here.
+    """
+    lines = [role, "", f"You are {tag}."]
+    if skills:
         lines.append("Read and follow these skills:")
-        lines += [f"- {name}: {path}" for name, path in profile["skills"].items()]
+        lines += [f"- {name}: {path}" for name, path in skills.items()]
     lines.append(
         f"Write your full report to {report}: what you did, how you proved "
         "it, and anything left open. The completion report is one line "
         "pointing at it."
     )
-    # Intercom only works between two pi agents. A Claude Subagent has no
-    # intercom tool, and a Manager without an intercom session (e.g. Claude)
-    # never receives intercom messages, so everything else reports through
-    # its pane.
-    if is_claude(profile) or not manager_session:
-        lines += pane_lines(manager_pane, tag, mux)
-    else:
-        lines.append(f"The Manager is intercom session {manager_session}.")
-        lines.append(
-            "Use pi-intercom to report: when the Stage is finished, send the "
-            "completion report to the Manager with `intercom send` "
-            "(fire-and-forget); when blocked on a question, `intercom ask` "
-            f"the Manager. Start every message with `[{tag}]`. Reporting via "
-            "intercom is mandatory, not optional."
-        )
+    contact = (
+        f"The Manager's address is {manager}."
+        if manager
+        else "The Manager's address is in that file."
+    )
+    lines.append(
+        f"Read and follow {extension}: it explains how to reach the Manager, "
+        f"ask Questions, and send the Completion report. {contact} Reporting "
+        "through it is mandatory, not optional."
+    )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief
+
+
+def launch_spec(brief, stage, axis, item, cwd, extension, manager, profile):
+    """The one JSON object every host extension consumes."""
+    stage_label = f"{stage} {axis}" if axis else stage
+    name = f"subagent-{stage}-{os.getpid()}"
+    tag = f"{name} · {item} · {stage_label}"
+    engine = engine_spec(profile)
+    return {
+        "item": item,
+        "stage": stage,
+        "axis": axis,
+        "name": name,
+        "tag": tag,
+        "cwd": cwd,
+        "report": profile["report"],
+        "extension": extension,
+        "manager": manager,
+        "model": profile["model"],
+        "effort": profile["effort"],
+        "role": profile["role"],
+        "skills": profile["skills"],
+        "engine": engine,
+        "prompt": subagent_prompt(
+            brief,
+            profile["role"],
+            profile["skills"],
+            profile["report"],
+            extension,
+            manager,
+            tag,
+        ),
+    }
 
 
 # --------------------------------------------------------------- main
 
 
-def without_effort(argv, kind, view):
-    """argv minus the effort flag if the pane shows the level made it fail, else None.
-
-    Only error lines count; a herdr pane echoes the command line, which always
-    contains "thinking".
-    """
-    errors = [line.lower() for line in view.splitlines() if "error" in line.lower()]
-    level_error = any(
-        any(w in line for w in ("thinking", "reasoning", "effort")) for line in errors
-    )
-    effort_flag = "--effort" if kind == "claude" else "--thinking"
-    if effort_flag not in argv or not level_error:
-        return None
-    cut = argv.index(effort_flag)
-    return [arg for i, arg in enumerate(argv) if i not in (cut, cut + 1)]
-
-
-def launch(name, pane_id, argv, timeout_ms=30000, kind="pi"):
-    """Start the agent in the pane; on failure show its own error and report it.
-
-    GAP: herdr children were not testable here because HERDR_ENV is unset.
-    Whether a herdr child receives PASSTHROUGH_ENV is unverified.
-    """
-
-    def start(extra):
-        return subprocess.run(
-            [
-                "herdr",
-                "agent",
-                "start",
-                name,
-                "--kind",
-                kind,
-                "--pane",
-                pane_id,
-                "--timeout",
-                str(timeout_ms),
-                "--",
-                *extra,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    started = time.monotonic()
-    proc = start(argv)
-    while proc.returncode != 0:
-        detail = proc.stderr.strip() or proc.stdout.strip()
-        if "agent_pane_busy" not in detail or time.monotonic() - started >= 30:
-            break
-        time.sleep(0.25)
-        proc = start(argv)
-    else:
-        return True
-
-    view = herdr(
-        "pane", "read", pane_id, "--source", "recent", "--lines", "15", check=False
-    )
-    detail = proc.stderr.strip() or proc.stdout.strip()
-
-    # If the effort level caused the failure, retry with the model's own
-    # default before giving up.
-    retry = without_effort(argv, kind, view)
-    if retry is not None:
-        print(
-            "[subagent] launch failed on effort; retrying with the model default",
-            file=sys.stderr,
-        )
-        proc = start(retry)
-        if proc.returncode == 0:
-            return True
-        detail = proc.stderr.strip() or proc.stdout.strip()
-        view = herdr(
-            "pane", "read", pane_id, "--source", "recent", "--lines", "15", check=False
-        )
-
-    print(
-        f"[subagent] agent start failed for {name}: {detail}\n--- pane ---\n{view}",
-        file=sys.stderr,
-    )
-    return False
-
-
-def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
-    """Start the agent in the tmux pane with the task as its first message.
-
-    tmux has no `agent start`/`agent prompt`, so the task goes on the agent's
-    command line instead. It travels through a temp file because tmux rejects
-    over-long commands. A login shell is not enough for the environment (zsh
-    reads ~/.zprofile, not ~/.profile), so PASSTHROUGH_ENV travels in a second
-    0600 temp file the child sources and deletes before exec. A detached
-    sweeper removes only the env file after TEMP_FILE_SWEEP seconds as a
-    backstop, registered before respawn so parent death cannot bypass it. The
-    task is never age-swept. The pane remains after the agent exits, so a failed
-    launch stays visible.
-    """
-    tmux("set-option", "-w", "-t", pane_id, "remain-on-exit", "on")
-    shell = os.environ.get("SHELL", "/bin/sh")
-    script = (
-        'if ! prompt=$(cat "$1"); then '
-        'printf "%s\\n" "[subagent] cannot read prompt file: $1" >&2; '
-        'rm -f "$1" "$2"; exit 1; fi; '
-        'rm -f "$1"; if [ -r "$2" ]; then . "$2"; fi; rm -f "$2"; '
-        'shift 2; exec "$@" "$prompt"'
-    )
-
-    def start(extra):
-        path = env_path = None
-        env_created = False
-        try:
-            fd, path = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(prompt)
-            env_path = os.path.join(
-                tempfile.gettempdir(),
-                f"subagent-env-{os.getpid()}-{os.urandom(8).hex()}",
-            )
-            subprocess.Popen(
-                [
-                    "/bin/sh", "-c", 'sleep "$1"; rm -f "$2"',
-                    "_", str(TEMP_FILE_SWEEP), env_path,
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            child_env_file(env_path)
-            env_created = True
-            tmux(
-                "respawn-pane", "-k", "-t", pane_id, "-c", cwd, "--",
-                shell, "-lc", script, name, path, env_path, kind, *extra, "--",
-            )
-        except BaseException:
-            remove_temp(path)
-            if env_created:
-                remove_temp(env_path)
-            raise
-
-        deadline = time.monotonic() + STARTUP_GRACE
-        while time.monotonic() < deadline:
-            pane_state = subprocess.run(
-                ["tmux", "display-message", "-p", "-t", pane_id,
-                 "#{pane_id} #{pane_dead}"],
-                capture_output=True, text=True, check=False,
-            )
-            if pane_state.returncode != 0 or pane_state.stdout.strip() != f"{pane_id} 0":
-                remove_temp(path, env_path)
-                return False
-            time.sleep(0.25)
-        return True
-
-    if start(argv):
-        return True
-    view = tmux("capture-pane", "-p", "-t", pane_id, check=False)
-    retry = without_effort(argv, kind, view)
-    if retry is not None:
-        print(
-            "[subagent] launch failed on effort; retrying with the model default",
-            file=sys.stderr,
-        )
-        if start(retry):
-            return True
-        view = tmux("capture-pane", "-p", "-t", pane_id, check=False)
-
-    tail = "\n".join(view.splitlines()[-15:])
-    print(f"[subagent] agent start failed for {name}\n--- pane ---\n{tail}", file=sys.stderr)
-    return False
-
-
-def main():
+def parse_args(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", nargs="?", metavar="brief")
+    parser.add_argument("brief", nargs="?", metavar="brief")
     parser.add_argument("--stage", choices=STAGES)
     parser.add_argument("--axis")
     parser.add_argument("--item", help="Work Item id, as in the Ledger")
     parser.add_argument("--stages", action="store_true", help="print the Stage table")
     parser.add_argument("--cwd")
-    target = parser.add_mutually_exclusive_group()
-    target.add_argument("--workspace")
-    target.add_argument("--project", metavar="DIR")
-    parser.add_argument("--timeout", type=int, default=30000)
-    parser.add_argument("--close", metavar="TAB_ID")
-    parser.add_argument("--notify", nargs=2, metavar=("PANE_ID", "MESSAGE"))
+    parser.add_argument(
+        "--extension",
+        metavar="FILE",
+        help="Markdown file explaining how this host launches and reports",
+    )
+    parser.add_argument("--manager", help="the Manager's native address on its host")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--keep", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--lines", type=int, default=40, help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.stages:
+        return args
+    if not (args.brief and args.stage and args.item):
+        parser.error("a brief, --stage, and --item are required")
+    if not args.extension:
+        parser.error("--extension FILE is required")
+    return args
 
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     if args.stages:
         return print_stages()
-    if args.notify:
-        tmux_notify(*args.notify)
-        return 0
-    if args.close:
-        if multiplexer() == "herdr":
-            herdr("tab", "close", args.close)
-        else:
-            tmux("kill-window", "-t", args.close)
-        return 0
-    if not (args.task and args.stage and args.item):
-        parser.error("a brief, --stage, and --item are required")
-    if args.project:
-        args.project = os.path.abspath(os.path.expanduser(args.project))
-    args.cwd = args.cwd or args.project or os.getcwd()
+
+    extension = os.path.abspath(os.path.expanduser(args.extension))
+    if not os.path.isfile(extension):
+        sys.exit(f"extension file not found: {args.extension}")
+    args.cwd = os.path.abspath(os.path.expanduser(args.cwd or os.getcwd()))
+    if not os.path.isdir(args.cwd):
+        sys.exit(f"cwd is not a directory: {args.cwd}")
 
     spec = stage_spec(args.stage, args.axis)
     skills = stage_skills(args.stage, spec, args.cwd)
-    profile = choose_profile(args, spec)
+    profile = choose_profile(args.brief, args.stage, spec["model"])
     profile.update(skills=skills, role=spec["role"])
-    report = report_path(
+    profile["report"] = report_path(
         args.cwd, args.item, args.stage, args.axis, create=not args.dry_run
     )
-    stage = f"{args.stage} {args.axis}" if args.axis else args.stage
-    name = f"subagent-{args.stage}-{os.getpid()}"
-    tag = f"{name} · {args.item} · {stage}"
-
-    if args.dry_run:
-        print(json.dumps({**profile, "name": name, "report": report}, indent=2))
-        return 0
-
-    mux = multiplexer()
-    if args.project:
-        args.workspace = project_workspace(args.project, mux)
-    if is_claude(profile):
-        trust_claude_dir(args.cwd)
-        kind, argv = "claude", claude_args(profile, report, mux)
-    else:
-        kind, argv = "pi", pi_args(profile)
-    manager_session = os.environ.get("PI_INTERCOM_SESSION_ID") or os.environ.get(
-        "PI_SESSION_ID"
-    )
-    manager_pane = os.environ.get("HERDR_PANE_ID" if mux == "herdr" else "TMUX_PANE")
-    prompt = subagent_prompt(
-        args.task, profile, manager_session, tag, report, manager_pane, mux
-    )
-
-    if mux == "tmux":
-        session = args.workspace or tmux_session()
-        tab_id, pane_id = tmux(
-            "new-window", "-d", "-P", "-F", "#{window_id} #{pane_id}",
-            "-t", f"{session}:", "-c", args.cwd, "-n", name,
-        ).split()
-        print(
-            f"[subagent] {name} window {tab_id} pane {pane_id} model {profile['model']} effort {profile['effort']}",
-            file=sys.stderr,
-        )
-        if not launch_tmux(name, pane_id, argv, prompt, args.cwd, kind=kind):
-            return 2
-    else:
-        workspace = args.workspace or parent_workspace()
-        start_timeout = min(max(args.timeout, 1000), 300000)
-        tab = herdr_json(
-            "tab",
-            "create",
-            "--workspace",
-            workspace,
-            "--cwd",
-            args.cwd,
-            "--label",
-            name,
-            "--no-focus",
-        )["result"]
-        pane_id = tab["root_pane"]["pane_id"]
-        tab_id = tab["tab"]["tab_id"]
-        print(
-            f"[subagent] {name} tab {tab_id} pane {pane_id} model {profile['model']} effort {profile['effort']}",
-            file=sys.stderr,
-        )
-        if not launch(name, pane_id, argv, timeout_ms=start_timeout, kind=kind):
-            return 2
-        herdr("agent", "prompt", name, prompt)
     print(
-        f"[subagent] launched; close with {sys.argv[0]} --close {tab_id}",
-        file=sys.stderr,
+        json.dumps(
+            launch_spec(
+                args.brief,
+                args.stage,
+                args.axis,
+                args.item,
+                args.cwd,
+                extension,
+                args.manager,
+                profile,
+            ),
+            indent=2,
+        )
     )
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,4 +1,10 @@
+---
+status: superseded by ADR-0004
+---
+
 # Intercom messages are the subagent result channel
+
+> Update: [ADR 0004](0004-host-extensions-are-markdown.md) moves delivery onto each host extension's own messaging. The reasoning below records why messages beat files; the `pi-intercom` transport no longer applies.
 
 The pi-subagent skill originally returned results purely as files: each child wrote a result artifact and the parent read it. We decided that subagent sessions now deliver results as `pi-intercom` messages instead — every child sends a fire-and-forget `TASK COMPLETE:` completion report to its supervisor when it finishes, and escalates mid-task via `contact_supervisor` when blocked. File artifacts are still written (via the watch window's output capture) but are demoted to crash forensics and follow-up context, not the delivery channel.
 
