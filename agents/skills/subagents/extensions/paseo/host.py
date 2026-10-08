@@ -19,9 +19,10 @@ workspace points at an existing directory; it creates no worktree.
 `archive` forces the CLI to interrupt a session whose reporting turn is still
 running; it keeps the history and is not a permission bypass.
 
-The Paseo CLI is $PASEO_CLI when set, else `paseo` on PATH. `paseo run`
-inherits PASEO_AGENT_ID as the caller, so the Subagent keeps the Manager as
-its caller.
+The Paseo CLI is $PASEO_CLI when set, else `paseo` on PATH. On a same-daemon
+launch, `paseo run` inherits PASEO_AGENT_ID as the caller. Across machines,
+the supplied Markdown extension must carry an explicit return route; the
+execution machine's environment does not identify the remote Manager.
 """
 
 import json
@@ -182,6 +183,12 @@ def forced_archive(agent):
 
 
 def launch(spec, workspace=None):
+    manager = spec.get("manager")
+    if not isinstance(manager, str) or not manager.strip() or manager.strip().startswith("%"):
+        sys.exit(
+            "Paseo launch needs the Manager's Paseo agent id, not a local tmux "
+            "pane; prepare the spec with the Manager's explicit reporting route"
+        )
     reply = paseo(*run_argv(spec, workspace))
     launched = reply_field(reply, "agentId")
     if not launched:

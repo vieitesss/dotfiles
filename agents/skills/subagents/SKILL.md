@@ -13,6 +13,12 @@ JSON launch spec whose `prompt` carries the Stage role, skills, report path and
 how to reach you. A host extension, a Markdown file you read, starts the
 session from that spec.
 
+**Before preparation**, read [`extensions.md`](extensions.md) and the chosen
+host file. Choose for the Manager's conversation, not for the shell executing
+the command. A Manager on a Mac can launch a Stage on an RPi; that RPi's tmux
+pane is not the Manager's address. Follow the host file's remote-session
+instructions when the machines differ.
+
 ```bash
 SKILL=~/.agents/skills/subagents
 
@@ -31,15 +37,20 @@ runs anywhere.
 
 ## Extensions
 
-[`extensions.md`](extensions.md) picks the host file for the session you run in
-(Paseo, herdr or tmux) and says how to write one for another host. Read the
-chosen `extensions/<host>.md` and follow it: it gives the launch, follow-up
-and close commands, and what the Subagent runs to reach you. A file anywhere
-else works as an `--extension` too.
+The chosen host file gives the launch, follow-up and close commands, and what
+the Subagent runs to reach you. A file anywhere else works as an `--extension`
+too, including a per-session file holding a remote return route.
 
-`--manager` is your own native address on that host; the extension names it.
-The prepared prompt carries the address and the extension's path, so the
-Subagent reports through it.
+`--manager` is required: your own native address on the Manager's host. The
+extension and address travel in the prompt. Prepare on the Stage's machine so
+`--cwd`, skill paths, report path and `--extension` are readable there; a Mac
+path does not identify an RPi file. For Paseo across machines, use the
+[remote-session instructions](extensions/paseo.md#remote-sessions).
+
+Before Stage work, the Subagent checks that the reporting route is usable
+from its machine and agrees with the launch context. An incomplete or
+conflicting route earns a Question in the launching conversation, not a
+message to a guessed local session.
 
 ## Stage and profile
 

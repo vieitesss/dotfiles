@@ -150,6 +150,55 @@ class HostTest(unittest.TestCase):
 
 
 class PaseoHostTest(HostTest):
+    def test_a_tmux_manager_address_is_refused_before_any_cli_call(self):
+        spec = self.spec(kind="claude", model="claude-code/sonnet")
+        spec["extension"] = os.path.join(SKILL, "extensions", "tmux.md")
+        spec["manager"] = "%36"
+        # Remote execution has no knowledge of the Mac Manager's environment.
+        env = dict(self.env)
+        env.pop("PASEO_AGENT_ID", None)
+        env.pop("PASEO_CLI", None)
+        proc = self.run_host("paseo", "launch", spec=spec, env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Manager's Paseo agent id", proc.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_missing_manager_is_refused_before_any_cli_call(self):
+        spec = self.spec()
+        spec.pop("manager")
+        proc = self.run_host("paseo", "launch", spec=spec)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Manager's Paseo agent id", proc.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_remote_reporting_instructions_are_delivered_without_local_inference(self):
+        cwd = os.path.join(self.work, "rpi-checkout")
+        os.makedirs(cwd)
+        extension = os.path.join(self.work, "remote-paseo.md")
+        manager = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        with open(extension, "w", encoding="utf-8") as handle:
+            handle.write(
+                f"# Paseo Manager on the Mac\n"
+                f'paseo --host mac-endpoint send --no-wait {manager} "MESSAGE"\n'
+            )
+        env = dict(self.env, TMUX_PANE="%36")
+        env.pop("PASEO_AGENT_ID", None)
+        env.pop("PASEO_CLI", None)
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(subagent, "stage_skills", return_value={}):
+                spec = prepare_spec([
+                    "subagent.py", "--stage", "diagnose", "--item", "remote",
+                    "--cwd", cwd, "--extension", extension,
+                    "--manager", manager, "--dry-run", "remote brief",
+                ])
+        proc = self.run_host("paseo", "launch", spec=spec, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        delivered = self.run_call()[-1]
+        self.assertEqual(delivered, spec["prompt"])
+        self.assertIn(manager, delivered)
+        self.assertIn(extension, delivered)
+        self.assertNotIn("%36", delivered)
+
     def test_pi_launch_uses_the_pi_provider_and_full_model(self):
         spec = self.spec()
         proc = self.run_host("paseo", "launch", spec=spec)
@@ -605,7 +654,7 @@ class TmuxSandboxTest(unittest.TestCase):
             handle.write("# host\n")
         argv = [
             "subagent.py", "--stage", "build", "--item", "wi-sbx", "--cwd", repo,
-            "--extension", extension, "--dry-run", "sandbox brief",
+            "--extension", extension, "--manager", "%0", "--dry-run", "sandbox brief",
         ]
         # Keep this fake-pi transport fixture independent of the default model.
         with mock.patch.dict(

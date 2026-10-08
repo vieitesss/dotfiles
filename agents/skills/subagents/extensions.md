@@ -7,9 +7,11 @@ registry lists it.
 
 ## Picking one
 
-Take the first row that matches the session you run in, and pass the file's
-absolute path (`$SKILL/extensions/<host>.md`, `SKILL=~/.agents/skills/subagents`)
-as `--extension`:
+Choose for the **Manager's conversation**. Its known host or the user's
+explicit choice takes precedence. When commands run on the Manager's own
+machine, take the first matching row below. Pass the file's absolute path on
+the Subagent's machine (`$SKILL/extensions/<host>.md`,
+`SKILL=~/.agents/skills/subagents`) as `--extension`:
 
 | Host  | Extension                       | Pick it when                                     |
 | ----- | ------------------------------- | ------------------------------------------------ |
@@ -18,8 +20,15 @@ as `--extension`:
 | tmux  | [tmux.md](extensions/tmux.md)   | `TMUX` is set                                    |
 
 A Paseo agent can also sit inside a herdr or tmux pane; the Paseo row wins
-there, and herdr wins over tmux. The user's explicit choice of host overrides
-the order.
+there, and herdr wins over tmux.
+
+On a remote execution machine, those variables describe that machine, not
+the Manager. A Paseo Manager on a Mac remains a Paseo Manager when commands
+run over SSH on an RPi, even without `PASEO_AGENT_ID` or `PASEO_CLI` there.
+Keep the Manager's native address and supply a return route reachable from
+the RPi; see [Paseo remote sessions](extensions/paseo.md#remote-sessions).
+If the Manager's host, address or return route is unknown, ask in the current
+conversation before preparing or launching; local panes are not fallbacks.
 
 ## Division of labour
 

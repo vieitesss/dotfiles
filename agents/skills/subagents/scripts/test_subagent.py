@@ -61,7 +61,7 @@ class TempRepoTest(unittest.TestCase):
         argv = [
             "subagent.py", "--stage", "build", "--item", "wi-1",
             "--cwd", cwd or self.repo,
-            "--extension", self.extension(),
+            "--extension", self.extension(), "--manager", "addr-42",
             *extra, brief,
         ]
         return prepare_spec(argv)
@@ -124,6 +124,14 @@ class PreparedSpecTest(TempRepoTest):
         self.assertIn(subagent.SUBAGENT_RULES, prompt)
         self.assertIn("do the thing", prompt)
 
+    def test_prompt_checks_the_reporting_route_before_starting_the_stage(self):
+        prompt = self.spec["prompt"]
+        self.assertIn("Before starting the Stage", prompt)
+        self.assertIn("usable from this machine", prompt)
+        self.assertIn("stop and ask", prompt)
+        self.assertIn("this conversation", prompt)
+        self.assertIn("never infer the Manager from local", prompt)
+
     def test_prompt_carries_no_host_commands(self):
         prompt = self.spec["prompt"]
         for forbidden in ("intercom", "--notify", "paseo", "herdr agent"):
@@ -145,7 +153,7 @@ class ExtensionPointerTest(TempRepoTest):
         argv = [
             "subagent.py", "--stage", "build", "--item", "wi-1",
             "--cwd", self.repo, "--extension", extension, "--dry-run",
-            *extra, "brief",
+            "--manager", "addr-42", *extra, "brief",
         ]
         with mock.patch("sys.argv", argv):
             with contextlib.redirect_stderr(io.StringIO()):
@@ -165,6 +173,31 @@ class ExtensionPointerTest(TempRepoTest):
                     subagent.main()
         self.assertEqual(caught.exception.code, 2)
         self.assertIn("--extension", stderr.getvalue())
+
+    def test_missing_manager_is_refused_before_preparation(self):
+        extension = self.extension()
+        stderr = io.StringIO()
+        with mock.patch.object(subagent, "stage_skills", return_value={}) as skills:
+            with mock.patch.object(subagent, "choose_profile", return_value={
+                "model": "claude-code/sonnet", "effort": "low",
+            }):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with contextlib.redirect_stderr(stderr):
+                        with self.assertRaises(SystemExit) as caught:
+                            subagent.main([
+                                "--stage", "build", "--item", "wi-1",
+                                "--cwd", self.repo, "--extension", extension, "brief",
+                            ])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("--manager", stderr.getvalue())
+        skills.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".agents")))
+
+    def test_empty_manager_is_refused(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_main(self.extension(), "--manager", "")
+        self.assertEqual(caught.exception.code, 2)
 
     def test_nonexistent_extension_is_refused(self):
         write_skill(self.repo, "tdd")
@@ -189,7 +222,7 @@ class ExtensionPointerTest(TempRepoTest):
             argv = [
                 "subagent.py", "--stage", "build", "--item", "wi-1",
                 "--cwd", self.repo, "--extension", extension, "--dry-run",
-                "brief",
+                "--manager", "addr-42", "brief",
             ]
             spec = prepare_spec(argv)
             self.assertEqual(spec["extension"], extension)

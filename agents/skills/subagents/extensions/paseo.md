@@ -1,8 +1,66 @@
 # Paseo extension
 
-Pick this file when `PASEO_AGENT_ID` is set: you are a Paseo agent, and the
-Subagent becomes a native Paseo agent whose caller is you. Pass its absolute
-path as `--extension`; the Subagent is told to read it to report.
+Pick this host when the Manager's conversation runs in Paseo. On the Manager's
+own machine, `PASEO_AGENT_ID` identifies it; a remote shell may have no Paseo
+variables. A same-daemon Subagent becomes a native Paseo agent whose caller
+is you. Pass this file's absolute path as `--extension` for same-daemon
+sessions; across machines, prepare the return route below instead.
+
+## Remote sessions
+
+A Paseo Manager on a Mac can launch a Subagent on an RPi. There are two
+routes: the Subagent's daemon for launch, follow-up and close, and the
+Manager's daemon for reports. Identify the daemon actually hosting each
+agent: a Mac Paseo UI connected to an RPi daemon is still the same-daemon
+case. An agent id alone does not choose a daemon, and `PASEO_CLI` names an
+executable, not a remote destination. The example below has a Mac-hosted
+Manager and an RPi-hosted Subagent.
+
+Before launching:
+
+1. Obtain the Manager's **Paseo agent id from the Mac session**, and the
+   credential-free daemon endpoints (or configured wrappers) for both routes.
+   An RPi `TMUX_PANE` and a Claude transcript UUID identify neither the Mac
+   Manager nor its daemon. Ask the user for any missing route; keep credentials
+   in the machine's existing configuration, out of prompts and command arguments.
+2. On the RPi, write a per-session Markdown extension with the Manager's id,
+   its machine, and a concrete reporting command usable from the RPi. Point at
+   this file for the other Paseo mechanics. For example, substitute real values
+   in this file before using it as `--extension`:
+
+   ```markdown
+   # Remote Paseo session
+   Read /RPi/path/to/subagents/extensions/paseo.md for Paseo mechanics.
+   Manager: MAC_AGENT_ID on the Mac, daemon MAC_ENDPOINT.
+   Reporting from the RPi uses this explicit route, not the local daemon:
+   paseo --host MAC_ENDPOINT send --no-wait MAC_AGENT_ID "[TAG] TASK COMPLETE: <one line>; report: <RPi report path>"
+   paseo --host MAC_ENDPOINT send --no-wait MAC_AGENT_ID "[TAG] QUESTION: <question>"
+   After reporting or asking, end your turn; follow-ups arrive here.
+   ```
+
+   Use an installed CLI path or an existing SSH wrapper if `paseo` is not on
+   the RPi's PATH. The explicit remote route in this file replaces the
+   same-daemon reporting commands below.
+3. Prepare on the RPi with `--extension /RPi/path/to/remote-paseo.md` and
+   `--manager MAC_AGENT_ID`, then run the launch helper there against the RPi
+   daemon. Preparation resolves all paths on the RPi. The helper refuses a
+   missing Manager address or a tmux pane address such as `%36` before any
+   daemon call. Same-daemon caller inheritance does not establish a return
+   route to the Mac.
+4. Keep the returned RPi `agentId` **with its daemon endpoint** in the Ledger.
+   From the Mac, follow up and close against the RPi daemon:
+
+   ```bash
+   paseo --host RPI_ENDPOINT send --no-wait RPI_AGENT_ID "MESSAGE"
+   paseo --host RPI_ENDPOINT archive --force RPI_AGENT_ID
+   ```
+
+   Read reports from their RPi paths over the existing remote connection.
+
+The Subagent checks the supplied route before Stage work. Missing executables,
+unspecified daemon destinations or a conflicting host earn a Question in the
+launching conversation; it never discovers a replacement Manager among local
+panes or agents.
 
 ## Manager: launching a Stage
 
@@ -74,13 +132,17 @@ close.
 
 ## Subagent: reporting
 
-Your prompt names the Manager's address. Reach it with the Paseo CLI the
-session already exports:
+Your prompt names the Manager's address. For a same-daemon session, reach it
+with the helper next to this file (`paseo/host.py` in the directory that holds
+it); the helper uses `$PASEO_CLI` when set, otherwise `paseo` on PATH:
 
 ```bash
-"$PASEO_CLI" send --no-wait MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
-"$PASEO_CLI" send --no-wait MANAGER "[TAG] QUESTION: <question>"
+python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
+python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] QUESTION: <question>"
 ```
+
+For a remote Manager, use the explicit reporting command in your per-session
+extension instead. A local CLI's default daemon is not the Mac's daemon.
 
 Both are fire-and-forget. After a QUESTION, end your turn; the Manager's
 answer arrives as your next prompt. Do not use intercom, do not poll, and do

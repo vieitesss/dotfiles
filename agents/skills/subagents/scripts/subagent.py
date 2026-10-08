@@ -13,7 +13,7 @@ Usage:
     subagent.py --stages
 
     subagent.py --stage STAGE [--axis AXIS] --item ITEM --extension FILE
-                [--cwd DIR] [--manager ADDRESS] [--dry-run] "brief"
+                --manager ADDRESS [--cwd DIR] [--dry-run] "brief"
 
 A dry run prints the same spec without creating the report directory or
 editing .git/info/exclude.
@@ -522,15 +522,17 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag):
         "it, and anything left open. The completion report is one line "
         "pointing at it."
     )
-    contact = (
-        f"The Manager's address is {manager}."
-        if manager
-        else "The Manager's address is in that file."
-    )
     lines.append(
-        f"Read and follow {extension}: it explains how to reach the Manager, "
-        f"ask Questions, and send the Completion report. {contact} Reporting "
-        "through it is mandatory, not optional."
+        f"Before starting the Stage, read and follow {extension}: it explains "
+        "how to reach the Manager, ask Questions, and send the Completion "
+        f"report. The Manager's address is {manager}. Check that its reporting "
+        "route is usable from this machine and agrees with the launch context. "
+        "The Manager may be on another machine; never infer the Manager from "
+        "local environment variables or substitute a local session. If the "
+        "route is missing, unusable, or conflicting, stop and ask for a "
+        "corrected route in this conversation before doing any Stage work "
+        "or sending to another session. Reporting through the confirmed route "
+        "is mandatory."
     )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief
@@ -594,6 +596,8 @@ def parse_args(argv):
         parser.error("a brief, --stage, and --item are required")
     if not args.extension:
         parser.error("--extension FILE is required")
+    if not args.manager or not args.manager.strip():
+        parser.error("--manager ADDRESS is required; use the Manager's native host address")
     return args
 
 
