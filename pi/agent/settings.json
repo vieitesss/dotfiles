@@ -32,7 +32,18 @@
     "mermaid": "streaming"
   },
   "compaction": {
-    "enabled": false
+    "enabled": true,
+    "modelOverrides": {
+      "github-copilot/claude-haiku-5.5": {
+        "reserveTokens": 850000
+      },
+      "github-copilot/gpt-6.1-sol": {
+        "reserveTokens": 900000
+      },
+      "opencode-go/muse-spark-1.3-contributor": {
+        "reserveTokens": 898576
+      }
+    }
   },
   "defaultTools": [
     "+codemode"

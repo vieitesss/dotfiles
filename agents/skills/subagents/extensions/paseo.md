@@ -57,11 +57,6 @@ Before launching:
 
    Read reports from their RPi paths over the existing remote connection.
 
-The Subagent checks the supplied route before Stage work. Missing executables,
-unspecified daemon destinations or a conflicting host earn a Question in the
-launching conversation; it never discovers a replacement Manager among local
-panes or agents.
-
 ## Manager: launching a Stage
 
 Prepare the Stage as in [`SKILL.md`](../SKILL.md) with
@@ -132,9 +127,15 @@ close.
 
 ## Subagent: reporting
 
+Which case you are in is decided by the extension path in your prompt, not
+by inspecting the local machine. A path ending in `extensions/paseo.md` is
+a same-daemon session; a per-session file naming an explicit
+`paseo --host ...` reporting command is a remote session.
+
 Your prompt names the Manager's address. For a same-daemon session, reach it
 with the helper next to this file (`paseo/host.py` in the directory that holds
-it); the helper uses `$PASEO_CLI` when set, otherwise `paseo` on PATH:
+it); the helper uses `$PASEO_CLI` when set, otherwise `paseo` on PATH. No
+`--host` destination is needed and its absence is not a reason to ask:
 
 ```bash
 python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
@@ -142,8 +143,7 @@ python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] QUESTION: <question>"
 ```
 
 For a remote Manager, use the explicit reporting command in your per-session
-extension instead. A local CLI's default daemon is not the Mac's daemon.
+extension instead. Only there does the warning apply: a local CLI's default
+daemon is not the Mac's daemon.
 
-Both are fire-and-forget. After a QUESTION, end your turn; the Manager's
-answer arrives as your next prompt. Do not use intercom, do not poll, and do
-not read other agents or the Manager's queue.
+Both are fire-and-forget.

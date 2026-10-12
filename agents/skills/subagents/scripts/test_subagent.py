@@ -126,15 +126,24 @@ class PreparedSpecTest(TempRepoTest):
 
     def test_prompt_checks_the_reporting_route_before_starting_the_stage(self):
         prompt = self.spec["prompt"]
-        self.assertIn("Before starting the Stage", prompt)
-        self.assertIn("usable from this machine", prompt)
-        self.assertIn("stop and ask", prompt)
-        self.assertIn("this conversation", prompt)
-        self.assertIn("never infer the Manager from local", prompt)
+        # No explicit destination means the same host, not a missing route
+        # (regression: a Paseo Subagent asked whether the default daemon
+        # was its Manager's).
+        self.assertIn("complete route", prompt)
+        self.assertIn("not a missing route", prompt)
+        self.assertIn("Never infer the Manager from local", prompt)
+
+    def test_prompt_gives_the_spec_report_precedence_over_the_brief(self):
+        prompt = self.spec["prompt"]
+        self.assertIn("wins over any path in the brief", prompt)
+
+    def test_turn_taking_lives_in_core_not_in_host_files(self):
+        self.assertIn("end your turn", subagent.SUBAGENT_RULES)
+        self.assertIn("Do not use intercom", subagent.SUBAGENT_RULES)
 
     def test_prompt_carries_no_host_commands(self):
         prompt = self.spec["prompt"]
-        for forbidden in ("intercom", "--notify", "paseo", "herdr agent"):
+        for forbidden in ("--notify", "paseo", "herdr agent"):
             self.assertNotIn(forbidden, prompt)
 
     def test_spec_has_no_multiplexer_keys(self):
@@ -143,7 +152,7 @@ class PreparedSpecTest(TempRepoTest):
         self.assertNotIn("mux", self.spec)
 
     def test_the_prompt_carries_the_role_without_rereading_engine_argv(self):
-        self.assertEqual(self.spec["engine"]["kind"], "claude")
+        self.assertEqual(self.spec["engine"]["kind"], "pi")
         self.assertNotIn("kind", self.spec)
         self.assertTrue(self.spec["prompt"].startswith(self.spec["role"]))
 
@@ -332,24 +341,52 @@ class EffortCapTest(TempRepoTest):
                     profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
                     self.assertEqual(profile["effort"], "medium")
 
-    def test_builder_and_writer_use_haiku_5_5_without_effort_ceiling(self):
+    def test_builder_runs_muse_spark_1_3_without_an_effort_ceiling(self):
+        # HOME is a temp dir here, so no models store is read and the effort
+        # arrives unclamped; this pins the ceiling, not the model's own levels.
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
-        for stage in ("build", "write"):
-            with self.subTest(stage=stage):
-                spec = subagent.stage_spec(stage, None)
-                with mock.patch.object(subagent, "jev", return_value=answers):
-                    with contextlib.redirect_stderr(io.StringIO()):
-                        profile = subagent.choose_profile("brief", stage, spec["model"])
-                self.assertEqual(profile["model"], "claude-code/claude-haiku-5-5")
-                self.assertEqual(profile["effort"], "max")
-                profile["role"] = spec["role"]
-                engine = subagent.engine_spec(profile)
-                self.assertEqual(engine["kind"], "claude")
-                self.assertEqual(
-                    engine["argv"][engine["argv"].index("--model") + 1],
-                    "claude-haiku-5-5",
-                )
-                self.assertEqual(engine["argv"][engine["argv"].index("--effort") + 1], "max")
+        spec = subagent.stage_spec("build", None)
+        with mock.patch.object(subagent, "jev", return_value=answers):
+            with contextlib.redirect_stderr(io.StringIO()):
+                profile = subagent.choose_profile("brief", "build", spec["model"])
+        self.assertEqual(profile["model"], "opencode-go/muse-spark-1.3-contributor")
+        self.assertEqual(profile["effort"], "max")
+        profile["role"] = spec["role"]
+        engine = subagent.engine_spec(profile)
+        self.assertEqual(engine["kind"], "pi")
+        self.assertEqual(
+            engine["argv"][engine["argv"].index("--model") + 1],
+            "opencode-go/muse-spark-1.3-contributor",
+        )
+        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
+
+    def test_builder_effort_clamps_to_the_levels_muse_spark_offers(self):
+        """Muse Spark has no `max` level, so a max request lands on xhigh."""
+        levels = ["minimal", "low", "medium", "high", "xhigh"]
+        answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
+        with mock.patch.object(subagent, "model_thinking_levels", return_value=levels):
+            with mock.patch.object(subagent, "jev", return_value=answers):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    profile = subagent.choose_profile("brief", "build", None)
+        self.assertEqual(profile["model"], "opencode-go/muse-spark-1.3-contributor")
+        self.assertEqual(profile["effort"], "xhigh")
+
+    def test_writer_uses_haiku_5_5_without_effort_ceiling(self):
+        answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
+        spec = subagent.stage_spec("write", None)
+        with mock.patch.object(subagent, "jev", return_value=answers):
+            with contextlib.redirect_stderr(io.StringIO()):
+                profile = subagent.choose_profile("brief", "write", spec["model"])
+        self.assertEqual(profile["model"], "github-copilot/claude-haiku-5.5")
+        self.assertEqual(profile["effort"], "max")
+        profile["role"] = spec["role"]
+        engine = subagent.engine_spec(profile)
+        self.assertEqual(engine["kind"], "pi")
+        self.assertEqual(
+            engine["argv"][engine["argv"].index("--model") + 1],
+            "github-copilot/claude-haiku-5.5",
+        )
+        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
 
     def test_the_critic_keeps_its_existing_effort_ceiling(self):
         profile = self.choose("github-copilot/gpt-6.1-sol", "max")
@@ -413,7 +450,7 @@ class StagesTableTest(TempRepoTest):
         table = stdout.getvalue()
         for stage in subagent.STAGES:
             self.assertIn(stage, table)
-        self.assertIn("writer: claude-code/claude-haiku-5-5", table)
+        self.assertIn("writer: github-copilot/claude-haiku-5.5", table)
 
 
 if __name__ == "__main__":

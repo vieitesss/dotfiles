@@ -30,11 +30,11 @@ import urllib.request
 # Role: (model, when Jev should pick it). A Stage may pin a role.
 MODELS = {
     "builder": (
-        "claude-code/claude-haiku-5-5",
+        "opencode-go/muse-spark-1.3-contributor",
         "Code, research, and refactoring; the default.",
     ),
     "writer": (
-        "claude-code/claude-haiku-5-5",
+        "github-copilot/claude-haiku-5.5",
         "Prose: documentation and text for agents.",
     ),
     "critic": (
@@ -499,10 +499,12 @@ SUBAGENT_RULES = (
     "The Manager runs the workflow; you run this one Stage and report. Send "
     "the Manager two kinds of message only: the completion report, and "
     "questions. A decision the brief leaves open (a proposal, a choice "
-    "between approaches) is a question: ask it and wait for the answer. "
+    "between approaches) is a question: ask it, end your turn, and wait "
+    "for the answer, which arrives as your next prompt. "
     "After you report, a new prompt from the Manager is a follow-up: apply "
     "it, update your report file, and report again. Delegating belongs to "
-    "the Manager, so do every part of this Stage yourself."
+    "the Manager, so do every part of this Stage yourself. "
+    "Do not use intercom, do not poll, and do not read other sessions."
 )
 
 
@@ -518,21 +520,18 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag):
         lines.append("Read and follow these skills:")
         lines += [f"- {name}: {path}" for name, path in skills.items()]
     lines.append(
-        f"Write your full report to {report}: what you did, how you proved "
-        "it, and anything left open. The completion report is one line "
-        "pointing at it."
+        f"Write your full report to {report}; the completion report is one "
+        "line pointing at it. This path wins over any path in the brief: "
+        "use it, note the difference, keep working."
     )
     lines.append(
-        f"Before starting the Stage, read and follow {extension}: it explains "
-        "how to reach the Manager, ask Questions, and send the Completion "
-        f"report. The Manager's address is {manager}. Check that its reporting "
-        "route is usable from this machine and agrees with the launch context. "
-        "The Manager may be on another machine; never infer the Manager from "
-        "local environment variables or substitute a local session. If the "
-        "route is missing, unusable, or conflicting, stop and ask for a "
-        "corrected route in this conversation before doing any Stage work "
-        "or sending to another session. Reporting through the confirmed route "
-        "is mandatory."
+        f"Report through {extension}: it is the complete route, and the "
+        f"Manager's address is {manager}. Never infer the Manager from "
+        "local environment or substitute a local session. No explicit "
+        "destination in the extension means the same host, not a missing "
+        "route. Ask only when a named destination is unreachable, the "
+        "reporting command fails, or the extension conflicts with the "
+        "launch context."
     )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief

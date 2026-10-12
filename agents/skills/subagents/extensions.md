@@ -32,16 +32,9 @@ conversation before preparing or launching; local panes are not fallbacks.
 
 ## Division of labour
 
-[`SKILL.md`](SKILL.md) owns preparation: `scripts/subagent.py` validates the
-Stage and prints a launch spec whose `prompt` already carries the Stage role,
-skills, report path and how to reach the Manager. It runs the same on every
-host, and `--dry-run` previews the spec.
-
-The extension owns the session: launching, addressing, follow-up, closing and
-what the Subagent runs to report. It leaves Stage, skills, model and effort
-to the spec. Launch mechanics two hosts share live in one extension-owned
-module both import (`extensions/host_launch.py` for tmux and herdr), never in
-core: core prepares a host-independent spec.
+Preparation is [`SKILL.md`](SKILL.md)'s: one JSON spec per Stage, the same on
+every host. The extension owns the session only. Mechanics tmux and herdr
+share live in `extensions/host_launch.py`, never in core.
 
 ## Writing one
 

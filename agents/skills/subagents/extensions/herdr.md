@@ -69,6 +69,3 @@ the Manager's `$HERDR_PANE_ID` is a valid address:
 herdr agent prompt MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
 herdr agent prompt MANAGER "[TAG] QUESTION: <question>"
 ```
-
-After a QUESTION, end your turn; the Manager's answer arrives as your next
-prompt. Do not use intercom, do not poll, and do not read other panes.

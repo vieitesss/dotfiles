@@ -134,7 +134,10 @@ a scratch file and pass it as `"$(cat FILE)"`. It carries:
 - a checkable done criterion: named tests, lint, pass counts (`10/10`);
 - the decisions it brings back as a Question instead of making.
 
-Preparation adds the Stage's skills, the report path, and how to reach you.
+Never put a report path in the brief: preparation already adds the Stage's
+skills, the one report path, and how to reach you in the launch spec, and
+the Subagent treats that path as authoritative over any path quoted in
+the brief.
 
 ## Loops over Work Items
 
@@ -175,7 +178,8 @@ checks cannot see it.
 
 Run the `review` skill's steps 1 to 3 yourself (fixed point, spec, standards
 sources), then launch one read-only Subagent per axis in parallel, with the
-Change Set as `--item`:
+Change Set as `--item`, named without the Stage in it (`batch`, not
+`batch-review`; the filename rule lives in subagents Reports):
 
 - `--stage review --axis spec` on every Review;
 - `--axis standards` and `--axis debt` as well when the Change Set spans

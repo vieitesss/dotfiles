@@ -75,6 +75,3 @@ this file (`tmux/host.py` in the directory that holds it):
 python3 EXTENSIONS_DIR/tmux/host.py notify MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
 python3 EXTENSIONS_DIR/tmux/host.py notify MANAGER "[TAG] QUESTION: <question>"
 ```
-
-After a QUESTION, end your turn; the Manager's answer arrives as your next
-prompt. Do not use intercom, do not poll, and do not read other panes.

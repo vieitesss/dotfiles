@@ -47,11 +47,6 @@ extension and address travel in the prompt. Prepare on the Stage's machine so
 path does not identify an RPi file. For Paseo across machines, use the
 [remote-session instructions](extensions/paseo.md#remote-sessions).
 
-Before Stage work, the Subagent checks that the reporting route is usable
-from its machine and agrees with the launch context. An incomplete or
-conflicting route earns a Question in the launching conversation, not a
-message to a guessed local session.
-
 ## Stage and profile
 
 `--stage` decides the Subagent's skills and instructions; Review also takes
@@ -71,6 +66,8 @@ file. Prove loads the repo's `verify-*` skills, so it needs at least one.
 Each Subagent writes its full report to
 `.agents/reports/<item>-<stage>[-<axis>].md` in the main checkout, even when
 it works in a worktree, and sends a one-line TASK COMPLETE pointing at it.
+The spec's report path wins over any path in the brief. Keep `--item`
+free of the Stage name (`batch`, not `batch-review`).
 Preparation adds `.agents/ledger.md` and `.agents/reports/` to the repo's
 `.git/info/exclude`.
 
@@ -84,8 +81,9 @@ extension says where its host puts the session.
 ## Messages
 
 Every message starts with the Subagent's tag,
-`[subagent-<stage>-<pid> · <item> · <stage>]`, so you always know which Work
-Item and Stage it is about. The extension says how messages travel:
+`[subagent-<stage>-<pid> · <item> · <stage>[ <axis>]]`, so you always know
+which Work Item, Stage, and axis it is about. The extension says how
+messages travel:
 
 - `[…] TASK COMPLETE: <summary>`: the Stage is done; the report file holds
   the detail.
