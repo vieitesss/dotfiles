@@ -341,7 +341,7 @@ class EffortCapTest(TempRepoTest):
                     profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
                     self.assertEqual(profile["effort"], "medium")
 
-    def test_builder_runs_muse_spark_1_3_without_an_effort_ceiling(self):
+    def test_builder_runs_deepseek_v4_1_flash_free_without_an_effort_ceiling(self):
         # HOME is a temp dir here, so no models store is read and the effort
         # arrives unclamped; this pins the ceiling, not the model's own levels.
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
@@ -349,27 +349,27 @@ class EffortCapTest(TempRepoTest):
         with mock.patch.object(subagent, "jev", return_value=answers):
             with contextlib.redirect_stderr(io.StringIO()):
                 profile = subagent.choose_profile("brief", "build", spec["model"])
-        self.assertEqual(profile["model"], "opencode-go/muse-spark-1.3-contributor")
+        self.assertEqual(profile["model"], "opencode/deepseek-v4.1-flash-free")
         self.assertEqual(profile["effort"], "max")
         profile["role"] = spec["role"]
         engine = subagent.engine_spec(profile)
         self.assertEqual(engine["kind"], "pi")
         self.assertEqual(
             engine["argv"][engine["argv"].index("--model") + 1],
-            "opencode-go/muse-spark-1.3-contributor",
+            "opencode/deepseek-v4.1-flash-free",
         )
         self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
 
-    def test_builder_effort_clamps_to_the_levels_muse_spark_offers(self):
-        """Muse Spark has no `max` level, so a max request lands on xhigh."""
-        levels = ["minimal", "low", "medium", "high", "xhigh"]
-        answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
+    def test_builder_effort_clamps_to_the_levels_deepseek_offers(self):
+        """DeepSeek has no `medium` level, so a medium request lands on high."""
+        levels = ["low", "high", "max"]
+        answers = {"effort": {"choice": "medium"}, "model": {"choice": "builder"}}
         with mock.patch.object(subagent, "model_thinking_levels", return_value=levels):
             with mock.patch.object(subagent, "jev", return_value=answers):
                 with contextlib.redirect_stderr(io.StringIO()):
                     profile = subagent.choose_profile("brief", "build", None)
-        self.assertEqual(profile["model"], "opencode-go/muse-spark-1.3-contributor")
-        self.assertEqual(profile["effort"], "xhigh")
+        self.assertEqual(profile["model"], "opencode/deepseek-v4.1-flash-free")
+        self.assertEqual(profile["effort"], "high")
 
     def test_writer_uses_haiku_5_5_without_effort_ceiling(self):
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
