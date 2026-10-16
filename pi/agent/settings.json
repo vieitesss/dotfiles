@@ -37,6 +37,9 @@
       "github-copilot/claude-haiku-5.5": {
         "reserveTokens": 850000
       },
+      "github-copilot/claude-opus-5.5": {
+        "reserveTokens": 850000
+      },
       "github-copilot/gpt-6.1-sol": {
         "reserveTokens": 900000
       },
