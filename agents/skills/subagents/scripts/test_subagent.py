@@ -147,7 +147,7 @@ class PreparedSpecTest(TempRepoTest):
         for forbidden in ("--notify", "paseo", "herdr agent"):
             self.assertNotIn(forbidden, prompt)
 
-    def test_a_paseo_prompt_embeds_the_exact_reporting_command(self):
+    def test_a_paseo_prompt_embeds_the_exact_reporting_commands(self):
         directory = os.path.join(self.repo, "extensions")
         os.makedirs(os.path.join(directory, "paseo"))
         extension = os.path.join(directory, "paseo.md")
@@ -156,13 +156,27 @@ class PreparedSpecTest(TempRepoTest):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("# host\n")
         spec = self.prepare("--extension", extension, "--manager", "mgr-1")
-        exact = (
-            f"python3 {shlex.quote(helper)} send mgr-1 "
-            f'"[{spec["tag"]} TASK COMPLETE: <one line>; '
-            f"report: {spec['report']}]\""
+        send = f"python3 {shlex.quote(helper)} send mgr-1"
+        self.assertIn(
+            f'{send} "[{spec["tag"]}] TASK COMPLETE: <one line>; '
+            f'report: {spec["report"]}"',
+            spec["prompt"],
         )
-        self.assertIn(exact, spec["prompt"])
+        self.assertIn(f'{send} "[{spec["tag"]}] QUESTION: <question>"', spec["prompt"])
         self.assertIn("never retype", spec["prompt"])
+
+    def test_the_prompt_fills_in_the_tag_for_every_host(self):
+        # Regression: Subagents filled in [TAG] themselves and sent
+        # [build], [subagent-review-73082] and [permission-card ].
+        write_skill(self.repo, "review")
+        spec = self.prepare("--stage", "review", "--axis", "debt")
+        self.assertEqual(spec["tag"], f"{spec['name']} · wi-1 · review debt")
+        self.assertIn(f"with [{spec['tag']}]", spec["prompt"])
+
+    def test_read_only_stages_are_told_reporting_is_allowed(self):
+        # Regression: read-only reviewers skipped host.py send because it
+        # writes temporary files.
+        self.assertIn("a read-only one included", subagent.SUBAGENT_RULES)
 
     def test_a_prompt_without_a_helper_beside_it_carries_no_command(self):
         self.assertNotIn("TASK COMPLETE: <one line>", self.spec["prompt"])
@@ -418,6 +432,34 @@ class EffortCapTest(TempRepoTest):
         self.assertEqual(profile["effort"], "low")
         profile = self.choose("opencode-go/some-uncapped-model", "max")
         self.assertEqual(profile["effort"], "max")
+
+    def test_model_override_takes_a_role_or_an_id(self):
+        answers = {"effort": {"choice": "high"}, "model": {"choice": "builder"}}
+        with mock.patch.object(subagent, "jev", return_value=answers) as jev:
+            with contextlib.redirect_stderr(io.StringIO()):
+                by_role = subagent.choose_profile("brief", "build", "critic")
+                by_id = subagent.choose_profile("brief", "build", "opencode/other-model")
+        self.assertEqual(by_role["model"], subagent.MODELS["critic"][0])
+        self.assertEqual(by_id["model"], "opencode/other-model")
+        for call in jev.call_args_list:
+            self.assertNotIn("model", call.args[1])
+
+    def test_model_override_reaches_the_spec(self):
+        write_skill(self.repo, "tdd")
+        write_skill(self.repo, "coding")
+        with mock.patch.object(subagent, "jev", side_effect=RuntimeError("offline")):
+            with contextlib.redirect_stderr(io.StringIO()):
+                spec = self.prepare("--model", "claude-code/claude-opus-5-5")
+        self.assertEqual(spec["model"], "claude-code/claude-opus-5-5")
+        self.assertEqual(spec["engine"]["kind"], "claude")
+
+    def test_model_override_refuses_a_bare_name(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                subagent.parse_args([
+                    "--stage", "build", "--item", "wi-1", "--extension", "x",
+                    "--manager", "m", "--model", "opus", "brief",
+                ])
 
     def test_jev_failure_falls_back_to_the_default_model(self):
         with mock.patch.object(

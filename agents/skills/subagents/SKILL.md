@@ -27,7 +27,7 @@ python3 "$SKILL/scripts/subagent.py" --stages     # Stages, skills, models
 spec=$(python3 "$SKILL/scripts/subagent.py" \
   --stage STAGE [--axis AXIS] --item ITEM \
   --cwd DIR --extension "$SKILL/extensions/HOST.md" \
-  --manager MANAGER_ADDRESS \
+  --manager MANAGER_ADDRESS [--model ROLE|ID] \
   "$(cat BRIEF_FILE)")
 ```
 
@@ -51,7 +51,9 @@ path does not identify an RPi file. For Paseo across machines, use the
 
 `--stage` decides the Subagent's skills and instructions; Review also takes
 `--axis`. A Stage that pins a model (Write, Review) uses it; for the rest,
-Jev picks the model, and Jev picks the thinking effort for every Stage. Jev
+Jev picks the model, and Jev picks the thinking effort for every Stage.
+`--model` overrides both the pin and Jev's pick with a role from `--stages` or
+a `provider/model` id; use it when a model fails a Stage. Jev
 needs `TYPESAFE_API_KEY`; without it preparation uses the default model and its
 default effort. A `claude-code/<model>` model starts Claude Code instead
 of Pi; the extension maps the spec's engine, model and effort onto its host.
@@ -82,8 +84,9 @@ extension says where its host puts the session.
 
 Every message starts with the Subagent's tag,
 `[subagent-<stage>-<pid> · <item> · <stage>[ <axis>]]`, so you always know
-which Work Item, Stage, and axis it is about. The extension says how
-messages travel:
+which Work Item, Stage, and axis it is about. Preparation fills the tag into
+the prompt; the spec's `tag` holds it. The extension says how messages
+travel:
 
 - `[…] TASK COMPLETE: <summary>`: the Stage is done; the report file holds
   the detail.

@@ -13,7 +13,8 @@ Usage:
     subagent.py --stages
 
     subagent.py --stage STAGE [--axis AXIS] --item ITEM --extension FILE
-                --manager ADDRESS [--cwd DIR] [--dry-run] "brief"
+                --manager ADDRESS [--cwd DIR] [--model ROLE|ID] [--dry-run]
+                "brief"
 
 A dry run prints the same spec without creating the report directory or
 editing .git/info/exclude.
@@ -452,7 +453,10 @@ def jev_profile(brief, stage, pinned):
 
 
 def choose_profile(brief, stage, pinned):
-    """The model and effort a Stage runs with, capped and clamped to what exists."""
+    """The model and effort a Stage runs with, capped and clamped to what exists.
+
+    pinned is a MODELS role or a provider/model id; None lets Jev pick a role.
+    """
     try:
         profile = jev_profile(brief, stage, pinned)
     except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
@@ -462,8 +466,10 @@ def choose_profile(brief, stage, pinned):
         )
         profile = {"model": pinned or "builder", "effort": None}
 
-    role = profile["model"] if profile["model"] in MODELS else "builder"
-    profile["model"] = MODELS[role][0]
+    if profile["model"] in MODELS:
+        profile["model"] = MODELS[profile["model"]][0]
+    elif profile["model"] != pinned:
+        profile["model"] = MODELS["builder"][0]
     profile["effort"] = profile["effort"] if profile["effort"] in EFFORTS else None
 
     # Some models must never be launched above their ceiling, whatever Jev asks.
@@ -505,12 +511,14 @@ SUBAGENT_RULES = (
     "After you report, a new prompt from the Manager is a follow-up: apply "
     "it, update your report file, and report again. Delegating belongs to "
     "the Manager, so do every part of this Stage yourself. "
+    "Reporting is part of every Stage, a read-only one included: run the "
+    "reporting command even though it writes temporary files. "
     "Do not use intercom, do not poll, and do not read other sessions."
 )
 
 
-def reporting_command(extension, manager, tag, report):
-    """The exact Paseo reporting command, or None without a helper beside it.
+def reporting_commands(extension, manager, tag, report):
+    """The exact Paseo reporting commands, or None without a helper beside it.
 
     The Manager id arrives already filled in, so the Subagent copies the line
     verbatim instead of retyping the address (retyping lost two reports).
@@ -522,9 +530,10 @@ def reporting_command(extension, manager, tag, report):
     helper = os.path.join(os.path.dirname(extension), "paseo", "host.py")
     if not os.path.isfile(helper):
         return None
+    send = f"python3 {shlex.quote(helper)} send {shlex.quote(manager)}"
     return (
-        f"python3 {shlex.quote(helper)} send {shlex.quote(manager)} "
-        f'"[{tag} TASK COMPLETE: <one line>; report: {report}]"'
+        f'{send} "[{tag}] TASK COMPLETE: <one line>; report: {report}"\n'
+        f'{send} "[{tag}] QUESTION: <question>"'
     )
 
 
@@ -535,7 +544,12 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag):
     host whose own CLI has no append-system-prompt flag still delivers it.
     The host commands themselves live in the extension file, not here.
     """
-    lines = [role, "", f"You are {tag}."]
+    lines = [
+        role,
+        "",
+        f"You are {tag}. Start every message to the Manager with [{tag}], "
+        "exactly as written here; it is the [TAG] in the extension's commands.",
+    ]
     if skills:
         lines.append("Read and follow these skills:")
         lines += [f"- {name}: {path}" for name, path in skills.items()]
@@ -553,11 +567,11 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag):
         "reporting command fails, or the extension conflicts with the "
         "launch context."
     )
-    exact = reporting_command(extension, manager, tag, report)
+    exact = reporting_commands(extension, manager, tag, report)
     if exact:
         lines.append(
-            "Run this exact command to report (the address is already "
-            f"filled in; never retype it):\n{exact}"
+            "Run these exact commands to report and to ask (the address and "
+            f"tag are already filled in; never retype them):\n{exact}"
         )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief
@@ -613,6 +627,12 @@ def parse_args(argv):
         help="Markdown file explaining how this host launches and reports",
     )
     parser.add_argument("--manager", help="the Manager's native address on its host")
+    parser.add_argument(
+        "--model",
+        metavar="ROLE|ID",
+        help=f"run this model instead of the Stage's or Jev's: a role "
+        f"({', '.join(MODELS)}) or a provider/model id",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if args.stages:
@@ -623,6 +643,11 @@ def parse_args(argv):
         parser.error("--extension FILE is required")
     if not args.manager or not args.manager.strip():
         parser.error("--manager ADDRESS is required; use the Manager's native host address")
+    if args.model and args.model not in MODELS and "/" not in args.model:
+        parser.error(
+            f"--model {args.model}: use a role ({', '.join(MODELS)}) "
+            "or a provider/model id"
+        )
     return args
 
 
@@ -640,7 +665,7 @@ def main(argv=None):
 
     spec = stage_spec(args.stage, args.axis)
     skills = stage_skills(args.stage, spec, args.cwd)
-    profile = choose_profile(args.brief, args.stage, spec["model"])
+    profile = choose_profile(args.brief, args.stage, args.model or spec["model"])
     profile.update(skills=skills, role=spec["role"])
     profile["report"] = report_path(
         args.cwd, args.item, args.stage, args.axis, create=not args.dry_run

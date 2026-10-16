@@ -161,8 +161,8 @@ For a remote Manager, use the explicit reporting command in your per-session
 extension instead. Only there does the warning apply: a local CLI's default
 daemon is not the Mac's daemon.
 
-Your prompt carries the exact reporting command with the Manager's id already
-filled in: run it verbatim and never retype the id. `send` validates the id
+Your prompt carries both commands with the Manager's id and your tag already
+filled in: run them verbatim and never retype either. `send` validates the id
 before queueing and names the delivery log; a bad id fails in your own turn.
 
 Both are fire-and-forget, and the same-daemon helper holds the message until
