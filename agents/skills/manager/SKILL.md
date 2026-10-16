@@ -84,7 +84,15 @@ Mode: serial | parallel worktrees | review per PR
 
 Status is one of `queued`, `running`, `question`, `accepted`, `blocked on
 user`, `done`. Update the Ledger at every change: a Stage starts, a Question
-arrives, you accept a report, the user decides.
+arrives, you accept a report, the user decides. Edit table rows with
+`scripts/ledger.py set ITEM COLUMN VALUE` and `add ITEM COLUMN=VALUE...` (in
+this skill); write Decisions and prose by hand.
+
+Handing the session to another Manager (Claude to Pi, or back) goes through
+the `handoff` skill: its document and the Ledger are the whole handover, so
+the next Manager never parses the old session's transcript. Name in it the
+screenshots the user shared; Claude Code keeps them under
+`/private/tmp/claude-501/<project>/<session>/images/`.
 
 ## Do it or delegate it
 
@@ -148,7 +156,9 @@ Stages, and Review runs once over the whole Change Set. Switch the Ledger's
 mode when:
 
 - **parallel worktrees**: Work Items touch disjoint code. One worktree and one
-  editing Subagent each; Review still runs once, over the merged Change Set.
+  editing Subagent each. Merge each branch into the main branch yourself as
+  soon as its Work Item is done (Refine and Prove passed), without asking;
+  Review still runs once, over the merged Change Set.
 - **review per PR**: Work Items ship as separate PRs. Each one is its own
   Change Set and gets its own Review. Branch each from main; stack it
   (`gh-stack`) only when its code builds on another Work Item's code, so a
@@ -201,8 +211,8 @@ Then loop over the findings:
 Order the rounds: Spec fixes first, then Refine on the green result, since
 Refine reshapes what Build just changed. Keep looping until no findings remain.
 
-Never offer a merge, a push, or Ship for a Change Set whose Review trigger
-holds before Review has run and its loop is clean. Reading the diff yourself
+Never offer a push or Ship for a Change Set whose Review trigger holds
+before Review has run and its loop is clean. Reading the diff yourself
 and sending follow-ups is the cheapest review, not a substitute for Review.
 
 Stop and ask the user when a finding needs a decision that is theirs, when a
@@ -223,6 +233,9 @@ Mark the Work Item `blocked on user` in the Ledger while you wait.
   next Stage in the Ledger.
 
 ## Report
+
+Every status update, and the final report, lists the branches not yet merged
+into the main branch and what each waits on; "none" when all are merged.
 
 Tell the user what changed and where (branch, worktree), how it was proven,
 which Stages you skipped and why, what is uncommitted, and which decisions

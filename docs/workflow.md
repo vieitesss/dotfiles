@@ -81,8 +81,8 @@ Defaults the flow leaves implicit:
 
 - Work Items run one after another in one worktree, and Review runs once over
   the Change Set. Items that touch disjoint code may run in parallel, each in
-  its own worktree; items that ship as separate PRs go through Review one by
-  one.
+  its own worktree, and the Manager merges each into the main branch once it
+  is done; items that ship as separate PRs go through Review one by one.
 - At most one Subagent edits a worktree at a time. Review Subagents only read,
   so they share it.
 - The Manager asks the user instead of looping when a decision belongs to the
