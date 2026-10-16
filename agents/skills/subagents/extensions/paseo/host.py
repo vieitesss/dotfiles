@@ -5,7 +5,8 @@ Reads the launch spec printed by scripts/subagent.py on stdin.
 
 Usage:
     host.py launch [WORKSPACE]   # spec on stdin, prints {"agentId", ...}
-    host.py send AGENT_ID MESSAGE   # nonblocking; delivered once AGENT_ID is idle
+    host.py send AGENT_ID MESSAGE   # validate, queue, and name the delivery log
+    host.py pending                 # idle subagent-* agents and delivery state
     host.py archive AGENT_ID        # force-archive an accepted Subagent
 
 WORKSPACE is an existing Paseo workspace id for the run. The helper refuses it
@@ -44,9 +45,14 @@ def clip(text, limit=DETAIL_LIMIT):
     return text if len(text) <= limit else f"{text[:limit]}…"
 
 
-def paseo(*args, check=True):
+def run_cli(*args):
+    """One Paseo CLI call, returning the completed process for the caller."""
     cli = os.environ.get("PASEO_CLI", "paseo")
-    proc = subprocess.run([cli, *args], capture_output=True, text=True, check=False)
+    return subprocess.run([cli, *args], capture_output=True, text=True, check=False)
+
+
+def paseo(*args, check=True):
+    proc = run_cli(*args)
     if proc.returncode != 0:
         if not check:
             return None
@@ -215,6 +221,25 @@ def launch(spec, workspace=None):
     return 0
 
 
+def known_agent(agent):
+    """The daemon's inspect record for agent, or None when it knows no agent.
+
+    A mistyped Manager id used to vanish into the detached delivery below,
+    whose failure no one ever saw. Validating here fails loudly in the
+    sender's own turn instead.
+    """
+    reply = paseo("inspect", "--json", agent, check=False)
+    try:
+        data = json.loads(reply) if reply else None
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("error"):
+        return None
+    if not data.get("Id") and not data.get("id"):
+        return None
+    return data
+
+
 def send(agent, message):
     """Queue a message for delivery once the agent is idle, without blocking.
 
@@ -222,16 +247,36 @@ def send(agent, message):
     the receiver's in-flight tool call, so a detached child delivers it
     later. The temp file carries long text and is removed by the child.
     """
+    if not agent or not agent.strip() or agent.strip().startswith("%"):
+        sys.exit(
+            f"refusing to queue a message for {clip(agent)}: not a Paseo "
+            "agent id (a tmux pane is not a Manager address)"
+        )
+    if known_agent(agent) is None:
+        sys.exit(
+            f"unknown Paseo agent {clip(agent)}: the Manager id is wrong; "
+            "copy it exactly from the prompt and retry"
+        )
     fd, path = tempfile.mkstemp(prefix="subagent-message-", suffix=".md")
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(message)
-    subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "deliver", agent, path],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    log_fd, log = tempfile.mkstemp(
+        prefix=f"subagent-deliver-{agent}-", suffix=".log"
     )
+    with os.fdopen(log_fd, "w", encoding="utf-8") as handle:
+        handle.write(f"queued for {agent}: {clip(message)}\n")
+    with open(log, "a", encoding="utf-8") as child_out:
+        subprocess.Popen(
+            [
+                sys.executable, os.path.abspath(__file__),
+                "deliver", agent, path, log,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=child_out,
+            stderr=child_out,
+            start_new_session=True,
+        )
+    print(f"[subagent] queued for {agent}; delivery log: {log}")
     return 0
 
 
@@ -244,29 +289,125 @@ def agent_status(agent):
         return None
 
 
-def deliver(agent, path):
+def deliver(agent, path, log=None):
     """Send the message file once the agent is idle, then remove it.
 
     Deliveries to one agent take turns under a lock file: each waits for
     idle, sends, and holds the lock until the agent has picked the message
     up, so a second queued message waits for that turn to end instead of
     interrupting it. Past the wait limit it sends anyway: an interrupt beats
-    a lost message.
+    a lost message. Every step is appended to the delivery log send() named,
+    ending in DELIVERED or FAILED, so a lost message leaves its reason.
     """
-    lock = os.path.join(tempfile.gettempdir(), f"subagent-deliver-{agent}.lock")
+    notes = None
+    if log:
+        notes = open(log, "a", encoding="utf-8")
+
+    def note(text):
+        if notes is not None:
+            notes.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {text}\n")
+            notes.flush()
+
     try:
-        with open(lock, "w") as held:
-            fcntl.flock(held, fcntl.LOCK_EX)
-            paseo("wait", "--timeout", str(DELIVER_WAIT), agent, check=False)
-            paseo("send", "--no-wait", agent, "--prompt-file", path)
-            deadline = time.monotonic() + PICKUP_WAIT
-            while agent_status(agent) == "idle" and time.monotonic() < deadline:
-                time.sleep(0.5)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                note(f"message: {clip(handle.read())}")
+        except OSError as err:
+            note(f"FAILED {agent}: cannot read the message file: {err}")
+            return 1
+        lock = os.path.join(
+            tempfile.gettempdir(), f"subagent-deliver-{agent}.lock"
+        )
+        try:
+            with open(lock, "w") as held:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                note(f"waiting for {agent} to be idle")
+                waited = run_cli("wait", "--timeout", str(DELIVER_WAIT), agent)
+                note(
+                    f"wait rc={waited.returncode}: "
+                    f"{clip(waited.stderr or waited.stdout)}"
+                )
+                note(f"sending to {agent} (status {agent_status(agent)})")
+                sent = run_cli("send", "--no-wait", agent, "--prompt-file", path)
+                if sent.returncode != 0:
+                    note(
+                        f"FAILED {agent}: paseo send failed: "
+                        f"{clip(sent.stderr or sent.stdout)}"
+                    )
+                    return 1
+                deadline = time.monotonic() + PICKUP_WAIT
+                while agent_status(agent) == "idle" and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                note(f"DELIVERED {agent}")
+        except OSError as err:
+            note(f"FAILED {agent}: {err}")
+            return 1
     finally:
         try:
             os.unlink(path)
         except OSError:
             pass
+        if notes is not None:
+            notes.close()
+    return 0
+
+
+def delivery_state(agent):
+    """The last line of the newest delivery log for agent, if any."""
+    prefix, suffix = f"subagent-deliver-{agent}-", ".log"
+    try:
+        names = os.listdir(tempfile.gettempdir())
+    except OSError:
+        return "no delivery log"
+    logs = sorted(
+        (name for name in names
+         if name.startswith(prefix) and name.endswith(suffix)),
+        key=lambda name: os.path.getmtime(
+            os.path.join(tempfile.gettempdir(), name)
+        ),
+        reverse=True,
+    )
+    if not logs:
+        return "no delivery log"
+    try:
+        with open(
+            os.path.join(tempfile.gettempdir(), logs[0]), encoding="utf-8"
+        ) as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    except OSError:
+        return "no delivery log"
+    return lines[-1] if lines else "no delivery log"
+
+
+def pending():
+    """Idle subagent-* agents and what their delivery log says about them.
+
+    The Manager's cheap backstop for a completion notice that never arrived:
+    an idle Subagent with no DELIVERED record either never reported or lost
+    the message. Undelivered agents print first.
+    """
+    proc = run_cli("ls", "--json")
+    if proc.returncode != 0:
+        sys.exit(f"paseo ls failed: {clip(proc.stderr or proc.stdout)}")
+    try:
+        rows = json.loads(proc.stdout) if proc.stdout.strip() else []
+    except ValueError:
+        rows = []
+    if not isinstance(rows, list):
+        rows = []
+    idle = [
+        row for row in rows
+        if isinstance(row, dict)
+        and str(row.get("name", "")).startswith("subagent-")
+        and row.get("status") == "idle"
+    ]
+    if not idle:
+        print("[subagent] no idle subagent-* agents")
+        return 0
+    states = [(row, delivery_state(row.get("id", ""))) for row in idle]
+    states.sort(key=lambda item: "DELIVERED" in item[1])
+    for row, state in states:
+        print(f"{row.get('name')} {row.get('id')} idle: {state}")
     return 0
 
 
@@ -276,8 +417,10 @@ def main(argv):
         return launch(json.load(sys.stdin), argv[1] if len(argv) == 2 else None)
     if command == "send" and len(argv) == 3:
         return send(argv[1], argv[2])
-    if command == "deliver" and len(argv) == 3:
-        return deliver(argv[1], argv[2])
+    if command == "deliver" and len(argv) in (3, 4):
+        return deliver(argv[1], argv[2], argv[3] if len(argv) == 4 else None)
+    if command == "pending" and len(argv) == 1:
+        return pending()
     if command == "archive" and len(argv) == 2:
         paseo("archive", "--force", argv[1])
         return 0

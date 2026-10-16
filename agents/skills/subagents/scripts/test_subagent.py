@@ -8,6 +8,7 @@ temp dir, and no session host is ever resolved.
 import contextlib
 import io
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -145,6 +146,26 @@ class PreparedSpecTest(TempRepoTest):
         prompt = self.spec["prompt"]
         for forbidden in ("--notify", "paseo", "herdr agent"):
             self.assertNotIn(forbidden, prompt)
+
+    def test_a_paseo_prompt_embeds_the_exact_reporting_command(self):
+        directory = os.path.join(self.repo, "extensions")
+        os.makedirs(os.path.join(directory, "paseo"))
+        extension = os.path.join(directory, "paseo.md")
+        helper = os.path.join(directory, "paseo", "host.py")
+        for path in (extension, helper):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("# host\n")
+        spec = self.prepare("--extension", extension, "--manager", "mgr-1")
+        exact = (
+            f"python3 {shlex.quote(helper)} send mgr-1 "
+            f'"[{spec["tag"]} TASK COMPLETE: <one line>; '
+            f"report: {spec['report']}]\""
+        )
+        self.assertIn(exact, spec["prompt"])
+        self.assertIn("never retype", spec["prompt"])
+
+    def test_a_prompt_without_a_helper_beside_it_carries_no_command(self):
+        self.assertNotIn("TASK COMPLETE: <one line>", self.spec["prompt"])
 
     def test_spec_has_no_multiplexer_keys(self):
         self.assertNotIn("workspace", self.spec)

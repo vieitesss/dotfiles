@@ -124,10 +124,21 @@ python3 "$SKILL/extensions/paseo/host.py" archive AGENT_ID
 until the receiver is idle: the daemon interrupts a running turn when a message
 lands, cancelling the receiver's in-flight tool call, so a detached child waits
 for idle and then sends. Messages to one agent go out one per turn, never on
-top of each other. `archive` ends
+top of each other. Every delivery writes to a log file the `send` output names,
+ending in DELIVERED or FAILED. `archive` ends
 the session and keeps its history; it forces the CLI so an accepted Subagent
 whose reporting turn is still running is interrupted instead of refusing to
 close.
+
+When a TASK COMPLETE never arrives, `pending` lists idle `subagent-*` agents
+with their delivery state, undelivered first:
+
+```bash
+python3 "$SKILL/extensions/paseo/host.py" pending
+```
+
+An idle Subagent with no DELIVERED record either never reported or lost the
+message: read its report from the Ledger path and follow up with `send`.
 
 ## Subagent: reporting
 
@@ -149,6 +160,10 @@ python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] QUESTION: <question>"
 For a remote Manager, use the explicit reporting command in your per-session
 extension instead. Only there does the warning apply: a local CLI's default
 daemon is not the Mac's daemon.
+
+Your prompt carries the exact reporting command with the Manager's id already
+filled in: run it verbatim and never retype the id. `send` validates the id
+before queueing and names the delivery log; a bad id fails in your own turn.
 
 Both are fire-and-forget, and the same-daemon helper holds the message until
 the Manager is idle instead of interrupting it.
