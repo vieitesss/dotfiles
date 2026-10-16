@@ -33,10 +33,10 @@ skip in the Ledger.
 | Diagnose | Subagent                                | a bug's cause is unknown                                         |
 | Build    | Subagent                                | the Work Item changes code                                       |
 | Write    | Subagent                                | the Work Item is prose: docs, skills, agent instructions         |
-| Refine   | a fresh Subagent                        | Build reshaped an existing module; skip it for new code, hotfixes, security backports, and small fixes |
+| Refine   | a fresh Subagent, running `zero-tech-debt` | Build reshaped an existing module, or Review returned Standards or Debt findings; skip it for new code, hotfixes, security backports, and small fixes |
 | Prove    | you; Subagent for `verify-<app>`        | always, scaled by the proof budget                               |
 | Review   | one Subagent per axis it needs          | the proof budget says so, once per Change Set                    |
-| Ship     | you, with `commit-changes`, `visual-pr` | the user asks                                                    |
+| Ship     | you, with `commit-changes`, `visual-pr` | the user asks, and Review's loop is clean when its trigger holds |
 
 `scripts/subagent.py --stages` (in the `subagents` skill) prints the skills and
 model each Subagent Stage loads; the Stage decides them, so a brief names the
@@ -44,8 +44,10 @@ Stage, never skills.
 
 Refine runs on Build's green tests and before Prove, so Prove and Review see
 the final shape once. Its scope is the code the Work Item touched; rot beyond
-that becomes a new Work Item. When a feature would be bolted onto debt, make
-the Refine its own Work Item ahead of the feature.
+that becomes a new Work Item. Every Refine runs the `zero-tech-debt` skill over
+that scope: the Stage loads it, and the brief still names it, so the Subagent
+cannot treat the round as a plain edit. When a feature would be bolted onto
+debt, make the Refine its own Work Item ahead of the feature.
 
 ### Trivial path
 
@@ -192,13 +194,20 @@ brief. Present the reports side by side, as `review` step 5 does.
 Then loop over the findings:
 
 - a Spec finding goes to a fresh Build Subagent as a fix round;
-- a Standards or Debt finding goes to a fresh Refine Subagent as a fix round;
+- a Standards or Debt finding goes to a fresh Refine Subagent as a fix round,
+  which runs `zero-tech-debt` over the touched code, not only the findings;
 - after each fix round, re-check that fix alone; the rest of the proof stands.
 
-Keep looping until no findings remain. Stop and ask the user when a finding
-needs a decision that is theirs, when a finding returns after its fix, or
-when reviewers disagree with the spec itself. Mark the Work Item `blocked on
-user` in the Ledger while you wait.
+Order the rounds: Spec fixes first, then Refine on the green result, since
+Refine reshapes what Build just changed. Keep looping until no findings remain.
+
+Never offer a merge, a push, or Ship for a Change Set whose Review trigger
+holds before Review has run and its loop is clean. Reading the diff yourself
+and sending follow-ups is the cheapest review, not a substitute for Review.
+
+Stop and ask the user when a finding needs a decision that is theirs, when a
+finding returns after its fix, or when reviewers disagree with the spec itself.
+Mark the Work Item `blocked on user` in the Ledger while you wait.
 
 ## Accepting returned work
 
