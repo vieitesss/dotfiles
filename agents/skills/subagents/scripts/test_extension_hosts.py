@@ -46,6 +46,9 @@ if name == "paseo" and args[:2] == ["workspace", "ls"]:
     print(os.environ.get("FAKE_WORKSPACES", "[]"))
 elif name == "paseo" and args[:1] == ["run"]:
     print(json.dumps({"agentId": "agent-42"}))
+elif name == "paseo" and args[:1] == ["inspect"]:
+    print(json.dumps({"Id": args[-1], "Name": "subagent-test",
+                        "Status": "running"}))
 elif name == "herdr" and args[:2] == ["tab", "create"]:
     print(json.dumps({"result": {"root_pane": {"pane_id": "1-1"},
                                  "tab": {"tab_id": "1:1"}}}))
@@ -373,10 +376,101 @@ class PaseoHostTest(HostTest):
 
     def test_send_hands_the_message_to_a_detached_delivery(self):
         self.send_and_wait_for_delivery("agent-42", "a\nb")
-        waiting, sending = self.call_for("paseo")[:2]
+        calls = self.call_for("paseo")
+        self.assertEqual(calls[0][:2], ["inspect", "--json"])
+        waiting = next(args for args in calls if args[0] == "wait")
         self.assertEqual(waiting[:2], ["wait", "--timeout"])
+        sending = next(args for args in calls if args[0] == "send")
         self.assertEqual(sending[:3], ["send", "--no-wait", "agent-42"])
         self.assertIn("--prompt-file", sending)
+
+    def test_send_refuses_an_unknown_manager_before_detaching(self):
+        log = os.path.join(self.work, "calls")
+        body = (
+            f'printf "%s\\n" "$*" >> "{log}"\n'
+            'if [ "$1" = "inspect" ]; then\n'
+            '  printf \'%s\\n\' \'{"error": {"code": "AGENT_NOT_FOUND"}}\'\n'
+            "  exit 1\n"
+            "fi\n"
+            "exit 0\n"
+        )
+        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
+        proc = self.run_host("paseo", "send", "dead-beef", "hello", env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dead-beef", proc.stderr)
+        with open(log, encoding="utf-8") as handle:
+            calls = handle.read()
+        self.assertIn("inspect", calls)
+        self.assertNotIn("wait", calls)
+        self.assertNotIn(" --no-wait dead-beef", calls)
+
+    def test_send_refuses_a_tmux_pane_as_manager(self):
+        proc = self.run_host("paseo", "send", "%36", "hello")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("%36", proc.stderr)
+        self.assertEqual(
+            [args for args in self.call_for("paseo") if args[:1] == ["run"]], []
+        )
+
+    def delivery_log(self, proc):
+        """The log path a successful send names, waited until delivery lands."""
+        self.assertIn("delivery log: ", proc.stdout)
+        log = proc.stdout.split("delivery log: ")[1].split()[0]
+        self.assertTrue(log.startswith(tempfile.gettempdir()), log)
+        deadline = time.monotonic() + 10
+        while True:
+            with open(log, encoding="utf-8") as handle:
+                record = handle.read()
+            if "DELIVERED agent-42" in record or "FAILED agent-42" in record:
+                return record
+            if time.monotonic() > deadline:
+                self.fail(f"no delivery record appeared in {log}: {record!r}")
+            time.sleep(0.05)
+
+    def test_send_names_a_delivery_log_where_the_child_records_itself(self):
+        proc = self.run_host("paseo", "send", "agent-42", "a\nb")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("DELIVERED agent-42", self.delivery_log(proc))
+
+    def test_a_failed_send_is_recorded_in_the_delivery_log(self):
+        log = os.path.join(self.work, "calls")
+        body = (
+            f'printf "%s\\n" "$*" >> "{log}"\n'
+            'if [ "$1" = "inspect" ]; then\n'
+            '  printf \'{"Id": "agent-42", "Status": "idle"}\\n\'\n'
+            'elif [ "$1" = "send" ]; then\n'
+            "  printf '%s\\n' 'Agent agent-42 is gone' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            "exit 0\n"
+        )
+        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
+        queued = self.run_host("paseo", "send", "agent-42", "hello", env=env)
+        self.assertEqual(queued.returncode, 0, queued.stderr)
+        record = self.delivery_log(queued)
+        self.assertIn("FAILED agent-42", record)
+        self.assertIn("Agent agent-42 is gone", record)
+
+    def test_deliver_returns_nonzero_when_the_send_fails(self):
+        log = os.path.join(self.work, "calls")
+        body = (
+            f'printf "%s\\n" "$*" >> "{log}"\n'
+            'if [ "$1" = "send" ]; then\n'
+            "  printf '%s\\n' 'Agent agent-42 is gone' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            "exit 0\n"
+        )
+        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
+        path = os.path.join(self.work, "message.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("hello")
+        record = os.path.join(self.work, "deliver.log")
+        proc = self.run_host("paseo", "deliver", "agent-42", path, record, env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        with open(record, encoding="utf-8") as handle:
+            self.assertIn("FAILED agent-42", handle.read())
+        self.assertFalse(os.path.exists(path), "the delivery child removes the file")
 
     def test_deliver_waits_for_idle_then_sends_and_removes_the_file(self):
         path = os.path.join(self.work, "message.md")
@@ -384,8 +478,11 @@ class PaseoHostTest(HostTest):
             handle.write("a\nb")
         proc = self.run_host("paseo", "deliver", "agent-42", path)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        sending = [
+            args for args in self.call_for("paseo") if args[0] in ("wait", "send")
+        ]
         self.assertEqual(
-            self.call_for("paseo")[:2],
+            sending[:2],
             [
                 ["wait", "--timeout", "3600", "agent-42"],
                 ["send", "--no-wait", "agent-42", "--prompt-file", path],
@@ -393,6 +490,58 @@ class PaseoHostTest(HostTest):
         )
         self.assertIn(["prompt-file", "a\nb"], self.calls())
         self.assertFalse(os.path.exists(path), "the delivery child removes the file")
+
+    def test_pending_lists_idle_subagents_with_their_delivery_state(self):
+        tmp = os.path.join(self.work, "tmp")
+        os.makedirs(tmp)
+        agents = [
+            {"id": "aaa", "name": "subagent-build-1", "status": "idle"},
+            {"id": "bbb", "name": "subagent-refine-2", "status": "idle"},
+            {"id": "ccc", "name": "subagent-build-3", "status": "running"},
+            {"id": "ddd", "name": "other-agent", "status": "idle"},
+            {"id": "eee", "name": "subagent-build-4", "status": "idle"},
+        ]
+        fixture = os.path.join(self.work, "agents.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump(agents, handle)
+        body = (
+            f'if [ "$1" = "ls" ]; then cat "{fixture}"; fi\n'
+            "exit 0\n"
+        )
+        for agent, last in (
+            ("aaa", "2026-10-16T00:00:00 DELIVERED aaa"),
+            ("bbb", "2026-10-16T00:00:00 FAILED bbb: paseo send failed: gone"),
+        ):
+            with open(
+                os.path.join(tmp, f"subagent-deliver-{agent}-1.log"),
+                "w", encoding="utf-8",
+            ) as handle:
+                handle.write(f"queued for {agent}\n{last}\n")
+        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body), TMPDIR=tmp)
+        proc = self.run_host("paseo", "pending", env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("subagent-refine-2", proc.stdout)
+        self.assertIn("FAILED bbb", proc.stdout)
+        self.assertIn("subagent-build-4", proc.stdout)
+        self.assertIn("no delivery log", proc.stdout)
+        self.assertNotIn("subagent-build-3", proc.stdout)
+        self.assertNotIn("other-agent", proc.stdout)
+        undelivered = min(
+            proc.stdout.index("subagent-refine-2"),
+            proc.stdout.index("subagent-build-4"),
+        )
+        self.assertLess(undelivered, proc.stdout.index("subagent-build-1"))
+
+    def test_pending_with_no_idle_subagents_says_so(self):
+        fixture = os.path.join(self.work, "agents.json")
+        with open(fixture, "w", encoding="utf-8") as handle:
+            json.dump([{"id": "x", "name": "subagent-build-1",
+                        "status": "running"}], handle)
+        body = f'if [ "$1" = "ls" ]; then cat "{fixture}"; fi\nexit 0\n'
+        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
+        proc = self.run_host("paseo", "pending", env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("no idle subagent", proc.stdout)
 
     def test_archive_keeps_history_and_forces_a_running_agent(self):
         proc = self.run_host("paseo", "archive", "agent-42")

@@ -22,6 +22,7 @@ editing .git/info/exclude.
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import urllib.error
@@ -508,6 +509,25 @@ SUBAGENT_RULES = (
 )
 
 
+def reporting_command(extension, manager, tag, report):
+    """The exact Paseo reporting command, or None without a helper beside it.
+
+    The Manager id arrives already filled in, so the Subagent copies the line
+    verbatim instead of retyping the address (retyping lost two reports).
+    Only Paseo has a reporting helper; other hosts keep their extension's
+    commands, and a per-session remote file already carries its own route.
+    """
+    if os.path.basename(extension) != "paseo.md":
+        return None
+    helper = os.path.join(os.path.dirname(extension), "paseo", "host.py")
+    if not os.path.isfile(helper):
+        return None
+    return (
+        f"python3 {shlex.quote(helper)} send {shlex.quote(manager)} "
+        f'"[{tag} TASK COMPLETE: <one line>; report: {report}]"'
+    )
+
+
 def subagent_prompt(brief, role, skills, report, extension, manager, tag):
     """The brief, prefixed with the Stage role, skills, report, and how to report.
 
@@ -533,6 +553,12 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag):
         "reporting command fails, or the extension conflicts with the "
         "launch context."
     )
+    exact = reporting_command(extension, manager, tag, report)
+    if exact:
+        lines.append(
+            "Run this exact command to report (the address is already "
+            f"filled in; never retype it):\n{exact}"
+        )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief
 

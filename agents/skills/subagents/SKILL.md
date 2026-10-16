@@ -103,4 +103,6 @@ A host can hold a Subagent on an approval only the user can give; when the user
 reports a stall, the extension says how to surface it. A launch that fails
 leaves what the host created; the extension says what that is and how to
 inspect or close it. Close the Subagent's session with the extension's close
-command once you have accepted the report.
+command once you have accepted the report. If a TASK COMPLETE never arrives,
+the Paseo extension's `pending` command lists idle Subagents with delivery
+state; the other hosts report synchronously and need no backstop.
