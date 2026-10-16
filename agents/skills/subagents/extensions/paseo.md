@@ -120,7 +120,11 @@ python3 "$SKILL/extensions/paseo/host.py" send AGENT_ID "MESSAGE"
 python3 "$SKILL/extensions/paseo/host.py" archive AGENT_ID
 ```
 
-`send` never blocks, and long or multi-line text arrives whole. `archive` ends
+`send` never blocks, and long or multi-line text arrives whole. Delivery waits
+until the receiver is idle: the daemon interrupts a running turn when a message
+lands, cancelling the receiver's in-flight tool call, so a detached child waits
+for idle and then sends. Messages to one agent go out one per turn, never on
+top of each other. `archive` ends
 the session and keeps its history; it forces the CLI so an accepted Subagent
 whose reporting turn is still running is interrupted instead of refusing to
 close.
@@ -146,4 +150,5 @@ For a remote Manager, use the explicit reporting command in your per-session
 extension instead. Only there does the warning apply: a local CLI's default
 daemon is not the Mac's daemon.
 
-Both are fire-and-forget.
+Both are fire-and-forget, and the same-daemon helper holds the message until
+the Manager is idle instead of interrupting it.

@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -356,13 +357,42 @@ class PaseoHostTest(HostTest):
         self.assertEqual(argv[argv.index("--cwd") + 1], spec["cwd"])
         self.assertIn("creating a local one", proc.stderr)
 
-    def test_send_is_nonblocking_and_reads_a_prompt_file(self):
-        proc = self.run_host("paseo", "send", "agent-42", "a\nb")
+    def send_and_wait_for_delivery(self, agent, message, timeout=10):
+        """Send a message, then wait for the detached delivery child to log it.
+
+        send() returns before the receiver is idle, so the fake CLI's log fills
+        in after the sender has already exited.
+        """
+        proc = self.run_host("paseo", "send", agent, message)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        argv = self.call_for("paseo")[0]
-        self.assertEqual(argv[:3], ["send", "--no-wait", "agent-42"])
-        self.assertIn("--prompt-file", argv)
+        deadline = time.monotonic() + timeout
+        while ["prompt-file", message] not in self.calls():
+            if time.monotonic() > deadline:
+                self.fail(f"the detached delivery never sent {message!r}")
+            time.sleep(0.05)
+
+    def test_send_hands_the_message_to_a_detached_delivery(self):
+        self.send_and_wait_for_delivery("agent-42", "a\nb")
+        waiting, sending = self.call_for("paseo")[:2]
+        self.assertEqual(waiting[:2], ["wait", "--timeout"])
+        self.assertEqual(sending[:3], ["send", "--no-wait", "agent-42"])
+        self.assertIn("--prompt-file", sending)
+
+    def test_deliver_waits_for_idle_then_sends_and_removes_the_file(self):
+        path = os.path.join(self.work, "message.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("a\nb")
+        proc = self.run_host("paseo", "deliver", "agent-42", path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            self.call_for("paseo")[:2],
+            [
+                ["wait", "--timeout", "3600", "agent-42"],
+                ["send", "--no-wait", "agent-42", "--prompt-file", path],
+            ],
+        )
         self.assertIn(["prompt-file", "a\nb"], self.calls())
+        self.assertFalse(os.path.exists(path), "the delivery child removes the file")
 
     def test_archive_keeps_history_and_forces_a_running_agent(self):
         proc = self.run_host("paseo", "archive", "agent-42")

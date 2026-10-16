@@ -5,7 +5,7 @@ Reads the launch spec printed by scripts/subagent.py on stdin.
 
 Usage:
     host.py launch [WORKSPACE]   # spec on stdin, prints {"agentId", ...}
-    host.py send AGENT_ID MESSAGE   # nonblocking follow-up or answer
+    host.py send AGENT_ID MESSAGE   # nonblocking; delivered once AGENT_ID is idle
     host.py archive AGENT_ID        # force-archive an accepted Subagent
 
 WORKSPACE is an existing Paseo workspace id for the run. The helper refuses it
@@ -25,13 +25,17 @@ the supplied Markdown extension must carry an explicit return route; the
 execution machine's environment does not identify the remote Manager.
 """
 
+import fcntl
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 
 DETAIL_LIMIT = 2000
+DELIVER_WAIT = 3600  # seconds a queued message waits for an idle receiver
+PICKUP_WAIT = 15  # seconds to see the receiver start the delivered turn
 
 
 def clip(text, limit=DETAIL_LIMIT):
@@ -212,12 +216,52 @@ def launch(spec, workspace=None):
 
 
 def send(agent, message):
-    """Send a message without waiting, through a temp file for long text."""
+    """Queue a message for delivery once the agent is idle, without blocking.
+
+    The daemon interrupts a running turn when a message arrives, cancelling
+    the receiver's in-flight tool call, so a detached child delivers it
+    later. The temp file carries long text and is removed by the child.
+    """
     fd, path = tempfile.mkstemp(prefix="subagent-message-", suffix=".md")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(message)
+    subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "deliver", agent, path],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return 0
+
+
+def agent_status(agent):
+    """The agent's daemon status ("running", "idle", ...), or None."""
+    reply = paseo("inspect", "--json", agent, check=False)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(message)
-        paseo("send", "--no-wait", agent, "--prompt-file", path)
+        return json.loads(reply)["Status"] if reply else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def deliver(agent, path):
+    """Send the message file once the agent is idle, then remove it.
+
+    Deliveries to one agent take turns under a lock file: each waits for
+    idle, sends, and holds the lock until the agent has picked the message
+    up, so a second queued message waits for that turn to end instead of
+    interrupting it. Past the wait limit it sends anyway: an interrupt beats
+    a lost message.
+    """
+    lock = os.path.join(tempfile.gettempdir(), f"subagent-deliver-{agent}.lock")
+    try:
+        with open(lock, "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            paseo("wait", "--timeout", str(DELIVER_WAIT), agent, check=False)
+            paseo("send", "--no-wait", agent, "--prompt-file", path)
+            deadline = time.monotonic() + PICKUP_WAIT
+            while agent_status(agent) == "idle" and time.monotonic() < deadline:
+                time.sleep(0.5)
     finally:
         try:
             os.unlink(path)
@@ -232,6 +276,8 @@ def main(argv):
         return launch(json.load(sys.stdin), argv[1] if len(argv) == 2 else None)
     if command == "send" and len(argv) == 3:
         return send(argv[1], argv[2])
+    if command == "deliver" and len(argv) == 3:
+        return deliver(argv[1], argv[2])
     if command == "archive" and len(argv) == 2:
         paseo("archive", "--force", argv[1])
         return 0
