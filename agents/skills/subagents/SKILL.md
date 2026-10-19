@@ -70,6 +70,12 @@ Each Subagent writes its full report to
 it works in a worktree, and sends a one-line TASK COMPLETE pointing at it.
 The spec's report path wins over any path in the brief. Keep `--item`
 free of the Stage name (`batch`, not `batch-review`).
+A Stage is finished only when all three are true: the report file is
+written, the TASK COMPLETE has gone out through the extension's reporting
+command, and the send is confirmed delivered (the Paseo helper names a
+delivery log ending in DELIVERED; the other hosts report synchronously).
+Send in the same turn the work finishes, before any summary to the user:
+a written report with no confirmed send is still an open Stage.
 Preparation adds `.agents/ledger.md` and `.agents/reports/` to the repo's
 `.git/info/exclude`.
 
