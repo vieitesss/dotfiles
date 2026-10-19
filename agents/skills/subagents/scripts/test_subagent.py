@@ -376,7 +376,7 @@ class EffortCapTest(TempRepoTest):
                     profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
                     self.assertEqual(profile["effort"], "medium")
 
-    def test_builder_runs_deepseek_v4_1_flash_free_without_an_effort_ceiling(self):
+    def test_builder_runs_deepseek_v4_1_flash_without_an_effort_ceiling(self):
         # HOME is a temp dir here, so no models store is read and the effort
         # arrives unclamped; this pins the ceiling, not the model's own levels.
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
@@ -384,14 +384,14 @@ class EffortCapTest(TempRepoTest):
         with mock.patch.object(subagent, "jev", return_value=answers):
             with contextlib.redirect_stderr(io.StringIO()):
                 profile = subagent.choose_profile("brief", "build", spec["model"])
-        self.assertEqual(profile["model"], "opencode/deepseek-v4.1-flash-free")
+        self.assertEqual(profile["model"], "opencode-go/deepseek-v4.1-flash")
         self.assertEqual(profile["effort"], "max")
         profile["role"] = spec["role"]
         engine = subagent.engine_spec(profile)
         self.assertEqual(engine["kind"], "pi")
         self.assertEqual(
             engine["argv"][engine["argv"].index("--model") + 1],
-            "opencode/deepseek-v4.1-flash-free",
+            "opencode-go/deepseek-v4.1-flash",
         )
         self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
 
@@ -403,7 +403,7 @@ class EffortCapTest(TempRepoTest):
             with mock.patch.object(subagent, "jev", return_value=answers):
                 with contextlib.redirect_stderr(io.StringIO()):
                     profile = subagent.choose_profile("brief", "build", None)
-        self.assertEqual(profile["model"], "opencode/deepseek-v4.1-flash-free")
+        self.assertEqual(profile["model"], "opencode-go/deepseek-v4.1-flash")
         self.assertEqual(profile["effort"], "high")
 
     def test_writer_uses_haiku_5_5_without_effort_ceiling(self):
