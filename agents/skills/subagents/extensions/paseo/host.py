@@ -14,8 +14,9 @@ unless the daemon lists it and its root is the spec's cwd, because the CLI would
 otherwise put that workspace's root in place of the prepared directory. Without
 WORKSPACE the helper places the run itself: in the Manager's own workspace when
 the target directory is the Manager's, otherwise in the workspace already rooted
-at the target directory, otherwise in a new local workspace for it. A local
-workspace points at an existing directory; it creates no worktree.
+at the target directory, otherwise in a new local workspace for it inside the
+Manager's project. A local workspace points at an existing directory; it
+creates no worktree.
 
 `archive` forces the CLI to interrupt a session whose reporting turn is still
 running; it keeps the history and is not a permission bypass.
@@ -91,12 +92,50 @@ def workspaces():
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
-def existing_workspace(cwd):
-    """A live workspace already rooted at cwd, if the daemon reports one."""
-    for workspace in workspaces():
+def rooted_at(listed, cwd):
+    """The listed workspace rooted at cwd, or None."""
+    for workspace in listed:
         if same_dir(workspace.get("cwd"), cwd):
-            return workspace.get("workspaceId")
+            return workspace
     return None
+
+
+def project_id(name):
+    """The id of the one project the daemon lists under name, or None.
+
+    Workspace listings name their project but carry no id, and
+    `workspace create --project` takes only the id.
+    """
+    listed = paseo("project", "ls", "--json", check=False)
+    try:
+        rows = json.loads(listed) if listed else []
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    ids = [
+        row.get("projectId") for row in rows
+        if isinstance(row, dict) and row.get("name") == name
+        and isinstance(row.get("projectId"), str)
+    ]
+    return ids[0] if len(ids) == 1 else None
+
+
+def project_workspace(cwd, project, title):
+    """A new local workspace for cwd inside project; exits when none is made.
+
+    `run --new-workspace local` would register cwd, a worktree and so its own
+    git root, as a project of its own; creating the workspace under the
+    Manager's project keeps every Stage in the Manager's project.
+    """
+    reply = paseo(
+        "workspace", "create", "--isolation", "local", "--path", cwd,
+        "--project", project, "--title", title, "--no-background", "--json",
+    )
+    created = reply_field(reply, "workspaceId")
+    if not created:
+        sys.exit(f"paseo workspace create returned no workspace id: {clip(reply)}")
+    return created
 
 
 def explicit_workspace(workspace_id, cwd):
@@ -121,25 +160,32 @@ def explicit_workspace(workspace_id, cwd):
     )
 
 
-def workspace_argv(cwd, explicit):
+def workspace_argv(cwd, explicit, title):
     """Paseo flags that put the run in the target directory.
 
     An agent-scoped run defaults to the caller's workspace and cwd, so --cwd
     alone is honored only when it names that same directory. Any other target
     (a worktree, another project) needs an explicit existing workspace or a new
-    local one, or the daemon would silently run the Stage in the caller's cwd.
+    one, or the daemon would silently run the Stage in the caller's cwd. A new
+    one joins the caller's project when the daemon can name it.
     """
     if explicit:
         return explicit_workspace(explicit, cwd)
     caller = os.environ.get("PASEO_AGENT_CWD")
     if not caller or same_dir(caller, cwd):
         return ["--cwd", cwd]
-    known = existing_workspace(cwd)
+    listed = workspaces()
+    known = rooted_at(listed, cwd)
     if known:
-        return ["--workspace", known]
+        return ["--workspace", known.get("workspaceId")]
+    home = rooted_at(listed, caller)
+    project = project_id(home.get("project")) if home else None
+    if project:
+        return ["--workspace", project_workspace(cwd, project, title)]
     print(
-        f"[subagent] no workspace rooted at {cwd}; creating a local one "
-        "(pass a workspace id to reuse one instead)",
+        f"[subagent] no project found for the caller at {caller}; creating a "
+        f"local workspace at {cwd} as its own project (pass a workspace id to "
+        "reuse one instead)",
         file=sys.stderr,
     )
     return ["--new-workspace", "local", "--cwd", cwd]
@@ -163,7 +209,7 @@ def run_argv(spec, workspace=None):
     role itself.
     """
     argv = ["run", "--background", "--json", "--title", spec["name"]]
-    argv += workspace_argv(spec["cwd"], workspace)
+    argv += workspace_argv(spec["cwd"], workspace, spec["name"])
     if spec["engine"]["kind"] == "claude":
         argv += ["--provider", "claude"]
         model = (spec["model"] or "").partition("/")[2]

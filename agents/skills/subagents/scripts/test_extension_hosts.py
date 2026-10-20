@@ -44,6 +44,11 @@ if "--prompt-file" in args:
             handle.write(json.dumps(["prompt-file", source.read()]) + "\\n")
 if name == "paseo" and args[:2] == ["workspace", "ls"]:
     print(os.environ.get("FAKE_WORKSPACES", "[]"))
+elif name == "paseo" and args[:2] == ["project", "ls"]:
+    print(os.environ.get("FAKE_PROJECTS", "[]"))
+elif name == "paseo" and args[:2] == ["workspace", "create"]:
+    print(json.dumps({"workspaceId": "wks-new",
+                      "cwd": args[args.index("--path") + 1]}))
 elif name == "paseo" and args[:1] == ["run"]:
     print(json.dumps({"agentId": "agent-42"}))
 elif name == "paseo" and args[:1] == ["inspect"]:
@@ -346,7 +351,65 @@ class PaseoHostTest(HostTest):
         self.assertEqual(argv[argv.index("--workspace") + 1], "wks-9")
         self.assertNotIn("--cwd", argv)
 
-    def test_a_worktree_without_a_workspace_mints_a_local_one(self):
+    def test_a_worktree_without_a_workspace_joins_the_callers_project(self):
+        # run --new-workspace local would register the worktree, its own git
+        # root, as a project of its own.
+        spec = self.spec()
+        caller = os.path.join(self.work, "elsewhere")
+        env = dict(
+            self.env,
+            PASEO_AGENT_CWD=caller,
+            FAKE_WORKSPACES=json.dumps(
+                [{"workspaceId": "wks-1", "project": "app", "cwd": caller}]
+            ),
+            FAKE_PROJECTS=json.dumps(
+                [
+                    {"projectId": "prj-other", "name": "other"},
+                    {"projectId": "prj-app", "name": "app"},
+                ]
+            ),
+        )
+        proc = self.run_host("paseo", "launch", spec=spec, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        create = [
+            args for args in self.call_for("paseo")
+            if args[:2] == ["workspace", "create"]
+        ][0]
+        self.assertEqual(create[create.index("--project") + 1], "prj-app")
+        self.assertEqual(create[create.index("--path") + 1], spec["cwd"])
+        self.assertEqual(create[create.index("--isolation") + 1], "local")
+        self.assertEqual(create[create.index("--title") + 1], spec["name"])
+        argv = self.run_call()
+        self.assertEqual(argv[argv.index("--workspace") + 1], "wks-new")
+        self.assertNotIn("--new-workspace", argv)
+        self.assertNotIn("--cwd", argv)
+
+    def test_an_ambiguous_caller_project_falls_back_to_a_local_workspace(self):
+        spec = self.spec()
+        caller = os.path.join(self.work, "elsewhere")
+        env = dict(
+            self.env,
+            PASEO_AGENT_CWD=caller,
+            FAKE_WORKSPACES=json.dumps(
+                [{"workspaceId": "wks-1", "project": "app", "cwd": caller}]
+            ),
+            FAKE_PROJECTS=json.dumps(
+                [
+                    {"projectId": "prj-a", "name": "app"},
+                    {"projectId": "prj-b", "name": "app"},
+                ]
+            ),
+        )
+        proc = self.run_host("paseo", "launch", spec=spec, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            [a for a in self.call_for("paseo") if a[:2] == ["workspace", "create"]],
+            [],
+        )
+        argv = self.run_call()
+        self.assertEqual(argv[argv.index("--new-workspace") + 1], "local")
+
+    def test_a_worktree_without_a_caller_project_mints_a_local_one(self):
         spec = self.spec()
         env = dict(
             self.env,
@@ -358,7 +421,7 @@ class PaseoHostTest(HostTest):
         argv = self.run_call()
         self.assertEqual(argv[argv.index("--new-workspace") + 1], "local")
         self.assertEqual(argv[argv.index("--cwd") + 1], spec["cwd"])
-        self.assertIn("creating a local one", proc.stderr)
+        self.assertIn("as its own project", proc.stderr)
 
     def send_and_wait_for_delivery(self, agent, message, timeout=10):
         """Send a message, then wait for the detached delivery child to log it.

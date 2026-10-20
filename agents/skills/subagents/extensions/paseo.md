@@ -75,8 +75,9 @@ message.
   workspace, so `--cwd` alone is honored only for your own directory. The
   helper therefore picks: the workspace id you pass, else yours when `--cwd` is
   your directory, else a workspace already rooted at `--cwd`, else a new
-  local workspace for it (it points at an existing directory and creates no
-  worktree). An explicit workspace id is refused unless the daemon lists it and
+  local workspace for it inside your workspace's project (it points at an
+  existing directory and creates no worktree). Only when the daemon cannot
+  name your project does the new workspace become a project of its own. An explicit workspace id is refused unless the daemon lists it and
   its root is `--cwd`, because the CLI otherwise substitutes that root for the
   prepared directory. Each Stage runs where `--cwd` says, never in a new
   worktree, and no UI focus changes. If a successful run still reports another
