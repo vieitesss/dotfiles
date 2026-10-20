@@ -28,6 +28,9 @@ sys.path.insert(0, EXTENSIONS_DIR)
 import host_launch  # noqa: E402
 
 HOST = os.path.abspath(__file__)
+# Pane option launch sets on the Manager's and the Subagent's panes; notify
+# types only into a pane that carries it.
+NOTIFY_MARK = "@subagent-notify"
 STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
 # Allow slow login shells (including 35s startup) without retaining orphaned
 # secret env files indefinitely. Only the env file is age-swept, never the task.
@@ -70,11 +73,60 @@ def tmux_session():
     return tmux("display-message", "-p", *(["-t", pane] if pane else []), "#{session_id}")
 
 
+def mark_pane(pane):
+    """Let notify type into pane: launch marks only the two panes it vouched for."""
+    tmux("set-option", "-p", "-t", pane, NOTIFY_MARK, "1")
+
+
+def ancestors(pid):
+    """pid and every parent process up to init."""
+    seen = []
+    while pid > 1 and pid not in seen:
+        seen.append(pid)
+        out = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+        if not out.isdigit():
+            break
+        pid = int(out)
+    return seen
+
+
+def manager_pane_error(pane):
+    """Why pane cannot be this Manager's address, or None when it is.
+
+    notify types into the pane and presses Enter, so a pane that is not the
+    Manager's (a Paseo agent inherits the TMUX_PANE of whatever pane started
+    its daemon) would get every report typed into whatever runs there.
+    """
+    if os.environ.get("PASEO_AGENT_ID"):
+        return (
+            "the Manager is a Paseo agent with no tmux pane of its own; "
+            f"use {os.path.join(EXTENSIONS_DIR, 'paseo.md')} and "
+            "--manager \"$PASEO_AGENT_ID\" instead"
+        )
+    pid = tmux("display-message", "-p", "-t", pane, "#{pane_pid}", check=False)
+    if not pid.isdigit():
+        return f"--manager {pane} is not a tmux pane"
+    if int(pid) not in ancestors(os.getpid()):
+        return f"--manager {pane} is not the pane this Manager runs in"
+    return None
+
+
 def notify(pane, message):
     """Type message into pane and submit it.
 
     A bracketed paste keeps multi-line messages from submitting line by line.
+    Only a pane launch marked is typed into: anything else may be a human's
+    input, and the Enter would send it.
     """
+    mark = tmux("show-options", "-p", "-v", "-t", pane, NOTIFY_MARK, check=False)
+    if mark != "1":
+        sys.exit(
+            f"notify: pane {pane} was not marked by launch as a Manager or "
+            "Subagent pane; refusing to type into it"
+        )
     buffer = f"subagent-{os.getpid()}"
     tmux("load-buffer", "-b", buffer, "-", input=message)
     tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane)
@@ -206,6 +258,10 @@ def launch(spec, target=None):
     name = spec["name"]
     cwd = spec["cwd"]
     kind = spec["engine"]["kind"]
+    error = manager_pane_error(spec["manager"])
+    if error:
+        print(f"[subagent] refusing to launch {name}: {error}", file=sys.stderr)
+        return 2
     if kind == "claude":
         host_launch.trust_claude_dir(cwd)
     session = target or tmux_session()
@@ -220,6 +276,8 @@ def launch(spec, target=None):
     )
     if not launch_tmux(name, pane, engine_argv(spec), spec["prompt"], cwd, kind=kind):
         return 2
+    mark_pane(spec["manager"])
+    mark_pane(pane)
     print(
         json.dumps(
             {

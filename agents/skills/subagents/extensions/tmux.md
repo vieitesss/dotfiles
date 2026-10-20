@@ -24,6 +24,11 @@ both in the Ledger.
   allowlisted secret (`TYPESAFE_API_KEY`, when set), deletes it, then starts
   the engine. The prompt travels through a temp file, so multi-line briefs
   arrive whole.
+- `launch` refuses (exit 2) when `--manager` is not the pane it runs in, or
+  when `PASEO_AGENT_ID` is set: a Paseo agent has no pane of its own and only
+  inherits one, so reports would be typed into whatever runs there. Use the
+  Paseo extension instead. `notify` types only into the two panes a launch
+  marked (`@subagent-notify`), so a message never lands in a human's input.
 - A failed launch exits 2 and leaves the window open, with its ids on stderr,
   for diagnosis. Close that window before relaunching.
 - A Claude Code role (`engine.kind` `claude`) also gets a narrow
