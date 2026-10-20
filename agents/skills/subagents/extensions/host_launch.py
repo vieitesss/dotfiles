@@ -3,13 +3,15 @@
 
 Core prepares a host-independent spec; the interactive helpers are the only
 hosts that need Claude Code's workspace-trust dialog pre-accepted and an effort
-retry when a pane shows the chosen level was rejected. This module owns those
-two pieces, so the behaviour has one definition instead of a copy per host. It
+retry when a pane shows the chosen level was rejected, and a check that the
+Manager address is the pane the Manager runs in. This module owns those
+pieces, so the behaviour has one definition instead of a copy per host. It
 is extension-owned, not core: a host that does not need it does not import it.
 """
 
 import json
 import os
+import subprocess
 import sys
 
 
@@ -55,3 +57,39 @@ def trust_claude_dir(cwd):
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=2)
     os.replace(tmp, path)
+
+
+def manager_pane_error(pane, shell_pid):
+    """Why pane, whose shell runs as shell_pid, cannot be this Manager's address.
+
+    None when it is. Reports are typed into the Manager's pane and submitted,
+    so a pane that is not the Manager's (a Paseo agent inherits the pane
+    variables of whatever pane started its daemon) would get every report
+    typed into whatever runs there.
+    """
+    if os.environ.get("PASEO_AGENT_ID"):
+        return (
+            "the Manager is a Paseo agent with no pane of its own; "
+            f"use {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'paseo.md')} "
+            "and --manager \"$PASEO_AGENT_ID\" instead"
+        )
+    if not str(shell_pid).isdigit():
+        return f"--manager {pane} is not a pane"
+    if int(shell_pid) not in ancestors(os.getpid()):
+        return f"--manager {pane} is not the pane this Manager runs in"
+    return None
+
+
+def ancestors(pid):
+    """pid and every parent process up to init."""
+    seen = []
+    while pid > 1 and pid not in seen:
+        seen.append(pid)
+        out = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+        if not out.isdigit():
+            break
+        pid = int(out)
+    return seen

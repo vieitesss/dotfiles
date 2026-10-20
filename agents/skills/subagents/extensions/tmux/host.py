@@ -78,40 +78,10 @@ def mark_pane(pane):
     tmux("set-option", "-p", "-t", pane, NOTIFY_MARK, "1")
 
 
-def ancestors(pid):
-    """pid and every parent process up to init."""
-    seen = []
-    while pid > 1 and pid not in seen:
-        seen.append(pid)
-        out = subprocess.run(
-            ["ps", "-o", "ppid=", "-p", str(pid)],
-            capture_output=True, text=True, check=False,
-        ).stdout.strip()
-        if not out.isdigit():
-            break
-        pid = int(out)
-    return seen
-
-
 def manager_pane_error(pane):
-    """Why pane cannot be this Manager's address, or None when it is.
-
-    notify types into the pane and presses Enter, so a pane that is not the
-    Manager's (a Paseo agent inherits the TMUX_PANE of whatever pane started
-    its daemon) would get every report typed into whatever runs there.
-    """
-    if os.environ.get("PASEO_AGENT_ID"):
-        return (
-            "the Manager is a Paseo agent with no tmux pane of its own; "
-            f"use {os.path.join(EXTENSIONS_DIR, 'paseo.md')} and "
-            "--manager \"$PASEO_AGENT_ID\" instead"
-        )
+    """Why pane cannot be this Manager's address, or None when it is."""
     pid = tmux("display-message", "-p", "-t", pane, "#{pane_pid}", check=False)
-    if not pid.isdigit():
-        return f"--manager {pane} is not a tmux pane"
-    if int(pid) not in ancestors(os.getpid()):
-        return f"--manager {pane} is not the pane this Manager runs in"
-    return None
+    return host_launch.manager_pane_error(pane, pid)
 
 
 def notify(pane, message):

@@ -25,6 +25,10 @@ the Ledger.
 - The tab opens without focus, the agent starts in its root pane, and the
   brief is submitted as one prompt, so multi-line text arrives whole. A busy
   pane is retried for up to 30s.
+- `launch` refuses, exiting 2, when you are a Paseo agent or `--manager` is
+  not the pane you run in: a Paseo agent inherits the herdr variables of
+  whatever pane started its daemon, and every report would be typed into
+  that pane and submitted.
 - A failed launch exits 2 and leaves the tab open, with its ids on stderr, for
   diagnosis. Close that tab before relaunching.
 - A Claude Code role (`engine.kind` `claude`) also gets a narrow

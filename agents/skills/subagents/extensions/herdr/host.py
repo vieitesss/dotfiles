@@ -56,6 +56,19 @@ def parent_workspace():
     return workspace
 
 
+def manager_pane_error(pane):
+    """Why pane cannot be this Manager's address, or None when it is."""
+    proc = subprocess.run(
+        ["herdr", "pane", "process-info", "--pane", pane],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        pid = json.loads(proc.stdout)["result"]["process_info"]["shell_pid"]
+    except (ValueError, KeyError, TypeError):
+        pid = None
+    return host_launch.manager_pane_error(pane, pid)
+
+
 def claude_extra(spec):
     """Claude Code flags that let the Subagent report and edit its report."""
     return [
@@ -127,6 +140,10 @@ def start(name, pane_id, argv, timeout_ms=DEFAULT_TIMEOUT_MS, kind="pi"):
 
 def launch(spec, target=None, timeout_ms=DEFAULT_TIMEOUT_MS):
     """Create a non-focused tab and start the Subagent in it."""
+    error = manager_pane_error(spec["manager"])
+    if error:
+        print(f"[subagent] refusing to launch {spec['name']}: {error}", file=sys.stderr)
+        return 2
     workspace = target or parent_workspace()
     kind = spec["engine"]["kind"]
     if kind == "claude":
