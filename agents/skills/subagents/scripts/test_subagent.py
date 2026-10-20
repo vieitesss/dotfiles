@@ -374,7 +374,7 @@ class EffortCapTest(TempRepoTest):
             for effort in ("xhigh", "max"):
                 with self.subTest(provider=provider, effort=effort):
                     profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
-                    self.assertEqual(profile["effort"], "medium")
+                    self.assertEqual(profile["effort"], "high")
 
     def test_builder_runs_gpt_6_1_sol_under_its_effort_ceiling(self):
         # HOME is a temp dir here, so no models store is read and the effort
@@ -385,7 +385,7 @@ class EffortCapTest(TempRepoTest):
             with contextlib.redirect_stderr(io.StringIO()):
                 profile = subagent.choose_profile("brief", "build", spec["model"])
         self.assertEqual(profile["model"], "github-copilot/gpt-6.1-sol")
-        self.assertEqual(profile["effort"], "medium")
+        self.assertEqual(profile["effort"], "high")
         profile["role"] = spec["role"]
         engine = subagent.engine_spec(profile)
         self.assertEqual(engine["kind"], "pi")
@@ -393,7 +393,7 @@ class EffortCapTest(TempRepoTest):
             engine["argv"][engine["argv"].index("--model") + 1],
             "github-copilot/gpt-6.1-sol",
         )
-        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "medium")
+        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "high")
 
     def test_builder_effort_clamps_to_the_levels_its_model_offers(self):
         """A model without a `medium` level gets the next level up instead."""
@@ -425,7 +425,7 @@ class EffortCapTest(TempRepoTest):
 
     def test_the_critic_keeps_its_existing_effort_ceiling(self):
         profile = self.choose("github-copilot/gpt-6.1-sol", "max")
-        self.assertEqual(profile["effort"], "medium")
+        self.assertEqual(profile["effort"], "high")
 
     def test_the_cap_only_ever_lowers_an_effort(self):
         profile = self.choose("github-copilot/gpt-6.1-sol", "low")
