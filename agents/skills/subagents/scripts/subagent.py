@@ -32,7 +32,7 @@ import urllib.request
 # Role: (model, when Jev should pick it). A Stage may pin a role.
 MODELS = {
     "builder": (
-        "opencode-go/deepseek-v4.1-flash",
+        "github-copilot/gpt-6.1-sol",
         "Code, research, and refactoring; the default.",
     ),
     "writer": (
