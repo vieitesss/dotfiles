@@ -124,10 +124,10 @@ local function nexo_launch(ctx, args, label)
 end
 
 rex.action({
-  name = "nexo_tui",
-  title = "nexo TUI",
+  name = "nexo_projects",
+  title = "nexo projects",
   run = function(ctx)
-    return nexo_launch(ctx, {}, "nexo")
+    return nexo_launch(ctx, { "projects" }, "nexo projects")
   end,
 })
 
@@ -141,5 +141,5 @@ rex.action({
 -- <<< nexo <<<
 
 -- nexo TUI, opened in a new tab of this session (tmux: prefix o / prefix a)
-bind("o", "nexo_tui")
+bind("o", "nexo_projects")
 bind("a", "nexo_agents")
