@@ -80,12 +80,28 @@ for _, k in ipairs({ "a", "e", "m", "o", "p" }) do
 	rex.bind("alt+" .. k, "pane.send_key", { key = "alt+" .. k })
 end
 -- >>> nexo >>>
-local nexo_bin = "/Users/vieitesprefapp/.local/bin/nexo"
 local nexo_terminal = "com.superlogical.terminal"
+
+-- Runs inside the new window, on the server that owns the session, which is
+-- not this one when the app is attached to a remote host. That server's
+-- client ID for the app is the block's owner, so the select goes there and
+-- nexo gets it as REX_CLIENT; ctx.client_id is only valid on this server.
+local nexo_wrapper = [=[
+rex="${REX_BIN_DIR:+$REX_BIN_DIR/}rex"
+REX_CLIENT=$("$rex" do - 2>/dev/null <<'LUA'
+local b = rex.session.describe_block{ block_id = rex.block_id }.block
+rex.call("client.perform", { client_id = b.owner, action = "session.select", origin = "key",
+  args = { session_id = rex.session_id, window_id = b.window_id } })
+print(b.owner)
+LUA
+)
+export REX_CLIENT
+exec "$HOME/.local/bin/nexo" --backend=rex tui "$@"
+]=]
 
 -- nexo opens in a new window of this session and closes it when the TUI exits.
 local function nexo_launch(ctx, args, label)
-  local argv = { "/usr/bin/env", "REX_CLIENT=" .. tostring(ctx.client_id or ""), nexo_bin, "--backend=rex", "tui" }
+  local argv = { "/bin/sh", "-c", nexo_wrapper, "nexo" }
   for _, arg in ipairs(args) do
     table.insert(argv, arg)
   end
@@ -104,8 +120,6 @@ local function nexo_launch(ctx, args, label)
     },
   }
   if err ~= nil then error(err, 0) end
-  -- The app keeps its own visible tab; ask it to show the new window.
-  rex.client.queue("session.select", { session_id = ctx.session_id, window_id = window.window_id })
   return window
 end
 
