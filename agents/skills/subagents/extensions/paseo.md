@@ -8,13 +8,11 @@ sessions; across machines, prepare the return route below instead.
 
 ## Remote sessions
 
-A Paseo Manager on a Mac can launch a Subagent on an RPi. There are two
-routes: the Subagent's daemon for launch, follow-up and close, and the
-Manager's daemon for reports. Identify the daemon actually hosting each
-agent: a Mac Paseo UI connected to an RPi daemon is still the same-daemon
-case. An agent id alone does not choose a daemon, and `PASEO_CLI` names an
-executable, not a remote destination. The example below has a Mac-hosted
-Manager and an RPi-hosted Subagent.
+Launch, follow-up and close target the Subagent's daemon; reports target the
+Manager's daemon. Identify where each agent actually runs: a Mac Paseo UI
+connected to an RPi daemon is still the same-daemon case. An agent id alone
+does not choose a daemon; `PASEO_CLI` names an executable, not a destination.
+The example below has a Mac Manager and an RPi Subagent.
 
 Before launching:
 
@@ -38,15 +36,12 @@ Before launching:
    After reporting or asking, end your turn; follow-ups arrive here.
    ```
 
-   Use an installed CLI path or an existing SSH wrapper if `paseo` is not on
-   the RPi's PATH. The explicit remote route in this file replaces the
-   same-daemon reporting commands below.
+   Use an installed CLI path or SSH wrapper if needed. This explicit route
+   replaces the same-daemon reporting commands below.
 3. Prepare on the RPi with `--extension /RPi/path/to/remote-paseo.md` and
-   `--manager MAC_AGENT_ID`, then run the launch helper there against the RPi
-   daemon. Preparation resolves all paths on the RPi. The helper refuses a
-   missing Manager address or a tmux pane address such as `%36` before any
-   daemon call. Same-daemon caller inheritance does not establish a return
-   route to the Mac.
+   `--manager MAC_AGENT_ID`, then launch against the RPi daemon. The helper
+   rejects a missing Manager or a tmux pane such as `%36` before any call;
+   caller inheritance does not establish a return route to the Mac.
 4. Keep the returned RPi `agentId` **with its daemon endpoint** in the Ledger.
    From the Mac, follow up and close against the RPi daemon:
 
@@ -71,24 +66,16 @@ printf '%s\n' "$spec" | python3 "$SKILL/extensions/paseo/host.py" launch [WORKSP
 Record `agentId` in the Ledger, end your turn, and wait for the Subagent's
 message.
 
-- **Placement.** An agent-scoped `paseo run` defaults to the caller's
-  workspace, so `--cwd` alone is honored only for your own directory. The
-  helper therefore picks: the workspace id you pass, else yours when `--cwd` is
-  your directory, else a workspace already rooted at `--cwd`, else a new
-  local workspace for it inside your workspace's project (it points at an
-  existing directory and creates no worktree). Only when the daemon cannot
-  name your project does the new workspace become a project of its own. An explicit workspace id is refused unless the daemon lists it and
-  its root is `--cwd`, because the CLI otherwise substitutes that root for the
-  prepared directory. Each Stage runs where `--cwd` says, never in a new
-  worktree, and no UI focus changes. If a successful run still reports another
-  directory, the helper archives that agent and refuses instead of letting it
-  edit there.
-- **Role.** `paseo run` has no system-prompt flag, so the helper sends the
-  spec's `prompt` as the first message; the Stage role leads it.
-- **Engine.** A `claude-code/<alias>` model runs `--provider claude --model
-  <alias>`, and Paseo resolves the alias; any other model runs `--provider pi
-  --model <provider/model>`. The effort is the spec's already-clamped engine
-  value, passed as `--thinking`.
+- **Placement.** `paseo run` defaults to the caller's workspace, so the helper
+  chooses: the explicit workspace, the caller's when `--cwd` matches, an
+  existing workspace rooted at `--cwd`, or a new local workspace in the
+  caller's project (a project of its own only if the daemon cannot identify
+  yours). It creates no worktree or focus change. The helper rejects an
+  explicit workspace not listed at `--cwd`, and archives and refuses an agent
+  that still lands in another directory.
+- **Engine.** Paseo receives the spec's prompt as its first message (there is
+  no system-prompt flag). `claude-code/<alias>` uses `--provider claude`;
+  other models use `--provider pi`. The spec's clamped effort is `--thinking`.
 - **Permissions.** Claude roles run `--mode auto`: Paseo keeps its permission
   checks and reviews tool calls instead of asking, so the Subagent can usually
   send its report unattended. Auto can still hold a request, and Paseo does not
@@ -121,15 +108,10 @@ python3 "$SKILL/extensions/paseo/host.py" send AGENT_ID "MESSAGE"
 python3 "$SKILL/extensions/paseo/host.py" archive AGENT_ID
 ```
 
-`send` never blocks, and long or multi-line text arrives whole. Delivery waits
-until the receiver is idle: the daemon interrupts a running turn when a message
-lands, cancelling the receiver's in-flight tool call, so a detached child waits
-for idle and then sends. Messages to one agent go out one per turn, never on
-top of each other. Every delivery writes to a log file the `send` output names,
-ending in DELIVERED or FAILED. `archive` ends
-the session and keeps its history; it forces the CLI so an accepted Subagent
-whose reporting turn is still running is interrupted instead of refusing to
-close.
+`send` queues whole messages until the receiver is idle, one per turn; an
+immediate send would interrupt a running tool call. Its output names a log
+ending in DELIVERED or FAILED. `archive` force-closes the session, interrupting
+any running turn while keeping history.
 
 When a TASK COMPLETE never arrives, `pending` lists idle `subagent-*` agents
 with their delivery state, undelivered first:
@@ -143,28 +125,15 @@ message: read its report from the Ledger path and follow up with `send`.
 
 ## Subagent: reporting
 
-Which case you are in is decided by the extension path in your prompt, not
-by inspecting the local machine. A path ending in `extensions/paseo.md` is
-a same-daemon session; a per-session file naming an explicit
-`paseo --host ...` reporting command is a remote session.
-
-Your prompt names the Manager's address. For a same-daemon session, reach it
-with the helper next to this file (`paseo/host.py` in the directory that holds
-it); the helper uses `$PASEO_CLI` when set, otherwise `paseo` on PATH. No
-`--host` destination is needed and its absence is not a reason to ask:
+Use the extension path in your prompt, not the local environment, to choose
+the route. For `extensions/paseo.md`, the prompt names the same-daemon Manager;
+the helper uses `$PASEO_CLI` or `paseo` on PATH. No `--host` is needed:
 
 ```bash
 python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
 python3 EXTENSIONS_DIR/paseo/host.py send MANAGER "[TAG] QUESTION: <question>"
 ```
 
-For a remote Manager, use the explicit reporting command in your per-session
-extension instead. Only there does the warning apply: a local CLI's default
-daemon is not the Mac's daemon.
-
-Your prompt carries both commands with the Manager's id and your tag already
-filled in: run them verbatim and never retype either. `send` validates the id
-before queueing and names the delivery log; a bad id fails in your own turn.
-
-Both are fire-and-forget, and the same-daemon helper holds the message until
-the Manager is idle instead of interrupting it.
+For a remote Manager, use the explicit command in your per-session extension;
+the local default daemon is not the Mac's. Run the exact commands in your
+prompt: the helper validates the id before queueing and names the delivery log.

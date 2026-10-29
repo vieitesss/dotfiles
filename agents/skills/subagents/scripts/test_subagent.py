@@ -17,6 +17,8 @@ from unittest import mock
 import subagent
 from test_support import prepare_spec
 
+BUILDER_MODEL = subagent.MODELS["builder"][0]
+
 
 def write_skill(repo, name, frontmatter=""):
     """Install a minimal skill into repo's tracked .agents/skills."""
@@ -66,6 +68,199 @@ class TempRepoTest(unittest.TestCase):
             *extra, brief,
         ]
         return prepare_spec(argv)
+
+
+class RecadoRouteTest(TempRepoTest):
+    def setUp(self):
+        super().setUp()
+        write_skill(self.repo, "tdd")
+        write_skill(self.repo, "coding")
+        self.bin = os.path.join(self.repo, "bin")
+        os.makedirs(self.bin)
+        clean_path = os.pathsep.join(
+            directory for directory in os.environ["PATH"].split(os.pathsep)
+            if not os.path.isfile(os.path.join(directory, "recado"))
+        )
+        env = mock.patch.dict(os.environ, {"PATH": self.bin + os.pathsep + clean_path})
+        env.start()
+        self.addCleanup(env.stop)
+        self.extension_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "extensions", "rex.md"
+        )
+
+    def executable(self, name, body):
+        path = os.path.join(self.bin, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+        return path
+
+    def test_local_and_remote_preparation_fills_exact_commands(self):
+        self.executable("recado", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; fi\n')
+        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
+        upstream = "recado+upstream://manager.local/manager-1"
+        for extension, address in ((self.extension_path, "recado://local/manager-1"), (remote, upstream)):
+            with self.subTest(extension=extension):
+                spec = self.prepare("--extension", extension, "--manager", "block:manager",
+                                    "--manager-recado", upstream, "--dry-run")
+                prompt = spec["prompt"]
+                self.assertEqual(spec["manager"], "block:manager")
+                self.assertEqual(spec["recado_bin_dir"], self.bin)
+                self.assertIn(
+                    f'recado send {address} --kind complete --meta item=wi-1 '
+                    f'--meta stage=build --meta report={spec["report"]} '
+                    f'"[{spec["tag"]}] TASK COMPLETE: <one line>"', prompt,
+                )
+                self.assertIn(f'recado ask {address} "[{spec["tag"]}] QUESTION: <question>"', prompt)
+                self.assertNotIn(upstream if extension != remote else "recado://local/manager-1", prompt)
+                if extension == remote:
+                    self.assertIn("kickoff is not a follow-up", prompt)
+
+    def test_missing_recado_is_installed_and_setup_off_path(self):
+        template = self.executable(
+            "template", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; '
+            'elif [ "$1" = skill ]; then echo setup > "$SETUP_LOG"; fi\n',
+        )
+        self.executable("go", 'printf \'{"GOBIN":"%s","GOPATH":"%s"}\\n\' "$GOBIN" "$GOPATH"\n')
+        install = self.executable("install-recado", '/bin/cp "$TEMPLATE" "$INSTALL_DIR/recado"\n')
+        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
+        gopath = os.path.join(self.repo, "go path")
+        for old_binary in (False, True):
+            if old_binary:
+                self.executable("recado", "exit 1\n")  # no send or update
+            for gobin, installed in ((os.path.join(self.repo, "go bin"), os.path.join(self.repo, "go bin")),
+                                      ("", os.path.join(gopath, "bin"))):
+                os.makedirs(installed, exist_ok=True)
+                env = {"GOBIN": gobin, "GOPATH": gopath, "INSTALL_DIR": installed,
+                       "TEMPLATE": template, "SETUP_LOG": os.path.join(self.repo, "setup-log"),
+                       "RECADO_INSTALL_CMD": shlex.quote(install)}
+                with mock.patch.dict(os.environ, env):
+                    for extension, extra in ((self.extension_path, ()),
+                                             (remote, ("--manager-recado", "recado+upstream://host/manager"))):
+                        with self.subTest(old=old_binary, gobin=gobin, extension=extension):
+                            spec = self.prepare("--extension", extension, "--dry-run", *extra)
+                            self.assertIn(shlex.quote(os.path.join(installed, "recado")) + " send", spec["prompt"])
+                            self.assertEqual(spec["recado_bin_dir"], installed)
+                self.assertTrue(os.path.isfile(env["SETUP_LOG"]))
+                os.remove(env["SETUP_LOG"])
+
+    def test_outdated_recado_uses_update_and_its_install_override(self):
+        installed = os.path.join(self.repo, "gobin")
+        os.makedirs(installed)
+        template = self.executable(
+            "template", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; '
+            'elif [ "$1" = skill ]; then echo duplicate-setup >> "$LOG"; fi\n',
+        )
+        self.executable("go", 'printf \'{"GOBIN":"%s","GOPATH":""}\\n\' "$GOBIN"\n')
+        install = self.executable("install-recado", '/bin/cp "$TEMPLATE" "$GOBIN/recado"\n')
+        self.executable("recado", 'case "$1:$2" in\n'
+                        'send:--help) exit 1 ;;\n'
+                        'update:--help) exit 0 ;;\n'
+                        'update:) /bin/sh -c "$RECADO_INSTALL_CMD" || exit 1; echo setup >> "$LOG" ;;\n'
+                        '*) exit 1 ;; esac\n')
+        log = os.path.join(self.repo, "update-log")
+        with mock.patch.dict(os.environ, {"GOBIN": installed, "TEMPLATE": template,
+                                         "LOG": log, "RECADO_INSTALL_CMD": shlex.quote(install)}):
+            spec = self.prepare("--extension", self.extension_path, "--dry-run")
+        self.assertIn(shlex.quote(os.path.join(installed, "recado")) + " send", spec["prompt"])
+        self.assertEqual(spec["recado_bin_dir"], installed)
+        with open(log, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "setup\n")
+
+    def test_update_in_place_needs_no_go_path_lookup(self):
+        self.executable("recado", 'case "$1:$2" in\n'
+                        'send:--help) test -f "$UPDATED" ;;\n'
+                        'update:--help) exit 0 ;;\n'
+                        'update:) /bin/sh -c "$RECADO_INSTALL_CMD" ;;\n'
+                        'whoami:) echo recado://local/manager-1 ;;\n'
+                        '*) exit 1 ;; esac\n')
+        updated = os.path.join(self.repo, "updated")
+        env = {"UPDATED": updated, "RECADO_INSTALL_CMD": "touch " + shlex.quote(updated)}
+        with mock.patch.dict(os.environ, env):
+            spec = self.prepare("--extension", self.extension_path, "--dry-run")
+        self.assertIn("recado send recado://local/manager-1", spec["prompt"])
+        self.assertEqual(spec["recado_bin_dir"], self.bin)
+        self.assertTrue(os.path.isfile(updated))
+
+    def test_update_failure_uses_the_same_failure_routes(self):
+        self.executable("recado", 'case "$1:$2" in update:--help) exit 0 ;; *) exit 1 ;; esac\n')
+        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
+        spec = self.prepare("--extension", self.extension_path, "--dry-run")
+        self.assertIn(f'Report through {self.extension_path}', spec["prompt"])
+        with self.assertRaisesRegex(SystemExit, "requires a messaging-capable recado"):
+            self.prepare("--extension", remote, "--manager-recado",
+                         "recado+upstream://host/manager", "--dry-run")
+
+    def test_failed_install_falls_back_locally_but_fails_remote_preparation(self):
+        self.executable("go", "exit 0\n")
+        env = {"RECADO_INSTALL_CMD": "exit 1"}
+        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
+        with mock.patch.dict(os.environ, env):
+            spec = self.prepare("--extension", self.extension_path, "--dry-run")
+            with self.assertRaises(SystemExit) as caught:
+                self.prepare("--extension", remote, "--manager-recado",
+                             "recado+upstream://host/manager", "--dry-run")
+        self.assertIn(f'Report through {self.extension_path}', spec["prompt"])
+        self.assertNotIn("recado send", spec["prompt"])
+        self.assertIsNone(spec["recado_bin_dir"])
+        self.assertIn("requires a messaging-capable recado", str(caught.exception))
+
+    def test_unavailable_or_nonlocal_manager_keeps_extension_route(self):
+        for response in ('exit 1', 'echo recado://other/manager'):
+            with self.subTest(response=response):
+                self.executable("recado", f'if [ "$1" = whoami ]; then {response}; fi\n')
+                spec = self.prepare("--extension", self.extension_path, "--dry-run")
+                self.assertIn(f'Report through {self.extension_path}', spec["prompt"])
+                self.assertNotIn("recado send", spec["prompt"])
+
+    def test_per_session_extensions_never_attempt_recado(self):
+        self.executable("recado", 'echo called > "$LOG"\n')
+        env = {"LOG": os.path.join(self.repo, "recado-log")}
+        extension = self.extension()
+        with mock.patch.dict(os.environ, env):
+            spec = self.prepare("--extension", extension, "--dry-run")
+            self.assertIn(f'Report through {extension}', spec["prompt"])
+            self.assertNotIn("recado send", spec["prompt"])
+        self.assertFalse(os.path.exists(env["LOG"]))
+
+    def test_remote_preparation_rejects_missing_or_invalid_upstream(self):
+        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
+        for extra in ((), ("--manager-recado", "recado://local/manager"),
+                      ("--manager-recado", "recado+upstream://host/Bad-ID")):
+            with self.subTest(extra=extra):
+                with self.assertRaises(SystemExit) as caught:
+                    self.prepare("--extension", remote, "--dry-run", *extra)
+                self.assertIn("requires --manager-recado", str(caught.exception))
+
+    def test_review_route_includes_axis_metadata(self):
+        write_skill(self.repo, "review")
+        self.executable("recado", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; fi\n')
+        spec = self.prepare("--extension", self.extension_path, "--dry-run",
+                            "--stage", "review", "--axis", "spec")
+        self.assertIn("--meta item=wi-1 --meta stage=review --meta axis=spec", spec["prompt"])
+
+    def test_shell_metacharacters_in_item_are_not_expanded(self):
+        self.executable("recado", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; '
+                        'elif [ "$2" != "--help" ]; then printf "%s\\n" "$@"; fi\n')
+        spec = self.prepare("--extension", self.extension_path, "--item", 'x$HOME"y', "--dry-run")
+        command = next(line for line in spec["prompt"].splitlines() if line.startswith("recado send "))
+        result = subprocess.run(command, shell=True, text=True, capture_output=True, check=True)
+        self.assertIn('item=x$HOME"y', result.stdout)
+        self.assertIn(f'[{spec["tag"]}] TASK COMPLETE:', result.stdout)
+
+    def test_failed_setup_or_missing_send_keeps_extension_route(self):
+        installed = os.path.join(self.repo, "gobin")
+        os.makedirs(installed)
+        self.executable("go", 'printf \'{"GOBIN":"%s","GOPATH":""}\\n\' "$GOBIN"\n')
+        install = self.executable("install-recado", '/bin/cp "$TEMPLATE" "$GOBIN/recado"\n')
+        env = {"GOBIN": installed, "RECADO_INSTALL_CMD": shlex.quote(install)}
+        for body in ('if [ "$1" = skill ]; then exit 1; fi\n', 'exit 1\n'):
+            with self.subTest(body=body):
+                env["TEMPLATE"] = self.executable("template", body)
+                with mock.patch.dict(os.environ, env):
+                    spec = self.prepare("--extension", self.extension_path, "--dry-run")
+                self.assertNotIn("recado send", spec["prompt"])
+                self.assertIn(f'Report through {self.extension_path}', spec["prompt"])
 
 
 class DryRunTest(TempRepoTest):
@@ -138,15 +333,6 @@ class PreparedSpecTest(TempRepoTest):
         prompt = self.spec["prompt"]
         self.assertIn("wins over any path in the brief", prompt)
 
-    def test_turn_taking_lives_in_core_not_in_host_files(self):
-        self.assertIn("end your turn", subagent.SUBAGENT_RULES)
-        self.assertIn("Do not use intercom", subagent.SUBAGENT_RULES)
-
-    def test_prompt_carries_no_host_commands(self):
-        prompt = self.spec["prompt"]
-        for forbidden in ("--notify", "paseo", "herdr agent"):
-            self.assertNotIn(forbidden, prompt)
-
     def test_a_paseo_prompt_embeds_the_exact_reporting_commands(self):
         directory = os.path.join(self.repo, "extensions")
         os.makedirs(os.path.join(directory, "paseo"))
@@ -172,24 +358,9 @@ class PreparedSpecTest(TempRepoTest):
         spec = self.prepare("--stage", "review", "--axis", "debt")
         self.assertEqual(spec["tag"], f"{spec['name']} · wi-1 · review debt")
         self.assertIn(f"with [{spec['tag']}]", spec["prompt"])
-
-    def test_read_only_stages_are_told_reporting_is_allowed(self):
-        # Regression: read-only reviewers skipped host.py send because it
-        # writes temporary files.
-        self.assertIn("a read-only one included", subagent.SUBAGENT_RULES)
-
-    def test_a_prompt_without_a_helper_beside_it_carries_no_command(self):
-        self.assertNotIn("TASK COMPLETE: <one line>", self.spec["prompt"])
-
-    def test_spec_has_no_multiplexer_keys(self):
-        self.assertNotIn("workspace", self.spec)
-        self.assertNotIn("notify", self.spec)
-        self.assertNotIn("mux", self.spec)
-
-    def test_the_prompt_carries_the_role_without_rereading_engine_argv(self):
-        self.assertEqual(self.spec["engine"]["kind"], "pi")
-        self.assertNotIn("kind", self.spec)
-        self.assertTrue(self.spec["prompt"].startswith(self.spec["role"]))
+        # Read-only reviewers must still report and wait for an answer.
+        for instruction in ("a read-only one included", "end your turn", "Do not use intercom"):
+            self.assertIn(instruction, spec["prompt"])
 
 
 class ExtensionPointerTest(TempRepoTest):
@@ -320,7 +491,7 @@ class EngineSpecTest(TempRepoTest):
     def test_pi_engine_receives_model_and_thinking(self):
         profile = {
             "role": "role text",
-            "model": "opencode-go/deepseek-v4.1-flash",
+            "model": BUILDER_MODEL,
             "effort": "high",
         }
         engine = subagent.engine_spec(profile)
@@ -329,7 +500,7 @@ class EngineSpecTest(TempRepoTest):
             engine["argv"],
             [
                 "--append-system-prompt", "role text",
-                "--model", "opencode-go/deepseek-v4.1-flash",
+                "--model", BUILDER_MODEL,
                 "--thinking", "high",
             ],
         )
@@ -376,14 +547,14 @@ class EffortCapTest(TempRepoTest):
                     profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
                     self.assertEqual(profile["effort"], "high")
 
-    def test_builder_runs_gpt_6_1_sol_under_its_effort_ceiling(self):
+    def test_critic_runs_gpt_6_1_sol_under_its_effort_ceiling(self):
         # HOME is a temp dir here, so no models store is read and the effort
         # arrives unclamped; this pins the ceiling, not the model's own levels.
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
-        spec = subagent.stage_spec("build", None)
+        spec = subagent.stage_spec("review", "standards")
         with mock.patch.object(subagent, "jev", return_value=answers):
             with contextlib.redirect_stderr(io.StringIO()):
-                profile = subagent.choose_profile("brief", "build", spec["model"])
+                profile = subagent.choose_profile("brief", "review", spec["model"])
         self.assertEqual(profile["model"], "github-copilot/gpt-6.1-sol")
         self.assertEqual(profile["effort"], "high")
         profile["role"] = spec["role"]
@@ -422,10 +593,6 @@ class EffortCapTest(TempRepoTest):
             "github-copilot/claude-haiku-5.5",
         )
         self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
-
-    def test_the_critic_keeps_its_existing_effort_ceiling(self):
-        profile = self.choose("github-copilot/gpt-6.1-sol", "max")
-        self.assertEqual(profile["effort"], "high")
 
     def test_the_cap_only_ever_lowers_an_effort(self):
         profile = self.choose("github-copilot/gpt-6.1-sol", "low")

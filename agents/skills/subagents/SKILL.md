@@ -3,21 +3,13 @@ name: subagents
 description: Launch a Subagent for one Stage of a Work Item in its own session, exchange messages with it, and close it. Use when the Manager delegates a Stage.
 ---
 
-Launching is the Manager's move: the `manager` skill decides when to delegate
-and what a brief carries. A Subagent runs one Stage and reports; the prepared
-prompt already tells it so.
-
-Two parts do the work. `scripts/subagent.py` prepares the Stage the same way on
-every host: it validates the Stage, picks the model and effort, and prints one
-JSON launch spec whose `prompt` carries the Stage role, skills, report path and
-how to reach you. A host extension, a Markdown file you read, starts the
-session from that spec.
+The `manager` skill decides when to delegate and what a brief carries.
+`scripts/subagent.py` prepares one Stage and prints its JSON launch spec;
+a host extension starts the session from it.
 
 **Before preparation**, read [`extensions.md`](extensions.md) and the chosen
-host file. Choose for the Manager's conversation, not for the shell executing
-the command. A Manager on a Mac can launch a Stage on an RPi; that RPi's tmux
-pane is not the Manager's address. Follow the host file's remote-session
-instructions when the machines differ.
+host file. Choose for the Manager's conversation, not the shell executing the
+command; follow the host's remote instructions when the machines differ.
 
 ```bash
 SKILL=~/.agents/skills/subagents
@@ -37,15 +29,10 @@ runs anywhere.
 
 ## Extensions
 
-The chosen host file gives the launch, follow-up and close commands, and what
-the Subagent runs to reach you. A file anywhere else works as an `--extension`
-too, including a per-session file holding a remote return route.
-
-`--manager` is required: your own native address on the Manager's host. The
-extension and address travel in the prompt. Prepare on the Stage's machine so
-`--cwd`, skill paths, report path and `--extension` are readable there; a Mac
-path does not identify an RPi file. For Paseo across machines, use the
-[remote-session instructions](extensions/paseo.md#remote-sessions).
+The host file gives launch, follow-up, close and fallback reporting commands;
+`--extension` also accepts a per-session file. `--manager` is your native
+address on the Manager's host, used for validation and fallback. Prepare on the
+Stage's machine so `--cwd`, skills, report path and extension are readable.
 
 ## Stage and profile
 
@@ -65,42 +52,50 @@ file. Prove loads the repo's `verify-*` skills, so it needs at least one.
 
 ## Reports
 
-Each Subagent writes its full report to
-`.agents/reports/<item>-<stage>[-<axis>].md` in the main checkout, even when
-it works in a worktree, and sends a one-line TASK COMPLETE pointing at it.
-The spec's report path wins over any path in the brief. Keep `--item`
-free of the Stage name (`batch`, not `batch-review`).
-A Stage is finished only when all three are true: the report file is
-written, the TASK COMPLETE has gone out through the extension's reporting
-command, and the send is confirmed delivered (the Paseo helper names a
-delivery log ending in DELIVERED; the other hosts report synchronously).
-Send in the same turn the work finishes, before any summary to the user:
-a written report with no confirmed send is still an open Stage.
-Preparation adds `.agents/ledger.md` and `.agents/reports/` to the repo's
-`.git/info/exclude`.
+Each Subagent writes `.agents/reports/<item>-<stage>[-<axis>].md` in the main
+checkout and sends a one-line TASK COMPLETE pointing at it in the same turn.
+The spec's report path wins over the brief. Keep `--item` free of the Stage
+name (`batch`, not `batch-review`). A report without a successful send leaves
+the Stage open. For recado, exit 0 means stored; do not poll. For fallback,
+confirm delivery (Paseo names a log ending in DELIVERED; other hosts report
+synchronously).
 
-A fresh worktree holds tracked files only. Preparation also finds untracked
-project skills (`.agents/skills/…`) in the main checkout and hands every
-Subagent its skills by absolute path.
-
-To work in a worktree, create it first, then pass its path as `--cwd`; the
-extension says where its host puts the session.
+Preparation excludes `.agents/ledger.md` and `.agents/reports/` from git and
+finds even untracked main-checkout project skills. To work in a worktree,
+create it first and pass its path as `--cwd`.
 
 ## Messages
 
 Every message starts with the Subagent's tag,
 `[subagent-<stage>-<pid> · <item> · <stage>[ <axis>]]`, so you always know
 which Work Item, Stage, and axis it is about. Preparation fills the tag into
-the prompt; the spec's `tag` holds it. The extension says how messages
-travel:
+the prompt; the spec's `tag` holds it. Preparation selects the route:
+
+- Shipped same-machine hosts use recado when it supports `send` and `whoami`
+  identifies the Manager. The prompt supplies exact send/ask commands with
+  address, tag and report metadata. The launcher sets `RECADO_ADDR` to the
+  spec `name`: reply with `recado reply ID` and send follow-ups to that name.
+- [Rex remote](extensions/rex-remote.md) requires a messaging-capable recado
+  and `--manager-recado` on the Stage's machine; invalid input fails preparation.
+  The prompt uses that upstream address, not remote `whoami`.
+- Otherwise use the extension's reporting commands, including for other remote
+  and per-session files.
+
+If recado lacks `send`, preparation (including `--dry-run`) uses `recado update`
+when available. With no executable or an older one without `update`, it
+bootstraps with `go install` and `recado skill setup`. `RECADO_INSTALL_CMD`
+overrides either installer. Failure or an unidentified local Manager selects
+the fallback; failure on Rex remote stops preparation. Restart an already
+running Manager if newly installed harness shims cannot identify it.
+
+Messages are:
 
 - `[…] TASK COMPLETE: <summary>`: the Stage is done; the report file holds
   the detail.
 - `[…] QUESTION: <question>`: it waits for your answer.
 
-Any other tagged message that asks for a choice is a question too. Answer, or
-send a follow-up after a report, with the extension's follow-up command. A
-follow-up earns a fresh TASK COMPLETE.
+Any tagged message asking for a choice is a question. Answer or send a
+follow-up over the selected route; a follow-up earns a fresh TASK COMPLETE.
 
 ## Waiting
 
@@ -112,6 +107,6 @@ A host can hold a Subagent on an approval only the user can give; when the user
 reports a stall, the extension says how to surface it. A launch that fails
 leaves what the host created; the extension says what that is and how to
 inspect or close it. Close the Subagent's session with the extension's close
-command once you have accepted the report. If a TASK COMPLETE never arrives,
-the Paseo extension's `pending` command lists idle Subagents with delivery
-state; the other hosts report synchronously and need no backstop.
+command once you have accepted the report. On the fallback route, if a TASK
+COMPLETE never arrives, the Paseo extension's `pending` command lists idle
+Subagents with delivery state; the other hosts report synchronously.

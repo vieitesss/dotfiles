@@ -2,7 +2,7 @@
 
 Pick this file when `HERDR_ENV` is set and you are not a Paseo agent: the
 Subagent gets a tab in your herdr workspace. Pass its absolute path as
-`--extension`; the Subagent is told to read it to report.
+`--extension`; it also describes the fallback reporting route.
 
 ## Manager: launching a Stage
 
@@ -31,16 +31,6 @@ the Ledger.
   that pane and submitted.
 - A failed launch exits 2 and leaves the tab open, with its ids on stderr, for
   diagnosis. Close that tab before relaunching.
-- A Claude Code role (`engine.kind` `claude`) also gets a narrow
-  `--allowedTools` list: `Bash(herdr agent prompt *)` (the report path to the
-  Manager) and `Edit(//<report path>)` for the report file (Claude Code's
-  absolute-path form). These allowlisted reporting commands and report edits
-  run without approval; other tool calls remain subject to Claude Code's
-  permission checks. There is no broad bypass, and herdr launches get no
-  `--mode auto`. Because interactive `claude` cannot skip its workspace-trust dialog,
-  the helper also pre-accepts that dialog for the prepared directory by setting
-  `projects[<cwd>].hasTrustDialogAccepted` in `~/.claude.json` before launch.
-  Only that directory is marked trusted.
 
 For a workspace of its own on a project or worktree, create it without focus
 and pass its id as `WORKSPACE`:
@@ -59,9 +49,8 @@ python3 "$SKILL/extensions/herdr/host.py" notify SUBAGENT_NAME "MESSAGE"
 python3 "$SKILL/extensions/herdr/host.py" close TAB
 ```
 
-`notify` runs `herdr agent prompt`, so you can also call that directly. If
-herdr rejects a prompt (for example `agent_blocked`), wait a few seconds and
-retry. Close the tab once the report is accepted.
+`notify` runs `herdr agent prompt`. If herdr rejects a prompt (for example
+`agent_blocked`), wait a few seconds and retry. Close after accepting the report.
 
 ## Subagent: reporting
 

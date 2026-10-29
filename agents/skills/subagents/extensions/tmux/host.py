@@ -4,20 +4,22 @@
 Reads the launch spec printed by scripts/subagent.py on stdin.
 
 Usage:
-    host.py launch [SESSION]        # spec on stdin, prints {"window", "pane", ...}
-    host.py notify PANE MESSAGE     # type a message into the Manager's pane
+    host.py launch [--remote-manager] [SESSION]
+                                    # spec on stdin, prints {"window", "pane", ...}
+    host.py notify PANE MESSAGE     # type a message into a marked pane
     host.py close WINDOW            # kill the Subagent's window
 
 SESSION defaults to the calling agent's tmux session, taken from TMUX_PANE,
-never whichever session is attached.
+never whichever session is attached. With --remote-manager the Manager runs on
+another machine: its address is never typed into here, and without TMUX_PANE
+or SESSION the window goes to a detached
+"subagents" session, created when missing.
 """
 
 import json
 import os
-import shlex
 import subprocess
 import sys
-import tempfile
 import time
 
 # Launch mechanics shared with the other interactive host extensions.
@@ -26,36 +28,14 @@ EXTENSIONS_DIR = os.path.normpath(
 )
 sys.path.insert(0, EXTENSIONS_DIR)
 import host_launch  # noqa: E402
+from host_launch import clip  # noqa: E402
 
 HOST = os.path.abspath(__file__)
 # Pane option launch sets on the Manager's and the Subagent's panes; notify
 # types only into a pane that carries it.
 NOTIFY_MARK = "@subagent-notify"
 STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
-# Allow slow login shells (including 35s startup) without retaining orphaned
-# secret env files indefinitely. Only the env file is age-swept, never the task.
-TEMP_FILE_SWEEP = 120
-# Parent variables a child inherits even though tmux spawns it from the
-# server's environment; the child sources them from a 0600 temp file.
-PASSTHROUGH_ENV = ["TYPESAFE_API_KEY"]
-
-# A login shell is not enough for the environment (zsh reads ~/.zprofile, not
-# ~/.profile), so the child sources the allowlisted env file and deletes it
-# before exec. The task travels through a second temp file because tmux rejects
-# over-long commands; that file is never age-swept.
-CHILD_SCRIPT = (
-    'if ! prompt=$(cat "$1"); then '
-    'printf "%s\\n" "[subagent] cannot read prompt file: $1" >&2; '
-    'rm -f "$1" "$2"; exit 1; fi; '
-    'rm -f "$1"; if [ -r "$2" ]; then . "$2"; fi; rm -f "$2"; '
-    'shift 2; exec "$@" "$prompt"'
-)
-
-
-def clip(text, limit=2000):
-    """A failure detail capped at limit characters; a length limit, not redaction."""
-    text = (text or "").strip()
-    return text if len(text) <= limit else f"{text[:limit]}…"
+REMOTE_SESSION = "subagents"  # session for a remote Manager's Subagents
 
 
 def tmux(*args, check=True, input=None):
@@ -104,92 +84,19 @@ def notify(pane, message):
     tmux("send-keys", "-t", pane, "Enter")
 
 
-def claude_extra(spec):
-    """Claude Code flags that let the Subagent report and edit its report."""
-    notify_cmd = f"python3 {HOST} notify"
-    return [
-        "--allowedTools",
-        f"Bash({notify_cmd} *)",
-        f"Bash({sys.executable} {HOST} notify *)",
-        f"Edit(/{spec['report']})",
-    ]
-
-
-def child_env_file(path):
-    """0600 temp file exporting allowlisted parent variables for the child."""
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
-        handle = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
-    except BaseException:
-        os.close(fd)
-        remove_temp(path)
-        raise
-    try:
-        with handle:
-            for var in PASSTHROUGH_ENV:
-                value = os.environ.get(var)
-                if value is not None:
-                    handle.write(f"export {var}={shlex.quote(value)}\n")
-    except BaseException:
-        remove_temp(path)
-        raise
-    return path
-
-
-def remove_temp(*paths):
-    for path in paths:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-def engine_argv(spec):
-    argv = list(spec["engine"]["argv"])
-    if spec["engine"]["kind"] == "claude":
-        argv += claude_extra(spec)
-    return argv
-
-
-def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
+def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi", recado_bin_dir=None):
     """Start the agent in the tmux pane with the task as its first message.
 
     The pane remains after the agent exits, so a failed launch stays visible.
     """
     tmux("set-option", "-w", "-t", pane_id, "remain-on-exit", "on")
-    shell = os.environ.get("SHELL", "/bin/sh")
 
     def start(extra):
-        path = env_path = None
-        env_created = False
+        command, temps = host_launch.child_command(name, prompt, kind, extra, recado_bin_dir)
         try:
-            fd, path = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(prompt)
-            env_path = os.path.join(
-                tempfile.gettempdir(),
-                f"subagent-env-{os.getpid()}-{os.urandom(8).hex()}",
-            )
-            subprocess.Popen(
-                [
-                    "/bin/sh", "-c", 'sleep "$1"; rm -f "$2"',
-                    "_", str(TEMP_FILE_SWEEP), env_path,
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            child_env_file(env_path)
-            env_created = True
-            tmux(
-                "respawn-pane", "-k", "-t", pane_id, "-c", cwd, "--",
-                shell, "-lc", CHILD_SCRIPT, name, path, env_path, kind, *extra, "--",
-            )
+            tmux("respawn-pane", "-k", "-t", pane_id, "-c", cwd, "--", *command)
         except BaseException:
-            remove_temp(path)
-            if env_created:
-                remove_temp(env_path)
+            host_launch.remove_temp(*temps)
             raise
 
         deadline = time.monotonic() + STARTUP_GRACE
@@ -200,7 +107,7 @@ def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
                 capture_output=True, text=True, check=False,
             )
             if pane_state.returncode != 0 or pane_state.stdout.strip() != f"{pane_id} 0":
-                remove_temp(path, env_path)
+                host_launch.remove_temp(*temps)
                 return False
             time.sleep(0.25)
         return True
@@ -223,18 +130,29 @@ def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi"):
     return False
 
 
-def launch(spec, target=None):
-    """Create a window in the target session and start the Subagent in it."""
+def launch(spec, target=None, remote_manager=False):
+    """Create a window in the target session and start the Subagent in it.
+
+    A remote Manager's address is on another machine: it is neither checked
+    nor marked here.
+    """
     name = spec["name"]
     cwd = spec["cwd"]
     kind = spec["engine"]["kind"]
-    error = manager_pane_error(spec["manager"])
+    error = None if remote_manager else manager_pane_error(spec["manager"])
     if error:
         print(f"[subagent] refusing to launch {name}: {error}", file=sys.stderr)
         return 2
     if kind == "claude":
         host_launch.trust_claude_dir(cwd)
-    session = target or tmux_session()
+    if target:
+        session = target
+    elif remote_manager and not os.environ.get("TMUX_PANE"):
+        session = f"={REMOTE_SESSION}"
+        if subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode:
+            tmux("new-session", "-d", "-s", REMOTE_SESSION, "-c", cwd)
+    else:
+        session = tmux_session()
     window, pane = tmux(
         "new-window", "-d", "-P", "-F", "#{window_id} #{pane_id}",
         "-t", f"{session}:", "-c", cwd, "-n", name,
@@ -244,10 +162,12 @@ def launch(spec, target=None):
         f"model {spec['model']} effort {spec['effort']}",
         file=sys.stderr,
     )
-    if not launch_tmux(name, pane, engine_argv(spec), spec["prompt"], cwd, kind=kind):
+    argv = host_launch.engine_argv(spec, f"python3 {HOST} notify", f"{sys.executable} {HOST} notify")
+    if not launch_tmux(name, pane, argv, spec["prompt"], cwd, kind=kind, recado_bin_dir=spec.get("recado_bin_dir")):
         return 2
-    mark_pane(spec["manager"])
-    mark_pane(pane)
+    if not remote_manager:
+        mark_pane(spec["manager"])
+        mark_pane(pane)
     print(
         json.dumps(
             {
@@ -265,7 +185,9 @@ def launch(spec, target=None):
 def main(argv):
     command = argv[0] if argv else "launch"
     if command == "launch":
-        return launch(json.load(sys.stdin), argv[1] if len(argv) > 1 else None)
+        remote = "--remote-manager" in argv[1:]
+        rest = [arg for arg in argv[1:] if arg != "--remote-manager"]
+        return launch(json.load(sys.stdin), rest[0] if rest else None, remote)
     if command == "notify" and len(argv) == 3:
         notify(argv[1], argv[2])
         return 0

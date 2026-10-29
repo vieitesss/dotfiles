@@ -35,15 +35,12 @@ import sys
 import tempfile
 import time
 
-DETAIL_LIMIT = 2000
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import host_launch  # noqa: E402
+from host_launch import clip  # noqa: E402
+
 DELIVER_WAIT = 3600  # seconds a queued message waits for an idle receiver
 PICKUP_WAIT = 15  # seconds to see the receiver start the delivered turn
-
-
-def clip(text, limit=DETAIL_LIMIT):
-    """A failure detail capped at limit characters; a length limit, not redaction."""
-    text = (text or "").strip()
-    return text if len(text) <= limit else f"{text[:limit]}…"
 
 
 def run_cli(*args):
@@ -209,7 +206,7 @@ def run_argv(spec, workspace=None):
     role itself.
     """
     argv = ["run", "--background", "--json", "--title", spec["name"]]
-    argv += workspace_argv(spec["cwd"], workspace, spec["name"])
+    argv += host_launch.identity_env(spec) + workspace_argv(spec["cwd"], workspace, spec["name"])
     if spec["engine"]["kind"] == "claude":
         argv += ["--provider", "claude"]
         model = (spec["model"] or "").partition("/")[2]

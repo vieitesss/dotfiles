@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Tests for the session-host extensions.
 
-Fake `paseo`, `herdr`, and `tmux` executables stand in for the real CLIs and
-record every call, so nothing is launched. The one real tmux exercise runs
-through scripts/tmux-sandbox, never the live server.
+Fake `paseo`, `herdr`, `tmux`, and `rex` executables stand in for the real
+CLIs and record every call, so nothing is launched. The one real tmux exercise
+runs through scripts/tmux-sandbox, and the real Rex exercise through a private
+Rex server, never the live ones.
 """
 
 import contextlib
@@ -21,6 +22,8 @@ from unittest import mock
 
 import subagent
 from test_support import prepare_spec
+
+BUILDER_MODEL = subagent.MODELS["builder"][0]
 
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(SKILL)))
@@ -57,13 +60,39 @@ elif name == "paseo" and args[:1] == ["inspect"]:
 elif name == "herdr" and args[:2] == ["tab", "create"]:
     print(json.dumps({"result": {"root_pane": {"pane_id": "1-1"},
                                  "tab": {"tab_id": "1:1"}}}))
+elif name == "herdr" and args[:2] == ["pane", "process-info"]:
+    print(json.dumps({"result": {"process_info": {
+        "shell_pid": int(os.environ["FAKE_MANAGER_PID"])}}}))
 elif name == "tmux":
-    if args[:1] == ["new-window"]:
+    if args[:1] == ["has-session"] and os.environ.get("FAKE_NO_SESSION"):
+        sys.exit(1)
+    elif args[:1] == ["new-window"]:
         print("@1 %1")
+    elif args[:1] == ["display-message"] and "#{pane_pid}" in args:
+        print(os.environ["FAKE_MANAGER_PID"])
     elif args[:1] == ["display-message"]:
         print("%1 0")
+    elif args[:1] == ["show-options"]:
+        print("1")
     elif args[:1] == ["load-buffer"]:
         sys.stdin.read()
+elif name == "recado" and args[:1] == ["send"]:
+    if os.environ.get("FAKE_RECADO_FAILURE"):
+        print("recado delivery failed", file=sys.stderr)
+        sys.exit(1)
+    print("sent-1")
+elif name == "rex":
+    if args[:2] == ["window", "new"]:
+        print(json.dumps({"window_id": "window:w1", "block_ids": ["block:b1"]}))
+    elif args[:2] == ["block", "call"] and args[-1] == "process":
+        block = args[args.index("-b") + 1]
+        pid = int(os.environ["FAKE_MANAGER_PID"]) if block != "block:b1" else 99999
+        print(json.dumps({"last_exit": None, "child": {"pid": pid}}))
+    elif args[:2] == ["block", "inspect"]:
+        print(json.dumps({"session_id": "session:s1"}))
+    elif args[:2] == ["api", "call"]:
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(["rex-stdin", sys.stdin.read()]) + "\\n")
 '''
 
 
@@ -75,7 +104,7 @@ class HostTest(unittest.TestCase):
         self.bin = os.path.join(self.work, "bin")
         os.makedirs(self.bin)
         self.log = os.path.join(self.work, "log")
-        for name in ("paseo", "herdr", "tmux"):
+        for name in ("paseo", "herdr", "tmux", "rex", "recado"):
             path = os.path.join(self.bin, name)
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(FAKE_CLI)
@@ -86,8 +115,11 @@ class HostTest(unittest.TestCase):
             PATH=os.pathsep.join([self.bin, os.environ.get("PATH", "")]),
             HOME=self.work,
             PASEO_CLI=os.path.join(self.bin, "paseo"),
+            FAKE_MANAGER_PID=str(os.getpid()),
+            XDG_STATE_HOME=os.path.join(self.work, "state"),
         )
         self.env.pop("TYPESAFE_API_KEY", None)
+        self.env.pop("PASEO_AGENT_ID", None)
 
     def run_host(self, host, *args, spec=None, env=None):
         command = [
@@ -109,6 +141,15 @@ class HostTest(unittest.TestCase):
 
     def call_for(self, name):
         return [args for called, args in self.calls() if called == name]
+
+    def actions_for(self, name):
+        """call_for minus the read-only Manager-pane and notify-mark checks."""
+        checks = (["pane", "process-info"], ["show-options"], ["block", "call"])
+        return [
+            args for args in self.call_for(name)
+            if not any(args[:len(c)] == c for c in checks)
+            and not (args[:1] == ["display-message"] and "#{pane_pid}" in args)
+        ]
 
     def run_call(self):
         return [args for args in self.call_for("paseo") if args[:1] == ["run"]][0]
@@ -132,7 +173,7 @@ class HostTest(unittest.TestCase):
         os.chmod(path, 0o755)
         return path
 
-    def spec(self, kind="pi", model="opencode-go/deepseek-v4.1-flash", effort="high"):
+    def spec(self, kind="pi", model=BUILDER_MODEL, effort="high"):
         role = "STAGE ROLE"
         engine = {"kind": kind, "argv": ["--append-system-prompt", role]}
         if kind == "claude":
@@ -210,8 +251,11 @@ class PaseoHostTest(HostTest):
 
     def test_pi_launch_uses_the_pi_provider_and_full_model(self):
         spec = self.spec()
-        proc = self.run_host("paseo", "launch", spec=spec)
+        spec["recado_bin_dir"] = "/custom/recado bin"
+        env = dict(self.env, TYPESAFE_API_KEY="manager-secret")
+        proc = self.run_host("paseo", "launch", spec=spec, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("manager-secret", json.dumps(self.calls()))
         self.assertEqual(json.loads(proc.stdout)["agentId"], "agent-42")
 
         argv = self.run_call()
@@ -222,6 +266,9 @@ class PaseoHostTest(HostTest):
         self.assertEqual(argv[argv.index("--thinking") + 1], "high")
         self.assertEqual(argv[argv.index("--cwd") + 1], spec["cwd"])
         self.assertEqual(argv[argv.index("--title") + 1], spec["name"])
+        self.assertIn("RECADO_ADDR=" + spec["name"], argv)
+        self.assertIn("PATH=/custom/recado bin:" + self.env["PATH"], argv)
+        self.assertNotIn("--mode", argv)
         self.assertEqual(argv[-1], spec["prompt"])
 
     def test_claude_launch_uses_the_claude_provider_and_alias(self):
@@ -232,20 +279,8 @@ class PaseoHostTest(HostTest):
         self.assertEqual(argv[argv.index("--provider") + 1], "claude")
         self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
         self.assertEqual(argv[argv.index("--thinking") + 1], "low")
-
-    def test_claude_keeps_permission_checks_through_auto_mode(self):
-        proc = self.run_host(
-            "paseo", "launch", spec=self.spec(kind="claude", model="claude-code/sonnet")
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        argv = self.run_call()
         self.assertEqual(argv[argv.index("--mode") + 1], "auto")
         self.assertNotIn("bypassPermissions", argv)
-
-    def test_pi_launch_has_no_permission_mode(self):
-        proc = self.run_host("paseo", "launch", spec=self.spec())
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertNotIn("--mode", self.run_call())
 
     def test_claude_thinking_is_the_effort_core_already_clamped(self):
         spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
@@ -276,6 +311,7 @@ class PaseoHostTest(HostTest):
 
     def test_an_explicit_workspace_rooted_at_cwd_is_used(self):
         spec = self.spec()
+        spec["cwd"] = os.path.join(self.work, "a dir with spaces")
         env = dict(
             self.env,
             FAKE_WORKSPACES=json.dumps(
@@ -322,21 +358,6 @@ class PaseoHostTest(HostTest):
         self.assertEqual(
             [args for args in self.call_for("paseo") if args[:1] == ["run"]], []
         )
-
-    def test_an_explicit_workspace_matching_a_cwd_with_spaces_is_used(self):
-        spec = self.spec()
-        spec["cwd"] = os.path.join(self.work, "a dir with spaces")
-        env = dict(
-            self.env,
-            FAKE_WORKSPACES=json.dumps(
-                [{"workspaceId": "wks-7", "cwd": spec["cwd"]}]
-            ),
-        )
-        proc = self.run_host("paseo", "launch", "wks-7", spec=spec, env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        argv = self.run_call()
-        self.assertEqual(argv[argv.index("--workspace") + 1], "wks-7")
-        self.assertNotIn("--cwd", argv)
 
     def test_a_worktree_reuses_the_workspace_rooted_there(self):
         spec = self.spec()
@@ -746,8 +767,9 @@ class TmuxHostTest(HostTest):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["window"], "@1")
         self.assertEqual(json.loads(proc.stdout)["pane"], "%1")
+        self.assertFalse(os.path.exists(os.path.join(self.work, ".claude.json")))
 
-        window = self.call_for("tmux")[0]
+        window = self.actions_for("tmux")[0]
         self.assertEqual(window[:5], ["new-window", "-d", "-P", "-F", "#{window_id} #{pane_id}"])
         self.assertEqual(window[window.index("-t") + 1], "sess:")
         self.assertEqual(window[window.index("-n") + 1], spec["name"])
@@ -776,15 +798,10 @@ class TmuxHostTest(HostTest):
             config["projects"][os.path.realpath(spec["cwd"])]["hasTrustDialogAccepted"]
         )
 
-    def test_pi_launch_never_writes_claude_trust(self):
-        proc = self.run_host("tmux", "launch", "sess", spec=self.spec())
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertFalse(os.path.exists(os.path.join(self.work, ".claude.json")))
-
     def test_notify_pastes_and_submits(self):
         proc = self.run_host("tmux", "notify", "%9", "hi\nthere")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        calls = self.call_for("tmux")
+        calls = self.actions_for("tmux")
         self.assertEqual(calls[0][0], "load-buffer")
         self.assertIn("-t", calls[1])
         self.assertEqual(calls[1][calls[1].index("-t") + 1], "%9")
@@ -799,44 +816,45 @@ class TmuxHostTest(HostTest):
 class HerdrHostTest(HostTest):
     def test_launch_targets_the_calling_workspace_not_the_focused_one(self):
         spec = self.spec()
-        env = dict(self.env, HERDR_WORKSPACE_ID="7")
+        spec["recado_bin_dir"] = "/custom/recado bin"
+        env = dict(self.env, HERDR_WORKSPACE_ID="7", TYPESAFE_API_KEY="manager-secret")
         proc = self.run_host("herdr", "launch", spec=spec, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("manager-secret", json.dumps(self.calls()))
         result = json.loads(proc.stdout)
         self.assertEqual(result["tab"], "1:1")
         self.assertEqual(result["pane"], "1-1")
 
-        tab = self.call_for("herdr")[0]
+        tab = self.actions_for("herdr")[0]
         self.assertEqual(tab[:2], ["tab", "create"])
         self.assertEqual(tab[tab.index("--workspace") + 1], "7")
         self.assertEqual(tab[tab.index("--cwd") + 1], spec["cwd"])
+        self.assertIn("RECADO_ADDR=" + spec["name"], tab)
+        self.assertIn("PATH=/custom/recado bin:" + self.env["PATH"], tab)
         self.assertIn("--no-focus", tab)
 
-        start = self.call_for("herdr")[1]
+        start = self.actions_for("herdr")[1]
         self.assertEqual(start[:3], ["agent", "start", spec["name"]])
         self.assertEqual(start[start.index("--kind") + 1], "pi")
         self.assertEqual(start[start.index("--pane") + 1], "1-1")
         self.assertIn(spec["model"], start)
 
-        prompt = self.call_for("herdr")[2]
+        prompt = self.actions_for("herdr")[2]
         self.assertEqual(prompt[:3], ["agent", "prompt", spec["name"]])
         self.assertEqual(prompt[3], spec["prompt"])
 
-    def test_claude_launch_allows_herdr_reporting(self):
+    def test_claude_launch_allows_reporting_and_trusts_the_directory(self):
         spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
-        env = dict(self.env, HERDR_WORKSPACE_ID="7")
-        proc = self.run_host("herdr", "launch", spec=spec, env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        start = self.call_for("herdr")[1]
-        self.assertIn("--allowedTools", start)
-        self.assertIn("Bash(herdr agent prompt *)", start)
-
-    def test_claude_launch_trusts_the_directory(self):
-        spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
+        spec["recado_bin_dir"] = "/custom/bin"
         os.makedirs(spec["cwd"], exist_ok=True)
         env = dict(self.env, HERDR_WORKSPACE_ID="7")
         proc = self.run_host("herdr", "launch", spec=spec, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        start = self.actions_for("herdr")[1]
+        self.assertIn("--allowedTools", start)
+        for command in ("herdr agent prompt", "recado send", "recado ask",
+                        "/custom/bin/recado send", "/custom/bin/recado ask"):
+            self.assertIn(f"Bash({command} *)", start)
         with open(os.path.join(self.work, ".claude.json"), encoding="utf-8") as handle:
             config = json.load(handle)
         self.assertTrue(
@@ -856,7 +874,7 @@ class HerdrHostTest(HostTest):
         proc = self.run_host("herdr", "launch", spec=self.spec(), env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("HERDR_WORKSPACE_ID", proc.stderr)
-        self.assertEqual(self.call_for("herdr"), [])
+        self.assertEqual(self.actions_for("herdr"), [])
 
     def test_a_failed_prompt_never_echoes_the_message(self):
         env = dict(self.env)
@@ -870,6 +888,198 @@ class HerdrHostTest(HostTest):
         proc = self.run_host("herdr", "close", "1:1")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.call_for("herdr")[0], ["tab", "close", "1:1"])
+
+
+class RexHostTest(HostTest):
+    def setUp(self):
+        super().setUp()
+        self.env["REX_SESSION"] = "session:s1"
+
+    def test_launch_opens_a_background_window_in_the_calling_session(self):
+        spec = self.spec()
+        proc = self.run_host("rex", "launch", spec=spec)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["window"], "window:w1")
+        self.assertEqual(result["block"], "block:b1")
+        self.assertEqual(result["session"], "session:s1")
+
+        window = self.actions_for("rex")[0]
+        self.assertEqual(window[:2], ["window", "new"])
+        self.assertEqual(window[window.index("-s") + 1], "session:s1")
+        self.assertEqual(window[window.index("-c") + 1], spec["cwd"])
+        for flag in ("--focus=false", "--keep-open", "--shell=none"):
+            self.assertIn(flag, window)
+
+    def test_an_explicit_session_wins_over_the_calling_one(self):
+        proc = self.run_host("rex", "launch", "session:other", spec=self.spec())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        window = self.actions_for("rex")[0]
+        self.assertEqual(window[window.index("-s") + 1], "session:other")
+
+    def test_claude_launch_allows_reporting_and_trusts_the_directory(self):
+        spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
+        os.makedirs(spec["cwd"], exist_ok=True)
+        proc = self.run_host("rex", "launch", spec=spec)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        window = self.actions_for("rex")[0]
+        self.assertIn("--allowedTools", window)
+        self.assertTrue(
+            any("rex/host.py notify" in arg for arg in window if arg.startswith("Bash(")),
+            window,
+        )
+        with open(os.path.join(self.work, ".claude.json"), encoding="utf-8") as handle:
+            config = json.load(handle)
+        self.assertTrue(
+            config["projects"][os.path.realpath(spec["cwd"])]["hasTrustDialogAccepted"]
+        )
+
+    def test_launch_without_a_calling_session_is_refused(self):
+        env = dict(self.env)
+        env.pop("REX_SESSION")
+        proc = self.run_host("rex", "launch", spec=self.spec(), env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("REX_SESSION", proc.stderr)
+        self.assertEqual(self.actions_for("rex"), [])
+
+    def test_notify_refuses_a_block_launch_never_marked(self):
+        proc = self.run_host("rex", "notify", "block:human", "hi")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not marked", proc.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_notify_pastes_on_stdin_then_submits(self):
+        proc = self.run_host("rex", "launch", spec=self.spec())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        os.unlink(self.log)
+        proc = self.run_host("rex", "notify", "manager-addr", "SECRET\nthere")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = self.calls()
+        api = [args for name, args in calls if name == "rex" and args[:2] == ["api", "call"]]
+        self.assertEqual(api, [["api", "call", "-s", "session:s1", "block.event", "-"]])
+        pasted = json.loads([args for name, args in calls if name == "rex-stdin"][0])
+        self.assertEqual(pasted["block_id"], "manager-addr")
+        self.assertEqual(pasted["event"]["type"], "paste")
+        self.assertEqual(pasted["event"]["payload"]["text"], "SECRET\nthere")
+        self.assertEqual(
+            calls[-1], ["rex", ["send-key", "-s", "session:s1", "-b", "manager-addr", "enter"]]
+        )
+        self.assertNotIn("SECRET", json.dumps(self.call_for("rex")))
+
+class RemoteRexHostTest(HostTest):
+    """A Rex Manager whose Subagent runs in tmux on another machine.
+
+    A fake ssh runs the remote command locally, with this checkout installed
+    at the fixture HOME's ~/.agents/skills/subagents, so both sides use the
+    fake CLIs and the same fixture state directory.
+    """
+
+    def setUp(self):
+        super().setUp()
+        skills = os.path.join(self.work, ".agents", "skills")
+        os.makedirs(skills)
+        os.symlink(SKILL, os.path.join(skills, "subagents"))
+        ssh = os.path.join(self.bin, "ssh")
+        with open(ssh, "w", encoding="utf-8") as handle:
+            handle.write(
+                '#!/bin/sh\nfor arg; do last=$arg; done\nexec sh -c "$last"\n'
+            )
+        os.chmod(ssh, 0o755)
+        self.env["REX_SESSION"] = "session:s1"
+
+    def test_remote_launch_starts_tmux_and_sends_recado_kickoff(self):
+        env = dict(self.env, FAKE_NO_SESSION="1")
+        spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
+        spec["recado_bin_dir"] = "/remote/bin"
+        os.makedirs(spec["cwd"], exist_ok=True)
+        proc = self.run_host("rex", "remote-launch", "rpi", spec=spec, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["machine"], "rpi")
+        self.assertEqual(result["pane"], "%1")
+        self.assertEqual(result["kickoff"], "sent-1")
+        self.assertEqual(self.call_for("recado"), [[
+            "send", "recado://rpi/subagent-build-1",
+            "Continue the brief; this opens the recado return route.",
+        ]])
+
+        tmux = self.actions_for("tmux")
+        self.assertEqual(tmux[0], ["has-session", "-t", "=subagents"])
+        self.assertEqual(tmux[1][:4], ["new-session", "-d", "-s", "subagents"])
+        window = [c for c in tmux if c[0] == "new-window"][0]
+        self.assertEqual(window[window.index("-t") + 1], "=subagents:")
+        respawn = [c for c in tmux if c[0] == "respawn-pane"][0]
+        self.assertTrue(any("recado send *)" in arg for arg in respawn), respawn)
+
+    def test_remote_tmux_child_registers_under_its_spec_name(self):
+        real_recado = shutil.which("recado")
+        if not real_recado:
+            self.skipTest("recado not installed")
+        pi = os.path.join(self.bin, "pi")
+        with open(pi, "w", encoding="utf-8") as handle:
+            handle.write('#!/bin/sh\nprintf "%s" "$PATH" > "$HOME/child-path"\n'
+                         'export RECADO_HARNESS=pi\n'
+                         'exec "$REAL_RECADO" hook pi session-start --endpoint "$HOME/probe.sock" --json\n')
+        os.chmod(pi, 0o755)
+        state = os.path.join(self.work, "recado-state")
+        env = dict(self.env, SHELL="/bin/sh", REAL_RECADO=real_recado,
+                   RECADO_STATE_DIR=state, RECADO_ADDR="manager")
+        spec = self.spec()
+        spec["recado_bin_dir"] = "/recado bin"
+        os.makedirs(spec["cwd"], exist_ok=True)
+        proc = self.run_host("rex", "remote-launch", "rpi", spec=spec, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        respawn = next(c for c in self.call_for("tmux") if c[0] == "respawn-pane")
+        command = respawn[respawn.index("--") + 1:]
+        registered = subprocess.run(command, env=env, text=True, capture_output=True)
+        self.assertEqual(registered.returncode, 0, registered.stderr)
+        agents = subprocess.run([real_recado, "agents", "--json"], env=env,
+                                text=True, capture_output=True, check=True)
+        self.assertEqual([a["id"] for a in json.loads(agents.stdout)["agents"]], [spec["name"]])
+        with open(os.path.join(self.work, "child-path"), encoding="utf-8") as handle:
+            self.assertTrue(handle.read().startswith("/recado bin:"))
+
+    def test_remote_launch_refuses_a_block_this_manager_does_not_run_in(self):
+        env = dict(self.env, FAKE_MANAGER_PID="99998")
+        proc = self.run_host("rex", "remote-launch", "rpi", spec=self.spec(), env=env)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not the pane this Manager runs in", proc.stderr)
+        self.assertEqual(self.call_for("tmux"), [])
+
+    def test_a_bad_ssh_host_is_refused(self):
+        proc = self.run_host("rex", "remote-close", "-oProxyCommand=x", "@1")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not an SSH host", proc.stderr)
+
+    def test_remote_close_kills_the_remote_window(self):
+        proc = self.run_host("rex", "remote-close", "rpi", "@1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.call_for("tmux"), [["kill-window", "-t", "@1"]])
+
+    def test_remote_launch_reports_the_window_when_kickoff_fails(self):
+        env = dict(self.env, FAKE_RECADO_FAILURE="1")
+        spec = self.spec()
+        os.makedirs(spec["cwd"], exist_ok=True)
+        proc = self.run_host("rex", "remote-launch", "rpi", spec=spec, env=env)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("recado delivery failed", proc.stderr)
+        self.assertIn("@1", proc.stderr)
+        self.assertIn("%1", proc.stderr)
+
+
+class ManagerValidationTest(HostTest):
+    def test_interactive_hosts_reject_other_panes_and_paseo_managers(self):
+        for host in ("tmux", "herdr", "rex"):
+            for extra, reason in (({"FAKE_MANAGER_PID": "99998"}, "not the pane this Manager runs in"),
+                                  ({"PASEO_AGENT_ID": "agent"}, "Paseo agent")):
+                with self.subTest(host=host, extra=extra):
+                    if os.path.exists(self.log):
+                        os.unlink(self.log)
+                    env = dict(self.env, HERDR_WORKSPACE_ID="7", REX_SESSION="session:s1", **extra)
+                    proc = self.run_host(host, "launch", spec=self.spec(), env=env)
+                    self.assertEqual(proc.returncode, 2, proc.stderr)
+                    self.assertIn(reason, proc.stderr)
+                    self.assertEqual(self.actions_for(host), [])
 
 
 class TmuxSandboxTest(unittest.TestCase):
@@ -917,9 +1127,13 @@ class TmuxSandboxTest(unittest.TestCase):
         out = os.path.join(self.work, "out")
         os.makedirs(out)
         host = os.path.join(SKILL, "extensions", "tmux", "host.py")
+        # The launch runs inside pane %0, so %0 really is this Manager's pane.
         script = (
-            "tmux -f /dev/null new-session -d -s subagent-sandbox\n"
-            'printf "%s" "$SPEC" | python3 "$HOST" launch subagent-sandbox'
+            "tmux -f /dev/null new-session -d -s subagent-sandbox "
+            "'printf \"%s\" \"$SPEC\" | python3 \"$HOST\" launch subagent-sandbox "
+            ">\"$OUT/launch\" 2>&1; echo $? >\"$OUT/rc\"; sleep 30'\n"
+            'i=0; while [ ! -s "$OUT/rc" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done\n'
+            'cat "$OUT/launch" >&2; exit "$(cat "$OUT/rc")"'
         )
         env = dict(os.environ)
         env.update(
@@ -930,6 +1144,7 @@ class TmuxSandboxTest(unittest.TestCase):
             HOME=self.work,
         )
         env.pop("TYPESAFE_API_KEY", None)
+        env.pop("PASEO_AGENT_ID", None)
         proc = subprocess.run(
             [os.path.join(REPO, "scripts", "tmux-sandbox"), "bash", "-c", script],
             capture_output=True,
@@ -943,6 +1158,134 @@ class TmuxSandboxTest(unittest.TestCase):
         self.assertIn(spec["model"], delivered)
         self.assertIn("sandbox brief", delivered)
         self.assertIn("You are", delivered)
+
+
+REX_DRIVER = """import json, os, subprocess, sys
+work, server, host = sys.argv[1:4]
+os.environ["REX_SERVER"] = server  # never fall back to the live server
+with open(os.path.join(work, "spec.json"), encoding="utf-8") as handle:
+    spec = json.load(handle)
+spec["manager"] = os.environ["REX_BLOCK"]
+proc = subprocess.run([sys.executable, host, "launch"], input=json.dumps(spec),
+                      capture_output=True, text=True)
+for name, text in (("launch", proc.stderr), ("result", proc.stdout)):
+    with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
+        handle.write(text)
+with open(os.path.join(work, "rc"), "w", encoding="utf-8") as handle:
+    handle.write(str(proc.returncode))
+"""
+
+
+class RexSandboxTest(unittest.TestCase):
+    """The one real Rex exercise: a private server this test starts and stops.
+
+    rex is found as host.py finds it (PATH, then REX_BIN_DIR); without it the
+    test is skipped. Every rex call names the private socket, so the live
+    server is never touched.
+    """
+
+    def setUp(self):
+        directory = os.environ.get("REX_BIN_DIR", "")
+        self.rex = shutil.which("rex") or (
+            os.path.join(directory, "rex")
+            if directory and os.access(os.path.join(directory, "rex"), os.X_OK)
+            else None
+        )
+        if not self.rex:
+            self.skipTest("rex not installed")
+        # A short path: unix socket paths are capped near 104 bytes.
+        self.work = tempfile.mkdtemp(prefix="rexsb-", dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.work, True)
+        self.server = f"unix://{self.work}/s.sock"
+
+    build_spec = TmuxSandboxTest.build_spec
+
+    def start_server(self, env):
+        log = open(os.path.join(self.work, "server.log"), "w", encoding="utf-8")
+        self.addCleanup(log.close)
+        server = subprocess.Popen(
+            [self.rex, "server", "run", "--listen", self.server,
+             "--state-dir", os.path.join(self.work, "state"),
+             "--config", os.path.join(self.work, "none.lua")],
+            stdout=log, stderr=log, env=env,
+        )
+        self.addCleanup(server.wait)
+        self.addCleanup(server.terminate)
+        for _ in range(100):
+            if self.rex_cli("session", "list").returncode == 0:
+                return
+            time.sleep(0.1)
+        self.fail("private rex server never came up")
+
+    def rex_cli(self, *args):
+        return subprocess.run(
+            [self.rex, "-S", self.server, "--autostart=false", *args],
+            capture_output=True, text=True,
+        )
+
+    def test_launch_runs_through_a_private_rex_server(self):
+        spec = self.build_spec()
+        with open(os.path.join(self.work, "spec.json"), "w", encoding="utf-8") as handle:
+            json.dump(spec, handle)
+        fake_bin = os.path.join(self.work, "fake")
+        os.makedirs(fake_bin)
+        with open(os.path.join(fake_bin, "pi"), "w", encoding="utf-8") as handle:
+            handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > {self.work}/pi-args\nsleep 30\n')
+        os.chmod(os.path.join(fake_bin, "pi"), 0o755)
+        driver = os.path.join(self.work, "driver.py")
+        with open(driver, "w", encoding="utf-8") as handle:
+            handle.write(REX_DRIVER)
+
+        env = dict(os.environ)
+        env.update(
+            PATH=os.pathsep.join([fake_bin, os.environ.get("PATH", "")]),
+            REX_SERVER=self.server,
+            XDG_STATE_HOME=os.path.join(self.work, "xdg"),
+        )
+        for var in ("TYPESAFE_API_KEY", "PASEO_AGENT_ID", "TMUX", "HERDR_WORKSPACE_ID"):
+            env.pop(var, None)
+        self.start_server(env)
+
+        host = os.path.join(SKILL, "extensions", "rex", "host.py")
+        # The launch runs inside the Manager block, so it really is the Manager's.
+        created = self.rex_cli(
+            "new", "manager", "-c", self.work, "--keep-open", "--shell=none", "--json",
+            "--", sys.executable, driver, self.work, self.server, host,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        rc = os.path.join(self.work, "rc")
+        for _ in range(200):
+            if os.path.exists(rc) and os.path.getsize(rc):
+                break
+            time.sleep(0.1)
+        with open(os.path.join(self.work, "launch"), encoding="utf-8") as handle:
+            output = handle.read()
+        with open(rc, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "0", output)
+        with open(os.path.join(self.work, "pi-args"), encoding="utf-8") as handle:
+            delivered = handle.read()
+        self.assertIn(spec["model"], delivered)
+        self.assertIn("sandbox brief", delivered)
+
+        with open(os.path.join(self.work, "result"), encoding="utf-8") as handle:
+            result = json.load(handle)
+        self.assertEqual(result["host"], "rex")
+        proc = subprocess.run(
+            [sys.executable, host, "notify", result["block"], "hello\nfrom the manager"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for _ in range(50):
+            screen = self.rex_cli("capture", "-b", result["block"], "--trim").stdout
+            if "from the manager" in screen:
+                break
+            time.sleep(0.1)
+        self.assertIn("from the manager", screen)
+        proc = subprocess.run(
+            [sys.executable, host, "close", result["window"]],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 class SharedLaunchTest(unittest.TestCase):
@@ -963,6 +1306,46 @@ class SharedLaunchTest(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"HOME": self.home})
         env.start()
         self.addCleanup(env.stop)
+
+    def test_child_delivers_only_allowlisted_secret_via_private_temporary_file(self):
+        engine = os.path.join(self.work, "engine")
+        output = os.path.join(self.work, "child.json")
+        with open(engine, "w", encoding="utf-8") as handle:
+            handle.write('#!/usr/bin/env python3\nimport json, os, sys\n'
+                         'json.dump({"secret": os.environ.get("TYPESAFE_API_KEY"), '
+                         '"other": os.environ.get("OTHER_SECRET"), '
+                         '"name": os.environ.get("RECADO_ADDR"), "path": os.environ["PATH"], '
+                         '"args": sys.argv[1:]}, open(os.environ["OUT"], "w"))\n')
+        os.chmod(engine, 0o755)
+        secret = "secret ' $ \n value"
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secret, "OTHER_SECRET": "do not pass", "SHELL": "/bin/sh"}):
+            with mock.patch.object(host_launch.subprocess, "Popen"):
+                command, (prompt_file, env_file) = host_launch.child_command(
+                    "subagent-test", "brief\nnext line", engine, ["--model", "example"], "/recado bin"
+                )
+        self.addCleanup(host_launch.remove_temp, prompt_file, env_file)
+        self.assertEqual(os.stat(env_file).st_mode & 0o777, 0o600)
+        self.assertNotIn(secret, " ".join(command))
+        server_env = {"PATH": os.environ["PATH"], "HOME": self.home, "OUT": output}
+        proc = subprocess.run(command, env=server_env, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(output, encoding="utf-8") as handle:
+            delivered = json.load(handle)
+        self.assertEqual(delivered["secret"], secret)
+        self.assertIsNone(delivered["other"])
+        self.assertEqual(delivered["name"], "subagent-test")
+        self.assertTrue(delivered["path"].startswith("/recado bin:"))
+        self.assertEqual(delivered["args"], ["--model", "example", "--", "brief\nnext line"])
+        self.assertFalse(os.path.exists(prompt_file))
+        self.assertFalse(os.path.exists(env_file))
+
+    def test_child_cleans_both_files_if_sweeper_cannot_start(self):
+        with mock.patch.object(host_launch.tempfile, "tempdir", self.work):
+            with mock.patch.object(host_launch.subprocess, "Popen", side_effect=OSError("failed")):
+                with self.assertRaises(OSError):
+                    host_launch.child_command("subagent-test", "brief", "pi", [])
+        self.assertFalse(any(name.startswith(("subagent-test-", "subagent-env-"))
+                             for name in os.listdir(self.work)))
 
     def trust_config(self):
         with open(os.path.join(self.home, ".claude.json"), encoding="utf-8") as handle:

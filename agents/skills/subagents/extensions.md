@@ -1,9 +1,9 @@
 # Subagent session extensions
 
 A session host is an extension: an ordinary Markdown file that agents read and
-follow. The Manager reads it to launch, answer and close a Subagent; the
-Subagent reads it to reach the Manager. Nothing parses or executes it, and no
-registry lists it.
+follow. The Manager reads it to launch and close a Subagent. Preparation gives
+the Subagent recado reporting commands when available; otherwise the extension
+says how to report. Nothing parses or executes the file, and no registry lists it.
 
 ## Picking one
 
@@ -18,23 +18,34 @@ the Subagent's machine (`$SKILL/extensions/<host>.md`,
 | Paseo | [paseo.md](extensions/paseo.md) | `PASEO_AGENT_ID` is set: you are a Paseo agent   |
 | herdr | [herdr.md](extensions/herdr.md) | `HERDR_ENV` is set                               |
 | tmux  | [tmux.md](extensions/tmux.md)   | `TMUX` is set                                    |
+| Rex   | [rex.md](extensions/rex.md)     | `REX_SESSION` is set                             |
 
-A Paseo agent can also sit inside a herdr or tmux pane; the Paseo row wins
-there, and herdr wins over tmux.
+A Paseo agent can also sit inside a herdr, tmux or Rex pane; the Paseo row
+wins there, herdr wins over tmux, and either wins over the Rex terminal it
+runs in.
 
 On a remote execution machine, those variables describe that machine, not
 the Manager. A Paseo Manager on a Mac remains a Paseo Manager when commands
 run over SSH on an RPi, even without `PASEO_AGENT_ID` or `PASEO_CLI` there.
 Keep the Manager's native address and supply a return route reachable from
 the RPi; see [Paseo remote sessions](extensions/paseo.md#remote-sessions).
+A Rex Manager whose Stage runs on a machine without Rex uses
+[rex-remote.md](extensions/rex-remote.md): tmux there, recado machines for messages.
 If the Manager's host, address or return route is unknown, ask in the current
 conversation before preparing or launching; local panes are not fallbacks.
 
-## Division of labour
+## Shared launch safety
 
-Preparation is [`SKILL.md`](SKILL.md)'s: one JSON spec per Stage, the same on
-every host. The extension owns the session only. Mechanics tmux and herdr
-share live in `extensions/host_launch.py`, never in core.
+The extension owns its session and fallback route. For tmux and Rex, the child
+sources a 0600 temporary file containing only the allowlisted `TYPESAFE_API_KEY`
+when set, deletes it, and receives its prompt through a separate temporary file.
+
+Interactive Claude Code launches (herdr, tmux, Rex) allow only the host's
+reporting commands, the prepared recado send/ask commands, and the report file
+without approval. They do not use `--mode auto` or bypass permissions. The
+helper pre-accepts workspace trust only for the prepared directory in
+`~/.claude.json`; other tool calls retain Claude's permission checks. Shared
+mechanics live in `extensions/host_launch.py`, not core.
 
 ## Writing one
 

@@ -1,5 +1,8 @@
 # Host extensions are Markdown the agent reads
 
+> Update: same-machine reporting now prefers recado; extension messaging
+> remains the fallback and the route for remote and per-session files.
+
 A session host (Paseo, herdr, tmux, or one not written yet) is a Markdown file the Manager and its Subagents read and follow. `subagent.py` prepares the Stage and prints a launch spec, with `STAGES` still the one routing table; the extension starts, messages, and closes the session, and a pointer index picks it. Adding a host is adding a file, and `--extension FILE` accepts one from anywhere. Helper scripts beside an extension are optional conveniences for mechanics that must be exact (multi-line prompts, secrets, workspace targeting), never a required schema.
 
 ## Considered options

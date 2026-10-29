@@ -1,18 +1,106 @@
 #!/usr/bin/env python3
-"""Launch mechanics shared by the interactive host extensions (tmux, herdr).
-
-Core prepares a host-independent spec; the interactive helpers are the only
-hosts that need Claude Code's workspace-trust dialog pre-accepted and an effort
-retry when a pane shows the chosen level was rejected, and a check that the
-Manager address is the pane the Manager runs in. This module owns those
-pieces, so the behaviour has one definition instead of a copy per host. It
-is extension-owned, not core: a host that does not need it does not import it.
-"""
+"""Launch and safety mechanics shared by the host extensions."""
 
 import json
 import os
+import shlex
 import subprocess
 import sys
+import tempfile
+
+# Allow slow login shells (including 35s startup) without retaining orphaned
+# secret env files indefinitely. Only the env file is age-swept, never the task.
+TEMP_FILE_SWEEP = 120
+# Parent variables a child inherits even though the host spawns it from its
+# server's environment; the child sources them from a 0600 temp file.
+PASSTHROUGH_ENV = ["TYPESAFE_API_KEY"]
+
+# A login shell is not enough for the environment (zsh reads ~/.zprofile, not
+# ~/.profile), so the child sources the allowlisted env file and deletes it
+# before exec. The task travels through a second temp file because hosts reject
+# over-long commands; that file is never age-swept.
+CHILD_SCRIPT = (
+    'if ! prompt=$(cat "$1"); then '
+    'printf "%s\\n" "[subagent] cannot read prompt file: $1" >&2; '
+    'rm -f "$1" "$2"; exit 1; fi; '
+    'rm -f "$1"; if [ -r "$2" ]; then . "$2"; fi; rm -f "$2"; '
+    'export RECADO_ADDR="$0"; '
+    'if [ -n "$3" ]; then PATH="$3:$PATH"; export PATH; fi; '
+    'shift 3; exec "$@" "$prompt"'
+)
+
+
+def child_command(name, prompt, kind, argv, recado_bin_dir=None):
+    """argv that runs the engine with prompt as its last argument, and its temp files.
+
+    The prompt file and the 0600 env file are deleted by the child; on a
+    failed spawn the caller removes both with remove_temp.
+    """
+    path = env_path = None
+    try:
+        fd, path = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(prompt)
+        fd, env_path = tempfile.mkstemp(prefix="subagent-env-")
+        try:
+            handle = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            for var in PASSTHROUGH_ENV:
+                value = os.environ.get(var)
+                if value is not None:
+                    handle.write(f"export {var}={shlex.quote(value)}\n")
+        subprocess.Popen(
+            ["/bin/sh", "-c", 'sleep "$1"; rm -f "$2"', "_", str(TEMP_FILE_SWEEP), env_path],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except BaseException:
+        remove_temp(path, env_path)
+        raise
+    shell = os.environ.get("SHELL", "/bin/sh")
+    command = [shell, "-lc", CHILD_SCRIPT, name, path, env_path, recado_bin_dir or "", kind, *argv, "--"]
+    return command, (path, env_path)
+
+
+def clip(text, limit=2000):
+    """Limit failure detail length, without claiming to redact it."""
+    text = (text or "").strip()
+    return text if len(text) <= limit else f"{text[:limit]}…"
+
+
+def identity_env(spec):
+    """CLI environment flags for hosts that start the agent themselves."""
+    flags = ["--env", f"RECADO_ADDR={spec['name']}"]
+    if spec.get("recado_bin_dir"):
+        flags += ["--env", f"PATH={spec['recado_bin_dir']}:{os.environ.get('PATH', '')}"]
+    return flags
+
+
+def engine_argv(spec, *notify_commands):
+    """Engine flags and narrow Claude permissions for reporting and the report file."""
+    argv = list(spec["engine"]["argv"])
+    if spec["engine"]["kind"] == "claude":
+        permissions = [f"Bash({command} *)" for command in notify_commands]
+        permissions.append(f"Edit(/{spec['report']})")
+        directory = spec.get("recado_bin_dir")
+        if directory:
+            for binary in ("recado", os.path.join(directory, "recado")):
+                permissions += [f"Bash({binary} {action} *)" for action in ("send", "ask")]
+        argv += ["--allowedTools", *permissions]
+    return argv
+
+
+def remove_temp(*paths):
+    for path in paths:
+        if not path:
+            continue
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def without_effort(argv, kind, view):

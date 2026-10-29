@@ -24,15 +24,10 @@ EXTENSIONS_DIR = os.path.normpath(
 )
 sys.path.insert(0, EXTENSIONS_DIR)
 import host_launch  # noqa: E402
+from host_launch import clip  # noqa: E402
 
 DEFAULT_TIMEOUT_MS = 30000
 BUSY_RETRY_SECONDS = 30
-
-
-def clip(text, limit=2000):
-    """A failure detail capped at limit characters; a length limit, not redaction."""
-    text = (text or "").strip()
-    return text if len(text) <= limit else f"{text[:limit]}…"
 
 
 def herdr(*args, check=True):
@@ -67,22 +62,6 @@ def manager_pane_error(pane):
     except (ValueError, KeyError, TypeError):
         pid = None
     return host_launch.manager_pane_error(pane, pid)
-
-
-def claude_extra(spec):
-    """Claude Code flags that let the Subagent report and edit its report."""
-    return [
-        "--allowedTools",
-        "Bash(herdr agent prompt *)",
-        f"Edit(/{spec['report']})",
-    ]
-
-
-def engine_argv(spec):
-    argv = list(spec["engine"]["argv"])
-    if spec["engine"]["kind"] == "claude":
-        argv += claude_extra(spec)
-    return argv
 
 
 def start(name, pane_id, argv, timeout_ms=DEFAULT_TIMEOUT_MS, kind="pi"):
@@ -153,6 +132,7 @@ def launch(spec, target=None, timeout_ms=DEFAULT_TIMEOUT_MS):
         "--workspace", workspace,
         "--cwd", spec["cwd"],
         "--label", spec["name"],
+        *host_launch.identity_env(spec),
         "--no-focus",
     )["result"]
     pane_id = tab["root_pane"]["pane_id"]
@@ -162,7 +142,8 @@ def launch(spec, target=None, timeout_ms=DEFAULT_TIMEOUT_MS):
         f"model {spec['model']} effort {spec['effort']}",
         file=sys.stderr,
     )
-    if not start(spec["name"], pane_id, engine_argv(spec), timeout_ms, kind=kind):
+    argv = host_launch.engine_argv(spec, "herdr agent prompt")
+    if not start(spec["name"], pane_id, argv, timeout_ms, kind=kind):
         return 2
     herdr("agent", "prompt", spec["name"], spec["prompt"])
     print(

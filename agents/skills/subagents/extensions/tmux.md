@@ -2,7 +2,7 @@
 
 Pick this file when `TMUX` is set and no Paseo or herdr extension applies: the
 Subagent gets a window in your tmux session. Pass its absolute path as
-`--extension`; the Subagent is told to read it to report.
+`--extension`; it also describes the fallback reporting route.
 
 ## Manager: launching a Stage
 
@@ -20,10 +20,7 @@ both in the Ledger.
 
 - The default session is the calling pane's, from `TMUX_PANE`, not whichever
   session is attached. Pass a session name or id as `SESSION` to override.
-- The Subagent runs a login shell, sources a 0600 file holding only the
-  allowlisted secret (`TYPESAFE_API_KEY`, when set), deletes it, then starts
-  the engine. The prompt travels through a temp file, so multi-line briefs
-  arrive whole.
+- The Subagent runs a login shell; multi-line briefs arrive whole.
 - `launch` refuses (exit 2) when `--manager` is not the pane it runs in, or
   when `PASEO_AGENT_ID` is set: a Paseo agent has no pane of its own and only
   inherits one, so reports would be typed into whatever runs there. Use the
@@ -31,16 +28,6 @@ both in the Ledger.
   marked (`@subagent-notify`), so a message never lands in a human's input.
 - A failed launch exits 2 and leaves the window open, with its ids on stderr,
   for diagnosis. Close that window before relaunching.
-- A Claude Code role (`engine.kind` `claude`) also gets a narrow
-  `--allowedTools` list: `Bash(python3 <this helper> notify *)`, the same rule
-  for the interpreter running the helper, and `Edit(//<report path>)` for the
-  report file (Claude Code's absolute-path form). These allowlisted reporting
-  commands and report edits run without approval; other tool calls remain
-  subject to Claude Code's permission checks. There is no broad bypass, and
-  tmux launches get no `--mode auto`. Because interactive `claude` cannot skip its
-  workspace-trust dialog, the helper also pre-accepts that dialog for the
-  prepared directory by setting `projects[<cwd>].hasTrustDialogAccepted` in
-  `~/.claude.json` before launch. Only that directory is marked trusted.
 
 For a session of its own in a project or worktree, create it without focus and
 pass its id as `SESSION`:
