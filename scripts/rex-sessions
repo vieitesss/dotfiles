@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+if [[ -z "$REX_BLOCK" ]]; then
+    echo "rex-sessions: run inside a Rex terminal" >&2
+    exit 1
+fi
+
+rex="${REX_BIN_DIR:+$REX_BIN_DIR/}rex"
+
+# Show this picker's window. new_window's focus only makes it the session's
+# active window, and the app's client ID differs per server, so take it from
+# the block's owner on the server that runs this script.
+"$rex" do - > /dev/null <<'LUA'
+local b = rex.session.describe_block{ block_id = rex.block_id }.block
+rex.call("client.perform", { client_id = b.owner, action = "session.select", origin = "key",
+  args = { session_id = rex.session_id, window_id = b.window_id } })
+LUA
+
+# List of potential directories
+potential_dirs=(
+    "$HOME/personal"
+    "$HOME/.config"
+    "$HOME/opt"
+    "$HOME/work"/*
+)
+
+# Filter to only existing directories
+existing_dirs=()
+for dir in "${potential_dirs[@]}"; do
+    if [[ -d "$dir" ]]; then
+        existing_dirs+=("$dir")
+    fi
+done
+
+# Only run find if we have existing directories
+if [[ ${#existing_dirs[@]} -gt 0 ]]; then
+    dirs=$(find -L "${existing_dirs[@]}" -mindepth 1 -maxdepth 1 -type d)
+else
+    dirs=""
+fi
+
+git_projects=$(fd -H -d 2 -E "Library" -t d "^\.git$" "$HOME" | sed "s#/\.git/##g")
+
+selected=$(echo -e "${dirs[*]}\n${git_projects}" | fzf --layout=reverse --preview-window down --preview "eza --color=always -l {}")
+
+if [[ -z "$selected" ]]; then
+    exit 0
+fi
+
+# Create unique session name with smart parent directory handling
+base_name=$(basename "$selected" | tr '.' '_')
+parent_path=$(dirname "$selected")
+parent_dir=$(basename "$parent_path" | tr '.' '_')
+
+# Only include parent dir if:
+# 1. Parent is not the home directory itself
+# 2. Parent is not directly under home (second level check)
+if [[ "$parent_path" != "$HOME" ]]; then
+    # Check if parent is a direct child of HOME
+    parent_of_parent=$(dirname "$parent_path")
+    if [[ "$parent_of_parent" == "$HOME" ]]; then
+        # Direct child of HOME - include parent if it's not the username
+        if [[ "$parent_dir" != "$(whoami)" ]]; then
+            session_name="${parent_dir}_${base_name}"
+        else
+            session_name="$base_name"
+        fi
+    else
+        # Deeper than second level - always include parent
+        session_name="${parent_dir}_${base_name}"
+    fi
+else
+    session_name="$base_name"
+fi
+if ! "$rex" ls | awk -v n="$session_name" 'NR > 1 && $1 == n { found = 1 } END { exit !found }'; then
+    "$rex" new "$session_name" -c "$selected" > /dev/null
+fi
+
+REX_TARGET="$session_name" "$rex" do - <<'LUA'
+local label = os.getenv("REX_TARGET")
+local target
+for _, s in ipairs(rex.call("session.list").sessions) do
+  if s.label == label then target = s end
+end
+if target == nil then error("no session " .. label, 0) end
+rex.call("session.attach", { session_id = target.session_id })
+local view, err = rex.session.view{ session_id = target.session_id }
+if view == nil then error(err, 0) end
+local focused
+for _, w in ipairs(view.windows) do
+  if w.window_id == view.active_window_id then focused = w.focused_block_id end
+end
+local b = rex.session.describe_block{ block_id = rex.block_id }.block
+rex.call("client.perform", { client_id = b.owner, action = "session.select", origin = "key",
+  args = { session_id = target.session_id, window_id = view.active_window_id } })
+rex.session.focus_block{ session_id = target.session_id, block_id = focused }
+LUA

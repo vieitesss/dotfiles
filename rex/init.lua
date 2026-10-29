@@ -145,6 +145,34 @@ rex.action({
 })
 -- <<< nexo <<<
 
--- nexo TUI, opened in a new tab of this session (tmux: prefix o / prefix a)
-bind("o", "nexo_projects")
+-- nexo agents TUI, opened in a new tab of this session (tmux: prefix a)
 bind("a", "nexo_agents")
+
+-- Project session picker, opened in a new tab that closes once a session is
+-- picked (tmux: prefix o)
+rex.action({
+  name = "rex_sessions",
+  title = "Project sessions",
+  run = function(ctx)
+    local window, err = rex.session.new_window{
+      session_id = ctx.session_id,
+      window_label = "sessions",
+      focus = true,
+      layout = rex.layout.block{
+        flavor = terminal .. ".shell",
+        options = {
+          -- $HOME is expanded by the server that owns the session, which
+          -- may be a remote host with a different home directory.
+          command = { "/bin/sh", "-c", 'exec "$HOME/.local/bin/rex-sessions"' },
+          login = true,
+          exit = { on_completion = true, quick_exit_threshold_ms = 0 },
+        },
+      },
+    }
+    if err ~= nil then error(err, 0) end
+    -- rex-sessions asks the app to show this window itself: ctx.client_id
+    -- is only valid on this server, not on a remote one.
+    return window
+  end,
+})
+bind("o", "rex_sessions")

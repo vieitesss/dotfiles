@@ -15,6 +15,7 @@ herdr/config.toml|~/.config/herdr/config.toml
 rex|~/.config/rex
 
 scripts/tmux-sessions|~/.local/bin/tmux-sessions
+scripts/rex-sessions|~/.local/bin/rex-sessions
 scripts/ask-ai|~/.local/bin/ask-ai
 scripts/herdr-spaces|~/.local/bin/herdr-spaces
 scripts/herdr-last-space|~/.local/bin/herdr-last-space
