@@ -7,7 +7,7 @@ the model, and the thinking effort.
 
 This script never touches a session host. It prints one JSON launch spec on
 stdout; the Markdown extension named by --extension says how the host in use
-launches, addresses, and closes the Subagent.
+launches and closes the Subagent.
 
 Usage:
     subagent.py --stages
@@ -499,12 +499,15 @@ SUBAGENT_RULES = (
 
 
 def ensure_recado():
-    """Find or install a messaging-capable recado; failures only disable its route."""
+    """Find or install a messaging-capable recado."""
     def usable(path):
         try:
-            return subprocess.run(
-                [path, "send", "--help"], capture_output=True, timeout=10, check=False
-            ).returncode == 0
+            return all(
+                subprocess.run(
+                    [path, action, "--help"], capture_output=True, timeout=10, check=False
+                ).returncode == 0
+                for action in ("send", "ask")
+            )
         except (OSError, subprocess.TimeoutExpired):
             return False
 
@@ -544,7 +547,7 @@ def ensure_recado():
         gobin = go_env["GOBIN"] or os.path.join(go_env["GOPATH"].split(os.pathsep)[0], "bin")
         binary = os.path.abspath(os.path.join(gobin, "recado"))
         if not usable(binary):
-            raise RuntimeError("installed binary lacks recado send")
+            raise RuntimeError("installed binary lacks recado send or ask")
         if not updated:
             env["PATH"] = gobin + os.pathsep + env.get("PATH", "")
             if subprocess.run([binary, "skill", "setup"], env=env, capture_output=True, timeout=60, check=False).returncode:
@@ -560,74 +563,58 @@ def ensure_recado():
 def recado_route(extension, manager_recado=None):
     directory = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "extensions"))
     extension = os.path.realpath(extension)
-    remote = extension == os.path.join(directory, "rex-remote.md")
-    local = {os.path.join(directory, name + ".md") for name in ("paseo", "herdr", "tmux", "rex")}
-    if not remote and extension not in local:
-        return None
-    if remote and not re.fullmatch(
+    remote = extension in {
+        os.path.join(directory, name) for name in ("rex-remote.md", "paseo-remote.md")
+    }
+    if (remote or manager_recado is not None) and not re.fullmatch(
         r"recado\+upstream://[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-z0-9][a-z0-9._-]*",
         manager_recado or "",
     ):
-        sys.exit("rex-remote requires --manager-recado recado+upstream://<manager-hostname>/<manager-id>")
+        sys.exit("remote preparation requires --manager-recado recado+upstream://<manager-hostname>/<manager-id>; configure recado on both machines")
     found = ensure_recado()
     if not found:
-        if remote:
-            sys.exit("rex-remote requires a messaging-capable recado on the remote machine")
-        print("[subagent] using extension route", file=sys.stderr)
-        return None
+        sys.exit("preparation requires a messaging-capable recado; install recado and run recado skill setup")
     binary, bin_dir = found
-    if remote:
+    if manager_recado:
         return binary, manager_recado, bin_dir
     try:
         result = subprocess.run(
             [binary, "whoami"], capture_output=True, text=True, timeout=10, check=False
         )
         address = result.stdout.strip()
-        if result.returncode == 0 and address.startswith("recado://local/"):
+        if result.returncode == 0 and re.fullmatch(r"recado://local/[a-z0-9][a-z0-9._-]*", address):
             return binary, address, bin_dir
     except (OSError, subprocess.TimeoutExpired):
         pass
-    print("[subagent] recado cannot identify the Manager; using extension route", file=sys.stderr)
-    return None
+    sys.exit("recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session")
 
 
-def reporting_commands(extension, manager, tag, report, recado=None, item=None, stage=None, axis=None):
-    """Exact recado or Paseo commands, else the extension's own route."""
-    if recado:
-        binary, address, _ = recado
-        command = f"{shlex.quote(binary)} send {shlex.quote(address)} --kind complete"
-        for key, value in (("item", item), ("stage", stage), ("axis", axis), ("report", report)):
-            if value is not None:
-                command += f" --meta {shlex.quote(f'{key}={value}')}"
-        safe_tag = tag.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
-        return (
-            f'{command} "[{safe_tag}] TASK COMPLETE: <one line>"\n'
-            f'{shlex.quote(binary)} ask {shlex.quote(address)} "[{safe_tag}] QUESTION: <question>"'
-        )
-    if os.path.basename(extension) != "paseo.md":
-        return None
-    helper = os.path.join(os.path.dirname(extension), "paseo", "host.py")
-    if not os.path.isfile(helper):
-        return None
-    send = f"python3 {shlex.quote(helper)} send {shlex.quote(manager)}"
+def reporting_commands(tag, report, recado, item=None, stage=None, axis=None):
+    """Exact recado commands, including the Manager address and metadata."""
+    binary, address, _ = recado
+    command = f"{shlex.quote(binary)} send {shlex.quote(address)} --kind complete"
+    for key, value in (("item", item), ("stage", stage), ("axis", axis), ("report", report)):
+        if value is not None:
+            command += f" --meta {shlex.quote(f'{key}={value}')}"
+    safe_tag = tag.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     return (
-        f'{send} "[{tag}] TASK COMPLETE: <one line>; report: {report}"\n'
-        f'{send} "[{tag}] QUESTION: <question>"'
+        f'{command} "[{safe_tag}] TASK COMPLETE: <one line>"\n'
+        f'{shlex.quote(binary)} ask {shlex.quote(address)} "[{safe_tag}] QUESTION: <question>"'
     )
 
 
-def subagent_prompt(brief, role, skills, report, extension, manager, tag, recado=None, item=None, stage=None, axis=None):
+def subagent_prompt(brief, role, skills, report, tag, recado, item=None, stage=None, axis=None):
     """The brief, prefixed with the Stage role, skills, report, and how to report.
 
     The Stage role travels inside the prompt as well as in engine.argv, so a
     host whose own CLI has no append-system-prompt flag still delivers it.
-    The host commands themselves live in the extension file, not here.
+    The prepared recado commands name the Manager explicitly.
     """
     lines = [
         role,
         "",
         f"You are {tag}. Start every message to the Manager with [{tag}], "
-        "exactly as written here; it is the [TAG] in the extension's commands.",
+        "exactly as written here; it is the [TAG] in the commands below.",
     ]
     if skills:
         lines.append("Read and follow these skills:")
@@ -637,39 +624,27 @@ def subagent_prompt(brief, role, skills, report, extension, manager, tag, recado
         "line pointing at it. This path wins over any path in the brief: "
         "use it, note the difference, keep working."
     )
-    if recado:
+    lines.append(
+        f"Report through recado to {recado[1]}. Its send and ask commands "
+        "below are the complete route; do not use the host extension to report. "
+        "Ask if the reporting command fails."
+    )
+    if recado[1].startswith("recado+upstream://"):
         lines.append(
-            f"Report through recado to {recado[1]}. Its send and ask commands "
-            "below are the complete route; do not use the host extension to report. "
-            "Ask if the reporting command fails."
+            "The Manager's 'Continue the brief' kickoff is not a follow-up: "
+            "it opens the return route. If it arrives after you reported "
+            "or asked a question, end your turn and wait."
         )
-        if recado[1].startswith("recado+upstream://"):
-            lines.append(
-                "The Manager's 'Continue the brief' kickoff is not a follow-up: "
-                "it opens the return route. If it arrives after you reported "
-                "or asked a question, end your turn and wait."
-            )
-    else:
-        lines.append(
-            f"Report through {extension}: it is the complete route, and the "
-            f"Manager's address is {manager}. Never infer the Manager from "
-            "local environment or substitute a local session. No explicit "
-            "destination in the extension means the same host, not a missing "
-            "route. Ask only when a named destination is unreachable, the "
-            "reporting command fails, or the extension conflicts with the "
-            "launch context."
-        )
-    exact = reporting_commands(extension, manager, tag, report, recado, item, stage, axis)
-    if exact:
-        lines.append(
-            "Run these exact commands to report and to ask (the address and "
-            f"tag are already filled in; never retype them):\n{exact}"
-        )
+    exact = reporting_commands(tag, report, recado, item, stage, axis)
+    lines.append(
+        "Run these exact commands to report and to ask (the address and "
+        f"tag are already filled in; never retype them):\n{exact}"
+    )
     lines += ["", SUBAGENT_RULES]
     return "\n".join(lines) + "\n\n" + brief
 
 
-def launch_spec(brief, stage, axis, item, cwd, extension, manager, profile, recado=None):
+def launch_spec(brief, stage, axis, item, cwd, extension, manager, profile, recado):
     """The one JSON object every host extension consumes."""
     stage_label = f"{stage} {axis}" if axis else stage
     name = f"subagent-{stage}-{os.getpid()}"
@@ -685,7 +660,7 @@ def launch_spec(brief, stage, axis, item, cwd, extension, manager, profile, reca
         "report": profile["report"],
         "extension": extension,
         "manager": manager,
-        "recado_bin_dir": recado[2] if recado else None,
+        "recado_bin_dir": recado[2],
         "model": profile["model"],
         "effort": profile["effort"],
         "role": profile["role"],
@@ -696,8 +671,6 @@ def launch_spec(brief, stage, axis, item, cwd, extension, manager, profile, reca
             profile["role"],
             profile["skills"],
             profile["report"],
-            extension,
-            manager,
             tag,
             recado,
             item,
@@ -726,7 +699,7 @@ def parse_args(argv):
     parser.add_argument("--manager", help="the Manager's native address on its host")
     parser.add_argument(
         "--manager-recado", metavar="ADDRESS",
-        help="Manager's upstream recado address for the rex-remote extension",
+        help="Manager's upstream recado address for a remote Stage",
     )
     parser.add_argument(
         "--model",

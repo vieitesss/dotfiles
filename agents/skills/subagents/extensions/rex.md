@@ -2,7 +2,7 @@
 
 Pick this file when `REX_SESSION` is set and no Paseo, herdr or tmux extension
 applies: the Subagent gets a background window in your Rex session. Pass its
-absolute path as `--extension`; the Subagent is told to read it to report.
+absolute path as `--extension`.
 
 A herdr or tmux running inside a Rex block wins over this file: it is the inner
 multiplexer, and text typed into that block would go to its active pane.
@@ -22,8 +22,8 @@ printf '%s\n' "$spec" | python3 "$SKILL/extensions/rex/host.py" launch [SESSION]
 
 `launch` prints
 `{"host":"rex","session":"session:...","window":"window:...","block":"block:...",...}`.
-Keep the window id to close and the block id to address the Subagent; record
-both in the Ledger.
+Keep the window id to close and the spec name for messaging; record both in
+the Ledger.
 
 - The default session is the calling block's, from `REX_SESSION`, not
   whichever one the app shows. Pass a session label or id as `SESSION` to
@@ -35,11 +35,8 @@ both in the Ledger.
   screen stays readable after it exits. It runs a login shell; multi-line
   briefs arrive whole.
 - `launch` refuses (exit 2) when `--manager` is not the block it runs in, or
-  when `PASEO_AGENT_ID` is set: a Paseo agent has no block of its own, so
-  reports would be typed into whatever runs there. Use the Paseo extension
-  instead. `notify` types only into the two blocks a launch marked (listed in
-  `${XDG_STATE_HOME:-~/.local/state}/subagents/rex-notify-blocks`), so a
-  message never lands in a human's input.
+  when `PASEO_AGENT_ID` is set: a Paseo agent has no block of its own. Use
+  the Paseo extension instead.
 - A failed launch exits 2, prints the block's last lines, and leaves the
   window open, with its ids on stderr, for diagnosis. Close that window before
   relaunching.
@@ -55,23 +52,10 @@ Create a fresh worktree with `git worktree add -b BRANCH <repo-parent>/<repo>-wt
 from an up-to-date main (nexo has no Rex backend), then pass the worktree path
 as `--cwd` and, optionally, a `rex new` session rooted there as `SESSION`.
 
-## Manager: follow-up and close
+## Manager: close
+
+Once the report is accepted:
 
 ```bash
-python3 "$SKILL/extensions/rex/host.py" notify SUBAGENT_BLOCK "MESSAGE"
 python3 "$SKILL/extensions/rex/host.py" close WINDOW
-```
-
-`notify` sends the message as one paste event, on stdin so it never shows in a
-process listing, then presses Enter, so a multi-line follow-up arrives as one
-prompt. Close the window once the report is accepted.
-
-## Subagent: reporting
-
-Type into the Manager's block, named in your prompt, through the helper next
-to this file (`rex/host.py` in the directory that holds it):
-
-```bash
-python3 EXTENSIONS_DIR/rex/host.py notify MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
-python3 EXTENSIONS_DIR/rex/host.py notify MANAGER "[TAG] QUESTION: <question>"
 ```

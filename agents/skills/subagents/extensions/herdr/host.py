@@ -5,7 +5,6 @@ Reads the launch spec printed by scripts/subagent.py on stdin.
 
 Usage:
     host.py launch [WORKSPACE] [TIMEOUT_MS]   # spec on stdin, prints ids
-    host.py notify TARGET MESSAGE            # prompt the Manager's agent
     host.py close TAB                        # close the Subagent's tab
 
 WORKSPACE defaults to the calling agent's workspace, taken from
@@ -142,7 +141,7 @@ def launch(spec, target=None, timeout_ms=DEFAULT_TIMEOUT_MS):
         f"model {spec['model']} effort {spec['effort']}",
         file=sys.stderr,
     )
-    argv = host_launch.engine_argv(spec, "herdr agent prompt")
+    argv = host_launch.engine_argv(spec)
     if not start(spec["name"], pane_id, argv, timeout_ms, kind=kind):
         return 2
     herdr("agent", "prompt", spec["name"], spec["prompt"])
@@ -166,9 +165,6 @@ def main(argv):
         target = argv[1] if len(argv) > 1 else None
         timeout = int(argv[2]) if len(argv) > 2 else DEFAULT_TIMEOUT_MS
         return launch(json.load(sys.stdin), target, min(max(timeout, 1000), 300000))
-    if command == "notify" and len(argv) == 3:
-        herdr("agent", "prompt", argv[1], argv[2])
-        return 0
     if command == "close" and len(argv) == 2:
         herdr("tab", "close", argv[1])
         return 0

@@ -5,7 +5,6 @@ Reads the launch spec printed by scripts/subagent.py on stdin.
 
 Usage:
     host.py launch [SESSION]        # spec on stdin, prints {"window", "block", ...}
-    host.py notify BLOCK MESSAGE    # paste a message into a marked block and submit
     host.py close WINDOW            # close the Subagent's window
 
     host.py remote-launch MACHINE [SESSION]   # spec on stdin: tmux on MACHINE
@@ -35,7 +34,6 @@ sys.path.insert(0, EXTENSIONS_DIR)
 import host_launch  # noqa: E402
 from host_launch import clip  # noqa: E402
 
-HOST = os.path.abspath(__file__)
 STARTUP_GRACE = 3  # seconds a Rex child must survive to count as launched
 # The skill's path on a remote machine, as the dotfiles install it.
 REMOTE_TMUX_HOST = "~/.agents/skills/subagents/extensions/tmux/host.py"
@@ -52,9 +50,9 @@ def rex_bin():
     sys.exit("rex not found on PATH or in REX_BIN_DIR")
 
 
-def rex(*args, check=True, input=None):
+def rex(*args, check=True):
     proc = subprocess.run(
-        [rex_bin(), *args], capture_output=True, text=True, check=False, input=input
+        [rex_bin(), *args], capture_output=True, text=True, check=False
     )
     if check and proc.returncode != 0:
         sys.exit(f"rex {' '.join(args[:2])} failed: {clip(proc.stderr or proc.stdout)}")
@@ -76,33 +74,6 @@ def calling_session():
     return session
 
 
-def marks_path():
-    state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-    return os.path.join(state, "subagents", "rex-notify-blocks")
-
-
-def marked(block):
-    try:
-        with open(marks_path(), encoding="utf-8") as handle:
-            return block in handle.read().split()
-    except FileNotFoundError:
-        return False
-
-
-def mark_block(block):
-    """Let notify type into block: launch marks only the two blocks it vouched for.
-
-    Rex has no per-block user option, so the marks live in a local file. Block
-    ids are never reused, so the file only grows by two lines per launch.
-    """
-    if marked(block):
-        return
-    path = marks_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(f"{block}\n")
-
-
 def process(block):
     """The block's process report: child, foreground and last_exit, or None."""
     return rex_json("block", "call", "-b", block, "process", check=False)
@@ -115,26 +86,6 @@ def manager_pane_error(block):
     except (KeyError, TypeError):
         pid = None
     return host_launch.manager_pane_error(block, pid)
-
-
-def notify(block, message):
-    """Paste message into block and submit it.
-
-    A paste event keeps multi-line messages from submitting line by line, and
-    travels on stdin so it never shows in a process listing. Only a block
-    launch marked is typed into: anything else may be a human's input, and
-    the Enter would send it.
-    """
-    if not marked(block):
-        sys.exit(
-            f"notify: block {block} was not marked by launch as a Manager or "
-            "Subagent block; refusing to type into it"
-        )
-    session = rex_json("block", "inspect", block, "--json")["session_id"]
-    event = {"block_id": block, "event": {"type": "paste", "payload": {"text": message}}}
-    rex("api", "call", "-s", session, "block.event", "-", input=json.dumps(event))
-    time.sleep(0.3)  # let the TUI finish the paste before Enter submits it
-    rex("send-key", "-s", session, "-b", block, "enter")
 
 
 def start(name, session, cwd, argv, prompt, kind, recado_bin_dir=None):
@@ -182,7 +133,7 @@ def launch(spec, target=None):
         f"[subagent] {name} model {spec['model']} effort {spec['effort']}",
         file=sys.stderr,
     )
-    argv = host_launch.engine_argv(spec, f"python3 {HOST} notify", f"{sys.executable} {HOST} notify")
+    argv = host_launch.engine_argv(spec)
     window, block, alive = start(name, session, cwd, argv, spec["prompt"], kind, spec.get("recado_bin_dir"))
     if not alive:
         view = rex("capture", "-b", block, "--trim", check=False)
@@ -203,8 +154,6 @@ def launch(spec, target=None):
             file=sys.stderr,
         )
         return 2
-    mark_block(spec["manager"])
-    mark_block(block)
     print(
         json.dumps(
             {
@@ -264,9 +213,6 @@ def main(argv):
     command = argv[0] if argv else "launch"
     if command == "launch":
         return launch(json.load(sys.stdin), argv[1] if len(argv) > 1 else None)
-    if command == "notify" and len(argv) == 3:
-        notify(argv[1], argv[2])
-        return 0
     if command == "close" and len(argv) == 2:
         rex("window", "close", argv[1])
         return 0

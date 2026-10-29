@@ -79,16 +79,17 @@ def identity_env(spec):
     return flags
 
 
-def engine_argv(spec, *notify_commands):
+def engine_argv(spec):
     """Engine flags and narrow Claude permissions for reporting and the report file."""
     argv = list(spec["engine"]["argv"])
     if spec["engine"]["kind"] == "claude":
-        permissions = [f"Bash({command} *)" for command in notify_commands]
-        permissions.append(f"Edit(/{spec['report']})")
+        permissions = [f"Edit(/{spec['report']})"]
         directory = spec.get("recado_bin_dir")
+        binaries = ["recado"]
         if directory:
-            for binary in ("recado", os.path.join(directory, "recado")):
-                permissions += [f"Bash({binary} {action} *)" for action in ("send", "ask")]
+            binaries.append(os.path.join(directory, "recado"))
+        for binary in binaries:
+            permissions += [f"Bash({binary} {action} *)" for action in ("send", "ask")]
         argv += ["--allowedTools", *permissions]
     return argv
 
@@ -150,10 +151,8 @@ def trust_claude_dir(cwd):
 def manager_pane_error(pane, shell_pid):
     """Why pane, whose shell runs as shell_pid, cannot be this Manager's address.
 
-    None when it is. Reports are typed into the Manager's pane and submitted,
-    so a pane that is not the Manager's (a Paseo agent inherits the pane
-    variables of whatever pane started its daemon) would get every report
-    typed into whatever runs there.
+    None when it is. A Paseo agent inherits the pane variables of whatever
+    pane started its daemon, not a pane belonging to the agent itself.
     """
     if os.environ.get("PASEO_AGENT_ID"):
         return (

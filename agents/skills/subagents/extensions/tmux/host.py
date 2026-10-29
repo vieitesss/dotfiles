@@ -6,7 +6,6 @@ Reads the launch spec printed by scripts/subagent.py on stdin.
 Usage:
     host.py launch [--remote-manager] [SESSION]
                                     # spec on stdin, prints {"window", "pane", ...}
-    host.py notify PANE MESSAGE     # type a message into a marked pane
     host.py close WINDOW            # kill the Subagent's window
 
 SESSION defaults to the calling agent's tmux session, taken from TMUX_PANE,
@@ -30,17 +29,13 @@ sys.path.insert(0, EXTENSIONS_DIR)
 import host_launch  # noqa: E402
 from host_launch import clip  # noqa: E402
 
-HOST = os.path.abspath(__file__)
-# Pane option launch sets on the Manager's and the Subagent's panes; notify
-# types only into a pane that carries it.
-NOTIFY_MARK = "@subagent-notify"
 STARTUP_GRACE = 3  # seconds a tmux child must survive to count as launched
 REMOTE_SESSION = "subagents"  # session for a remote Manager's Subagents
 
 
-def tmux(*args, check=True, input=None):
+def tmux(*args, check=True):
     proc = subprocess.run(
-        ["tmux", *args], capture_output=True, text=True, check=False, input=input
+        ["tmux", *args], capture_output=True, text=True, check=False
     )
     if check and proc.returncode != 0:
         sys.exit(f"tmux {args[0]} failed: {clip(proc.stderr or proc.stdout)}")
@@ -53,35 +48,10 @@ def tmux_session():
     return tmux("display-message", "-p", *(["-t", pane] if pane else []), "#{session_id}")
 
 
-def mark_pane(pane):
-    """Let notify type into pane: launch marks only the two panes it vouched for."""
-    tmux("set-option", "-p", "-t", pane, NOTIFY_MARK, "1")
-
-
 def manager_pane_error(pane):
     """Why pane cannot be this Manager's address, or None when it is."""
     pid = tmux("display-message", "-p", "-t", pane, "#{pane_pid}", check=False)
     return host_launch.manager_pane_error(pane, pid)
-
-
-def notify(pane, message):
-    """Type message into pane and submit it.
-
-    A bracketed paste keeps multi-line messages from submitting line by line.
-    Only a pane launch marked is typed into: anything else may be a human's
-    input, and the Enter would send it.
-    """
-    mark = tmux("show-options", "-p", "-v", "-t", pane, NOTIFY_MARK, check=False)
-    if mark != "1":
-        sys.exit(
-            f"notify: pane {pane} was not marked by launch as a Manager or "
-            "Subagent pane; refusing to type into it"
-        )
-    buffer = f"subagent-{os.getpid()}"
-    tmux("load-buffer", "-b", buffer, "-", input=message)
-    tmux("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane)
-    time.sleep(0.3)  # let the TUI finish the paste before Enter submits it
-    tmux("send-keys", "-t", pane, "Enter")
 
 
 def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi", recado_bin_dir=None):
@@ -133,8 +103,8 @@ def launch_tmux(name, pane_id, argv, prompt, cwd, kind="pi", recado_bin_dir=None
 def launch(spec, target=None, remote_manager=False):
     """Create a window in the target session and start the Subagent in it.
 
-    A remote Manager's address is on another machine: it is neither checked
-    nor marked here.
+    A remote Manager's native address is on another machine, so it is not
+    checked here.
     """
     name = spec["name"]
     cwd = spec["cwd"]
@@ -162,12 +132,9 @@ def launch(spec, target=None, remote_manager=False):
         f"model {spec['model']} effort {spec['effort']}",
         file=sys.stderr,
     )
-    argv = host_launch.engine_argv(spec, f"python3 {HOST} notify", f"{sys.executable} {HOST} notify")
+    argv = host_launch.engine_argv(spec)
     if not launch_tmux(name, pane, argv, spec["prompt"], cwd, kind=kind, recado_bin_dir=spec.get("recado_bin_dir")):
         return 2
-    if not remote_manager:
-        mark_pane(spec["manager"])
-        mark_pane(pane)
     print(
         json.dumps(
             {
@@ -188,9 +155,6 @@ def main(argv):
         remote = "--remote-manager" in argv[1:]
         rest = [arg for arg in argv[1:] if arg != "--remote-manager"]
         return launch(json.load(sys.stdin), rest[0] if rest else None, remote)
-    if command == "notify" and len(argv) == 3:
-        notify(argv[1], argv[2])
-        return 0
     if command == "close" and len(argv) == 2:
         tmux("kill-window", "-t", argv[1])
         return 0

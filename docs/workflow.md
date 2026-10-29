@@ -98,8 +98,8 @@ this repository: they come from the shared checkout at `~/work/prefapp/skills`.
 
 Every Subagent talks only to the Manager; the user talks only to the Manager.
 Sessions hand work over through files: the brief going in, the report coming
-out, the diff in the worktree, and the Ledger. Same-machine messages use
-recado when available; otherwise they travel over the host extension's route.
+out, the diff in the worktree, and the Ledger. All messages between the
+Manager and Subagents travel over recado, including across machines.
 
 ```mermaid
 sequenceDiagram

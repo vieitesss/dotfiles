@@ -58,17 +58,10 @@ Record the machine, name, window, pane and kickoff id in the Ledger.
 - The report path is on the remote machine. Read it there over SSH when it is
   not in a shared checkout.
 
-## Manager: follow-up and close
+## Manager: close
 
-Answer a Question with `recado reply MESSAGE_ID "ANSWER"`. For later follow-ups
-and close:
+Once the report is accepted:
 
 ```bash
-recado send recado://MACHINE/NAME "MESSAGE"
 python3 "$SKILL/extensions/rex/host.py" remote-close MACHINE WINDOW
 ```
-
-## Subagent: reporting
-
-Use the exact `recado send` and `recado ask` commands in the prepared prompt.
-After a Question or Completion report, end your turn and wait.

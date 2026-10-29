@@ -2,7 +2,7 @@
 
 Pick this file when `HERDR_ENV` is set and you are not a Paseo agent: the
 Subagent gets a tab in your herdr workspace. Pass its absolute path as
-`--extension`; it also describes the fallback reporting route.
+`--extension`.
 
 ## Manager: launching a Stage
 
@@ -27,8 +27,7 @@ the Ledger.
   pane is retried for up to 30s.
 - `launch` refuses, exiting 2, when you are a Paseo agent or `--manager` is
   not the pane you run in: a Paseo agent inherits the herdr variables of
-  whatever pane started its daemon, and every report would be typed into
-  that pane and submitted.
+  whatever pane started its daemon.
 - A failed launch exits 2 and leaves the tab open, with its ids on stderr, for
   diagnosis. Close that tab before relaunching.
 
@@ -42,23 +41,10 @@ nexo --json --backend herdr open --no-focus DIR   # -> .id is the workspace
 Create a fresh worktree as in [`tmux.md`](tmux.md); pass its `.container.id` as
 `WORKSPACE` and the worktree path as `--cwd`.
 
-## Manager: follow-up and close
+## Manager: close
+
+Once the report is accepted:
 
 ```bash
-python3 "$SKILL/extensions/herdr/host.py" notify SUBAGENT_NAME "MESSAGE"
 python3 "$SKILL/extensions/herdr/host.py" close TAB
-```
-
-`notify` runs `herdr agent prompt`. If herdr rejects a prompt (for example
-`agent_blocked`), wait a few seconds and retry. Close after accepting the report.
-
-## Subagent: reporting
-
-Prompt the Manager's agent by the address in your prompt. A herdr agent command
-accepts either the pane id hosting the agent or a unique live agent name, so
-the Manager's `$HERDR_PANE_ID` is a valid address:
-
-```bash
-herdr agent prompt MANAGER "[TAG] TASK COMPLETE: <one line>; report: <report path>"
-herdr agent prompt MANAGER "[TAG] QUESTION: <question>"
 ```

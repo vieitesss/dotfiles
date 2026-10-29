@@ -40,11 +40,6 @@ args = sys.argv[1:]
 log = os.environ["FAKE_LOG"]
 with open(log, "a", encoding="utf-8") as handle:
     handle.write(json.dumps([name, args]) + "\\n")
-if "--prompt-file" in args:
-    path = args[args.index("--prompt-file") + 1]
-    with open(path, encoding="utf-8") as source:
-        with open(log, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(["prompt-file", source.read()]) + "\\n")
 if name == "paseo" and args[:2] == ["workspace", "ls"]:
     print(os.environ.get("FAKE_WORKSPACES", "[]"))
 elif name == "paseo" and args[:2] == ["project", "ls"]:
@@ -54,9 +49,6 @@ elif name == "paseo" and args[:2] == ["workspace", "create"]:
                       "cwd": args[args.index("--path") + 1]}))
 elif name == "paseo" and args[:1] == ["run"]:
     print(json.dumps({"agentId": "agent-42"}))
-elif name == "paseo" and args[:1] == ["inspect"]:
-    print(json.dumps({"Id": args[-1], "Name": "subagent-test",
-                        "Status": "running"}))
 elif name == "herdr" and args[:2] == ["tab", "create"]:
     print(json.dumps({"result": {"root_pane": {"pane_id": "1-1"},
                                  "tab": {"tab_id": "1:1"}}}))
@@ -72,10 +64,6 @@ elif name == "tmux":
         print(os.environ["FAKE_MANAGER_PID"])
     elif args[:1] == ["display-message"]:
         print("%1 0")
-    elif args[:1] == ["show-options"]:
-        print("1")
-    elif args[:1] == ["load-buffer"]:
-        sys.stdin.read()
 elif name == "recado" and args[:1] == ["send"]:
     if os.environ.get("FAKE_RECADO_FAILURE"):
         print("recado delivery failed", file=sys.stderr)
@@ -88,11 +76,6 @@ elif name == "rex":
         block = args[args.index("-b") + 1]
         pid = int(os.environ["FAKE_MANAGER_PID"]) if block != "block:b1" else 99999
         print(json.dumps({"last_exit": None, "child": {"pid": pid}}))
-    elif args[:2] == ["block", "inspect"]:
-        print(json.dumps({"session_id": "session:s1"}))
-    elif args[:2] == ["api", "call"]:
-        with open(log, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(["rex-stdin", sys.stdin.read()]) + "\\n")
 '''
 
 
@@ -143,8 +126,8 @@ class HostTest(unittest.TestCase):
         return [args for called, args in self.calls() if called == name]
 
     def actions_for(self, name):
-        """call_for minus the read-only Manager-pane and notify-mark checks."""
-        checks = (["pane", "process-info"], ["show-options"], ["block", "call"])
+        """call_for minus the read-only Manager-pane checks."""
+        checks = (["pane", "process-info"], ["block", "call"])
         return [
             args for args in self.call_for(name)
             if not any(args[:len(c)] == c for c in checks)
@@ -190,6 +173,7 @@ class HostTest(unittest.TestCase):
             "report": os.path.join(self.work, "reports", "wi-build.md"),
             "extension": os.path.join(SKILL, "extensions", "paseo.md"),
             "manager": "manager-addr",
+            "recado_bin_dir": "/custom/bin",
             "model": model,
             "effort": effort if kind != "claude" else "low",
             "role": role,
@@ -197,6 +181,17 @@ class HostTest(unittest.TestCase):
             "engine": engine,
             "prompt": f"{role}\n\nFIRST LINE\nsecond line of brief",
         }
+
+
+class RetiredMessagingTest(HostTest):
+    def test_hosts_reject_retired_messaging_commands(self):
+        for host, command in (("paseo", "send"), ("paseo", "pending"),
+                              ("herdr", "notify"), ("tmux", "notify"), ("rex", "notify")):
+            with self.subTest(host=host, command=command):
+                args = () if command == "pending" else ("target", "message")
+                proc = self.run_host(host, command, *args)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(self.calls(), [])
 
 
 class PaseoHostTest(HostTest):
@@ -221,32 +216,27 @@ class PaseoHostTest(HostTest):
         self.assertIn("Manager's Paseo agent id", proc.stderr)
         self.assertEqual(self.calls(), [])
 
-    def test_remote_reporting_instructions_are_delivered_without_local_inference(self):
+    def test_remote_paseo_delivers_prepared_recado_commands(self):
         cwd = os.path.join(self.work, "rpi-checkout")
         os.makedirs(cwd)
-        extension = os.path.join(self.work, "remote-paseo.md")
+        extension = os.path.join(SKILL, "extensions", "paseo-remote.md")
         manager = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        with open(extension, "w", encoding="utf-8") as handle:
-            handle.write(
-                f"# Paseo Manager on the Mac\n"
-                f'paseo --host mac-endpoint send --no-wait {manager} "MESSAGE"\n'
-            )
+        upstream = "recado+upstream://mac.local/manager-1"
         env = dict(self.env, TMUX_PANE="%36")
         env.pop("PASEO_AGENT_ID", None)
-        env.pop("PASEO_CLI", None)
         with mock.patch.dict(os.environ, env, clear=True):
             with mock.patch.object(subagent, "stage_skills", return_value={}):
                 spec = prepare_spec([
                     "subagent.py", "--stage", "diagnose", "--item", "remote",
-                    "--cwd", cwd, "--extension", extension,
-                    "--manager", manager, "--dry-run", "remote brief",
+                    "--cwd", cwd, "--extension", extension, "--manager", manager,
+                    "--manager-recado", upstream, "--dry-run", "remote brief",
                 ])
         proc = self.run_host("paseo", "launch", spec=spec, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         delivered = self.run_call()[-1]
         self.assertEqual(delivered, spec["prompt"])
-        self.assertIn(manager, delivered)
-        self.assertIn(extension, delivered)
+        self.assertIn(f"recado send {upstream}", delivered)
+        self.assertIn(f"recado ask {upstream}", delivered)
         self.assertNotIn("%36", delivered)
 
     def test_pi_launch_uses_the_pi_provider_and_full_model(self):
@@ -444,189 +434,6 @@ class PaseoHostTest(HostTest):
         self.assertEqual(argv[argv.index("--cwd") + 1], spec["cwd"])
         self.assertIn("as its own project", proc.stderr)
 
-    def send_and_wait_for_delivery(self, agent, message, timeout=10):
-        """Send a message, then wait for the detached delivery child to log it.
-
-        send() returns before the receiver is idle, so the fake CLI's log fills
-        in after the sender has already exited.
-        """
-        proc = self.run_host("paseo", "send", agent, message)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        deadline = time.monotonic() + timeout
-        while ["prompt-file", message] not in self.calls():
-            if time.monotonic() > deadline:
-                self.fail(f"the detached delivery never sent {message!r}")
-            time.sleep(0.05)
-
-    def test_send_hands_the_message_to_a_detached_delivery(self):
-        self.send_and_wait_for_delivery("agent-42", "a\nb")
-        calls = self.call_for("paseo")
-        self.assertEqual(calls[0][:2], ["inspect", "--json"])
-        waiting = next(args for args in calls if args[0] == "wait")
-        self.assertEqual(waiting[:2], ["wait", "--timeout"])
-        sending = next(args for args in calls if args[0] == "send")
-        self.assertEqual(sending[:3], ["send", "--no-wait", "agent-42"])
-        self.assertIn("--prompt-file", sending)
-
-    def test_send_refuses_an_unknown_manager_before_detaching(self):
-        log = os.path.join(self.work, "calls")
-        body = (
-            f'printf "%s\\n" "$*" >> "{log}"\n'
-            'if [ "$1" = "inspect" ]; then\n'
-            '  printf \'%s\\n\' \'{"error": {"code": "AGENT_NOT_FOUND"}}\'\n'
-            "  exit 1\n"
-            "fi\n"
-            "exit 0\n"
-        )
-        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
-        proc = self.run_host("paseo", "send", "dead-beef", "hello", env=env)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("dead-beef", proc.stderr)
-        with open(log, encoding="utf-8") as handle:
-            calls = handle.read()
-        self.assertIn("inspect", calls)
-        self.assertNotIn("wait", calls)
-        self.assertNotIn(" --no-wait dead-beef", calls)
-
-    def test_send_refuses_a_tmux_pane_as_manager(self):
-        proc = self.run_host("paseo", "send", "%36", "hello")
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("%36", proc.stderr)
-        self.assertEqual(
-            [args for args in self.call_for("paseo") if args[:1] == ["run"]], []
-        )
-
-    def delivery_log(self, proc):
-        """The log path a successful send names, waited until delivery lands."""
-        self.assertIn("delivery log: ", proc.stdout)
-        log = proc.stdout.split("delivery log: ")[1].split()[0]
-        self.assertTrue(log.startswith(tempfile.gettempdir()), log)
-        deadline = time.monotonic() + 10
-        while True:
-            with open(log, encoding="utf-8") as handle:
-                record = handle.read()
-            if "DELIVERED agent-42" in record or "FAILED agent-42" in record:
-                return record
-            if time.monotonic() > deadline:
-                self.fail(f"no delivery record appeared in {log}: {record!r}")
-            time.sleep(0.05)
-
-    def test_send_names_a_delivery_log_where_the_child_records_itself(self):
-        proc = self.run_host("paseo", "send", "agent-42", "a\nb")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("DELIVERED agent-42", self.delivery_log(proc))
-
-    def test_a_failed_send_is_recorded_in_the_delivery_log(self):
-        log = os.path.join(self.work, "calls")
-        body = (
-            f'printf "%s\\n" "$*" >> "{log}"\n'
-            'if [ "$1" = "inspect" ]; then\n'
-            '  printf \'{"Id": "agent-42", "Status": "idle"}\\n\'\n'
-            'elif [ "$1" = "send" ]; then\n'
-            "  printf '%s\\n' 'Agent agent-42 is gone' >&2\n"
-            "  exit 1\n"
-            "fi\n"
-            "exit 0\n"
-        )
-        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
-        queued = self.run_host("paseo", "send", "agent-42", "hello", env=env)
-        self.assertEqual(queued.returncode, 0, queued.stderr)
-        record = self.delivery_log(queued)
-        self.assertIn("FAILED agent-42", record)
-        self.assertIn("Agent agent-42 is gone", record)
-
-    def test_deliver_returns_nonzero_when_the_send_fails(self):
-        log = os.path.join(self.work, "calls")
-        body = (
-            f'printf "%s\\n" "$*" >> "{log}"\n'
-            'if [ "$1" = "send" ]; then\n'
-            "  printf '%s\\n' 'Agent agent-42 is gone' >&2\n"
-            "  exit 1\n"
-            "fi\n"
-            "exit 0\n"
-        )
-        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
-        path = os.path.join(self.work, "message.md")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("hello")
-        record = os.path.join(self.work, "deliver.log")
-        proc = self.run_host("paseo", "deliver", "agent-42", path, record, env=env)
-        self.assertNotEqual(proc.returncode, 0)
-        with open(record, encoding="utf-8") as handle:
-            self.assertIn("FAILED agent-42", handle.read())
-        self.assertFalse(os.path.exists(path), "the delivery child removes the file")
-
-    def test_deliver_waits_for_idle_then_sends_and_removes_the_file(self):
-        path = os.path.join(self.work, "message.md")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("a\nb")
-        proc = self.run_host("paseo", "deliver", "agent-42", path)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        sending = [
-            args for args in self.call_for("paseo") if args[0] in ("wait", "send")
-        ]
-        self.assertEqual(
-            sending[:2],
-            [
-                ["wait", "--timeout", "3600", "agent-42"],
-                ["send", "--no-wait", "agent-42", "--prompt-file", path],
-            ],
-        )
-        self.assertIn(["prompt-file", "a\nb"], self.calls())
-        self.assertFalse(os.path.exists(path), "the delivery child removes the file")
-
-    def test_pending_lists_idle_subagents_with_their_delivery_state(self):
-        tmp = os.path.join(self.work, "tmp")
-        os.makedirs(tmp)
-        agents = [
-            {"id": "aaa", "name": "subagent-build-1", "status": "idle"},
-            {"id": "bbb", "name": "subagent-refine-2", "status": "idle"},
-            {"id": "ccc", "name": "subagent-build-3", "status": "running"},
-            {"id": "ddd", "name": "other-agent", "status": "idle"},
-            {"id": "eee", "name": "subagent-build-4", "status": "idle"},
-        ]
-        fixture = os.path.join(self.work, "agents.json")
-        with open(fixture, "w", encoding="utf-8") as handle:
-            json.dump(agents, handle)
-        body = (
-            f'if [ "$1" = "ls" ]; then cat "{fixture}"; fi\n'
-            "exit 0\n"
-        )
-        for agent, last in (
-            ("aaa", "2026-10-16T00:00:00 DELIVERED aaa"),
-            ("bbb", "2026-10-16T00:00:00 FAILED bbb: paseo send failed: gone"),
-        ):
-            with open(
-                os.path.join(tmp, f"subagent-deliver-{agent}-1.log"),
-                "w", encoding="utf-8",
-            ) as handle:
-                handle.write(f"queued for {agent}\n{last}\n")
-        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body), TMPDIR=tmp)
-        proc = self.run_host("paseo", "pending", env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("subagent-refine-2", proc.stdout)
-        self.assertIn("FAILED bbb", proc.stdout)
-        self.assertIn("subagent-build-4", proc.stdout)
-        self.assertIn("no delivery log", proc.stdout)
-        self.assertNotIn("subagent-build-3", proc.stdout)
-        self.assertNotIn("other-agent", proc.stdout)
-        undelivered = min(
-            proc.stdout.index("subagent-refine-2"),
-            proc.stdout.index("subagent-build-4"),
-        )
-        self.assertLess(undelivered, proc.stdout.index("subagent-build-1"))
-
-    def test_pending_with_no_idle_subagents_says_so(self):
-        fixture = os.path.join(self.work, "agents.json")
-        with open(fixture, "w", encoding="utf-8") as handle:
-            json.dump([{"id": "x", "name": "subagent-build-1",
-                        "status": "running"}], handle)
-        body = f'if [ "$1" = "ls" ]; then cat "{fixture}"; fi\nexit 0\n'
-        env = dict(self.env, PASEO_CLI=self.script_cli("paseo", body))
-        proc = self.run_host("paseo", "pending", env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("no idle subagent", proc.stdout)
-
     def test_archive_keeps_history_and_forces_a_running_agent(self):
         proc = self.run_host("paseo", "archive", "agent-42")
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -789,23 +596,13 @@ class TmuxHostTest(HostTest):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         respawn = [c for c in self.call_for("tmux") if c[0] == "respawn-pane"][0]
         self.assertIn("--allowedTools", respawn)
-        self.assertTrue(
-            any("notify" in arg for arg in respawn if arg.startswith("Bash(")), respawn
-        )
+        self.assertIn("Bash(recado send *)", respawn)
+        self.assertIn("Bash(recado ask *)", respawn)
         with open(os.path.join(self.work, ".claude.json"), encoding="utf-8") as handle:
             config = json.load(handle)
         self.assertTrue(
             config["projects"][os.path.realpath(spec["cwd"])]["hasTrustDialogAccepted"]
         )
-
-    def test_notify_pastes_and_submits(self):
-        proc = self.run_host("tmux", "notify", "%9", "hi\nthere")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        calls = self.actions_for("tmux")
-        self.assertEqual(calls[0][0], "load-buffer")
-        self.assertIn("-t", calls[1])
-        self.assertEqual(calls[1][calls[1].index("-t") + 1], "%9")
-        self.assertEqual(calls[2], ["send-keys", "-t", "%9", "Enter"])
 
     def test_close_kills_the_window(self):
         proc = self.run_host("tmux", "close", "@7")
@@ -852,20 +649,13 @@ class HerdrHostTest(HostTest):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         start = self.actions_for("herdr")[1]
         self.assertIn("--allowedTools", start)
-        for command in ("herdr agent prompt", "recado send", "recado ask",
+        for command in ("recado send", "recado ask",
                         "/custom/bin/recado send", "/custom/bin/recado ask"):
             self.assertIn(f"Bash({command} *)", start)
         with open(os.path.join(self.work, ".claude.json"), encoding="utf-8") as handle:
             config = json.load(handle)
         self.assertTrue(
             config["projects"][os.path.realpath(spec["cwd"])]["hasTrustDialogAccepted"]
-        )
-
-    def test_notify_prompts_the_manager_agent(self):
-        proc = self.run_host("herdr", "notify", "manager", "hello")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(
-            self.call_for("herdr")[0], ["agent", "prompt", "manager", "hello"]
         )
 
     def test_launch_without_a_calling_workspace_is_refused(self):
@@ -875,14 +665,6 @@ class HerdrHostTest(HostTest):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("HERDR_WORKSPACE_ID", proc.stderr)
         self.assertEqual(self.actions_for("herdr"), [])
-
-    def test_a_failed_prompt_never_echoes_the_message(self):
-        env = dict(self.env)
-        env["PATH"] = os.pathsep.join([self.failing_cli("herdr"), env["PATH"]])
-        proc = self.run_host("herdr", "notify", "manager", "SECRET MESSAGE", env=env)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertNotIn("SECRET MESSAGE", proc.stdout + proc.stderr)
-        self.assertIn("herdr agent prompt failed: blocked", proc.stderr)
 
     def test_close_closes_the_tab(self):
         proc = self.run_host("herdr", "close", "1:1")
@@ -924,10 +706,8 @@ class RexHostTest(HostTest):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         window = self.actions_for("rex")[0]
         self.assertIn("--allowedTools", window)
-        self.assertTrue(
-            any("rex/host.py notify" in arg for arg in window if arg.startswith("Bash(")),
-            window,
-        )
+        self.assertIn("Bash(recado send *)", window)
+        self.assertIn("Bash(recado ask *)", window)
         with open(os.path.join(self.work, ".claude.json"), encoding="utf-8") as handle:
             config = json.load(handle)
         self.assertTrue(
@@ -941,30 +721,6 @@ class RexHostTest(HostTest):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("REX_SESSION", proc.stderr)
         self.assertEqual(self.actions_for("rex"), [])
-
-    def test_notify_refuses_a_block_launch_never_marked(self):
-        proc = self.run_host("rex", "notify", "block:human", "hi")
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("not marked", proc.stderr)
-        self.assertEqual(self.calls(), [])
-
-    def test_notify_pastes_on_stdin_then_submits(self):
-        proc = self.run_host("rex", "launch", spec=self.spec())
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        os.unlink(self.log)
-        proc = self.run_host("rex", "notify", "manager-addr", "SECRET\nthere")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        calls = self.calls()
-        api = [args for name, args in calls if name == "rex" and args[:2] == ["api", "call"]]
-        self.assertEqual(api, [["api", "call", "-s", "session:s1", "block.event", "-"]])
-        pasted = json.loads([args for name, args in calls if name == "rex-stdin"][0])
-        self.assertEqual(pasted["block_id"], "manager-addr")
-        self.assertEqual(pasted["event"]["type"], "paste")
-        self.assertEqual(pasted["event"]["payload"]["text"], "SECRET\nthere")
-        self.assertEqual(
-            calls[-1], ["rex", ["send-key", "-s", "session:s1", "-b", "manager-addr", "enter"]]
-        )
-        self.assertNotIn("SECRET", json.dumps(self.call_for("rex")))
 
 class RemoteRexHostTest(HostTest):
     """A Rex Manager whose Subagent runs in tmux on another machine.
@@ -1112,7 +868,7 @@ class TmuxSandboxTest(unittest.TestCase):
         with mock.patch.dict(
             subagent.MODELS,
             {"builder": ("github-copilot/gpt-6.1-sol", "Sandbox Pi fixture.")},
-        ):
+        ), mock.patch.object(subagent, "recado_route", return_value=("recado", "recado://local/manager", "/bin")):
             return prepare_spec(argv)
 
     def test_launch_runs_through_a_private_tmux_server(self):
@@ -1270,17 +1026,6 @@ class RexSandboxTest(unittest.TestCase):
         with open(os.path.join(self.work, "result"), encoding="utf-8") as handle:
             result = json.load(handle)
         self.assertEqual(result["host"], "rex")
-        proc = subprocess.run(
-            [sys.executable, host, "notify", result["block"], "hello\nfrom the manager"],
-            capture_output=True, text=True, env=env,
-        )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        for _ in range(50):
-            screen = self.rex_cli("capture", "-b", result["block"], "--trim").stdout
-            if "from the manager" in screen:
-                break
-            time.sleep(0.1)
-        self.assertIn("from the manager", screen)
         proc = subprocess.run(
             [sys.executable, host, "close", result["window"]],
             capture_output=True, text=True, env=env,
