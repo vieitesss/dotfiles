@@ -121,6 +121,10 @@ Delegate when:
 Delegating hands off the legwork, never the decisions: a Subagent that hits a
 choice sends a Question, and you answer.
 
+Building a Work Item yourself leaves its proof budget as it was. Beyond the
+trivial path, a fresh `--axis standards` reviewer reads your diff before
+Ship, because the author is the worst judge of their own diff.
+
 ## One Subagent per Stage
 
 Every Stage, and every fix round, gets a fresh Subagent. Until you accept a
