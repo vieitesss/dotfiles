@@ -23,6 +23,11 @@ bind("c", "client.tab.new")
 bind(",", "client.tab.previous")
 bind(".", "client.tab.next")
 
+-- Go to tab N with Ctrl+Alt+N (plain Alt+1/2/3 type | @ # on a Spanish layout)
+for n = 1, 9 do
+	rex.bind("ctrl+alt+" .. n, "client.tab.goto", { index = n })
+end
+
 -- Move between panes
 bind("h", "pane.focus", { direction = "left" })
 bind("j", "pane.focus", { direction = "down" })
