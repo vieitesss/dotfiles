@@ -290,6 +290,7 @@ if [[ $IS_DARWIN -eq 1 ]]; then
     add-to-path "GOPATH" "$HOME/go/bin"
 else
     add-to-path "GOPATH" "/usr/local/go/bin"
+    path=("$GOPATH/bin" $path)
 fi
 
 # Dagger completion (cross-platform) - defer regeneration work
