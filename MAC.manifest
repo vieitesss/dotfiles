@@ -3,6 +3,7 @@ agents/skills/*|~/.agents/skills/*
 agents/skills/*|~/.claude/skills/*
 
 claude/statusline.sh|~/.claude/statusline.sh
+claude/hooks/caveman-session-start|~/.claude/hooks/caveman-session-start
 
 zsh/.zshrc|~/.zshrc
 zsh/.zshenv|~/.zshenv

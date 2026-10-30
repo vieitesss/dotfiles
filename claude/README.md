@@ -51,3 +51,20 @@ machine-local settings). Add the `statusLine` block to
 ```
 
 Claude Code reloads settings automatically. Requires `bash` and `jq`.
+
+## Caveman by default
+
+`hooks/caveman-session-start` injects the `caveman` skill from
+`~/.agents/skills/caveman/SKILL.md` at session start, including after resume,
+clear and compact. `pi/agent/extensions/caveman.ts` does the same for Pi.
+
+`./install.sh claude` links the script. Then add the hook to the
+`hooks.SessionStart` array in `~/.claude/settings.json` by hand:
+
+```json
+{
+  "hooks": [
+    { "type": "command", "command": "~/.claude/hooks/caveman-session-start" }
+  ]
+}
+```

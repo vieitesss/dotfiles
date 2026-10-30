@@ -1,0 +1,11 @@
+#!/bin/sh
+# SessionStart hook: turn caveman on by injecting the skill into the session.
+# Claude Code adds stdout to the context. A missing skill exits non-zero, which
+# Claude Code reports instead of silently starting without caveman.
+set -eu
+
+skill=$(cat "$HOME/.agents/skills/caveman/SKILL.md")
+
+printf '%s\n\n%s\n' \
+    'Caveman mode is on by default. Follow the caveman skill below from your first reply, until the user turns it off.' \
+    "$skill"
