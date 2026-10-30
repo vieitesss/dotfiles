@@ -1,11 +1,11 @@
-// recado-shim: "3"
+// recado-shim: "4"
 /**
  * recado's Pi extension: turns recado messages into user turns and reports the
  * session and turn lifecycle to `recado hook pi ...`.
  *
  * Installed by "recado skill setup"; remove it with "recado skill remove".
  */
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -47,20 +47,28 @@ function agentID(ctx: ExtensionContext): string {
 	return id || `pi-${process.pid}`;
 }
 
+// hookFailure says why a call to recado failed, for the notice the human reads.
+function hookFailure(err: ExecFileException, stderr: string): string {
+	if (err.code === "ENOENT") return "recado is not on PATH";
+	if (err.killed) return `recado did not answer within ${hookTimeout}ms`;
+	return stderr.trim() || err.message;
+}
+
 // hook runs one recado hook and returns the messages recado could not push
-// itself, or undefined when the hook did not run.
-function hook(event: string, sock?: string): Promise<string[] | undefined> {
+// itself. It rejects with the reason when the hook failed or its answer is
+// unusable.
+function hook(event: string, sock?: string): Promise<string[]> {
 	const args = ["hook", "pi", event, "--json"];
 	if (sock) args.push("--endpoint", sock);
 	// The child may push a backlog to this very socket while draining. Keep
 	// the event loop free to acknowledge it before the child can exit.
-	return new Promise((resolve) => {
-		execFile("recado", args, { encoding: "utf8", timeout: hookTimeout }, (err, stdout) => {
-			if (err || !stdout) return resolve(undefined);
+	return new Promise((resolve, reject) => {
+		execFile("recado", args, { encoding: "utf8", timeout: hookTimeout }, (err, stdout, stderr) => {
+			if (err) return reject(new Error(hookFailure(err, stderr)));
 			try {
 				resolve((JSON.parse(stdout).pending ?? []).map((msg: { text: string }) => msg.text));
-			} catch {
-				resolve(undefined);
+			} catch (parseErr) {
+				reject(new Error(`recado gave an unusable response: ${parseErr}`));
 			}
 		});
 	});
@@ -90,7 +98,7 @@ export default function (pi: ExtensionAPI) {
 				if (idle && !ctx.model) throw new Error("the session has no model");
 				if (idle && ctx.model && typeof ctx.modelRegistry.hasConfiguredAuth === "function" &&
 					!ctx.modelRegistry.hasConfiguredAuth(ctx.model)) throw new Error("the session has no configured model authentication");
-				pi.sendUserMessage(msg.text, { deliverAs: "followUp" });
+				pi.sendUserMessage(msg.text, { deliverAs: "steer" });
 			} catch (err) {
 				const reason = String(err);
 				const refused = queued.splice(0);
@@ -105,9 +113,12 @@ export default function (pi: ExtensionAPI) {
 
 	// report runs a hook and queues whatever the shim must deliver itself.
 	async function report(ctx: ExtensionContext, event: string, endpoint?: string) {
-		const pending = await hook(event, endpoint);
-		if (pending === undefined) ctx.ui.notify(`recado: hook ${event} failed; is recado on PATH?`, "error");
-		queued.push(...(pending ?? []).map((text) => ({ text })));
+		try {
+			const pending = await hook(event, endpoint);
+			queued.push(...pending.map((text) => ({ text })));
+		} catch (err) {
+			ctx.ui.notify(`recado: hook ${event} failed: ${(err as Error).message}`, "error");
+		}
 		flush(ctx);
 	}
 
