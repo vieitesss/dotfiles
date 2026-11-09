@@ -14,6 +14,18 @@ bind("ctrl+space", "pane.send_key", { key = "ctrl+space" })
 -- Reload config
 bind("r", "client.config.reload")
 
+-- rexai Dashboard (tmux: prefix d), by running the rexai shim. The key is
+-- handled on the server, whose PATH has no rex, so name the Rex bin directory
+-- for the shim and call the shim by absolute path.
+rex.bind(prefix .. "d", function(ctx)
+	rex.exec({ (os.getenv("HOME") or "") .. "/.local/bin/rexai" }, {
+		env = {
+			PATH = "/Users/vieitesprefapp/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/usr/bin:/bin:/usr/sbin:/sbin",
+		},
+	})
+	return true
+end)
+
 -- Panes & Windows
 bind("shift+-", "pane.split", { direction = "right" }) -- _
 bind("-", "pane.split", { direction = "down" })
