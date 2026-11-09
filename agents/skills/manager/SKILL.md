@@ -15,6 +15,10 @@ never manage.
 
 1. Read `.agents/ledger.md` at the repo root. If it exists, you are resuming:
    take up each Work Item at the Stage and status it records.
+   Read the ledger on its own, before any other fetch. Then pull only what the
+   Ledger leaves open, with narrow queries: `gh issue view N --json body,state`,
+   `gh pr view N --json state,headRefName,statusCheckRollup`. Fetch comments
+   only when the Ledger or the body points to one.
 2. Otherwise Shape the goal if it is open, split it into Work Items, and write
    the Ledger before any Stage runs.
 
@@ -38,7 +42,7 @@ skip in the Ledger.
 | Review   | one Subagent per axis it needs          | the proof budget says so, once per Change Set                    |
 | Ship     | you, with `commit-changes`, `visual-pr` | the user asks, and Review's loop is clean when its trigger holds |
 
-`scripts/subagent.py --stages` (in the `subagents` skill) prints the skills and
+`python3 ~/.agents/skills/subagents/scripts/subagent.py --stages` prints the skills and
 model each Subagent Stage loads; the Stage decides them, so a brief names the
 Stage, never skills.
 
@@ -85,8 +89,8 @@ Mode: serial | parallel worktrees | review per PR
 Status is one of `queued`, `running`, `question`, `accepted`, `blocked on
 user`, `done`. Update the Ledger at every change: a Stage starts, a Question
 arrives, you accept a report, the user decides. Edit table rows with
-`scripts/ledger.py set ITEM COLUMN VALUE` and `add ITEM COLUMN=VALUE...` (in
-this skill); write Decisions and prose by hand.
+`python3 ~/.agents/skills/manager/scripts/ledger.py set ITEM COLUMN VALUE` and
+`add ITEM COLUMN=VALUE...`; write Decisions and prose by hand.
 
 Handing the session to another Manager (Claude to Pi, or back) goes through
 the `handoff` skill: its document and the Ledger are the whole handover, so
@@ -230,6 +234,9 @@ Mark the Work Item `blocked on user` in the Ledger while you wait.
 - On TASK COMPLETE, read the report and the diff, and spot-check the
   evidence. Then accept, or send a follow-up and wait for a fresh TASK
   COMPLETE.
+- Spot-check with the tests the report names, scoped to the touched files.
+  Run anything that can take over a minute in its own background call, then
+  end your turn: its completion notification resumes you.
 - Check that the next report covers your follow-up; one sent just as the
   Subagent finished can go unread. Apply a missed small change yourself,
   otherwise send it again.
