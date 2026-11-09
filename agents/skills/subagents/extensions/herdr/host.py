@@ -27,6 +27,7 @@ from host_launch import clip  # noqa: E402
 
 DEFAULT_TIMEOUT_MS = 30000
 BUSY_RETRY_SECONDS = 30
+PROMPT_TIMEOUT_MS = 30000
 
 
 def herdr(*args, check=True):
@@ -89,7 +90,8 @@ def start(name, pane_id, argv, timeout_ms=DEFAULT_TIMEOUT_MS, kind="pi"):
         return True
 
     view = herdr(
-        "pane", "read", pane_id, "--source", "recent", "--lines", "15", check=False
+        "pane", "read", pane_id, "--source", "recent-unwrapped",
+        "--lines", "15", check=False,
     )
     detail = clip(proc.stderr.strip() or proc.stdout.strip())
 
@@ -106,7 +108,8 @@ def start(name, pane_id, argv, timeout_ms=DEFAULT_TIMEOUT_MS, kind="pi"):
             return True
         detail = clip(proc.stderr.strip() or proc.stdout.strip())
         view = herdr(
-            "pane", "read", pane_id, "--source", "recent", "--lines", "15", check=False
+            "pane", "read", pane_id, "--source", "recent-unwrapped",
+            "--lines", "15", check=False,
         )
 
     print(
@@ -144,7 +147,23 @@ def launch(spec, target=None, timeout_ms=DEFAULT_TIMEOUT_MS):
     argv = host_launch.engine_argv(spec)
     if not start(spec["name"], pane_id, argv, timeout_ms, kind=kind):
         return 2
-    herdr("agent", "prompt", spec["name"], spec["prompt"])
+    # Wait until the agent starts the turn, so a stalled submission fails here
+    # instead of leaving an idle Subagent the Manager waits on forever.
+    proc = subprocess.run(
+        ["herdr", "agent", "prompt", spec["name"], spec["prompt"], "--wait",
+         "--until", "working", "--until", "blocked",
+         "--timeout", str(PROMPT_TIMEOUT_MS)],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(
+            f"[subagent] prompt not confirmed for {spec['name']}: "
+            f"{clip(proc.stderr or proc.stdout)}\n"
+            f"it may still have arrived: read `herdr agent read {spec['name']} "
+            "--source recent-unwrapped` before resending or closing the tab",
+            file=sys.stderr,
+        )
+        return 2
     print(
         json.dumps(
             {

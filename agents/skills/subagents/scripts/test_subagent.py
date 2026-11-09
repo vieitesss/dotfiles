@@ -521,10 +521,7 @@ class EngineSpecTest(TempRepoTest):
         self.assertEqual(engine["argv"][engine["argv"].index("--effort") + 1], "high")
 
 
-class EffortCapTest(TempRepoTest):
-    """The effort ceiling is keyed by model name, so the same model is capped
-    on every provider (regression: it used to be keyed provider/model, so the
-    cap stopped applying when a model moved provider)."""
+class ChooseProfileTest(TempRepoTest):
 
     def choose(self, model_id, effort):
         answers = {"effort": {"choice": effort}, "model": {"choice": "builder"}}
@@ -533,23 +530,16 @@ class EffortCapTest(TempRepoTest):
                 with contextlib.redirect_stderr(io.StringIO()):
                     return subagent.choose_profile("do the thing", "build", None)
 
-    def test_the_cap_holds_for_the_same_model_on_any_provider(self):
-        for provider in ("github-copilot", "another-provider"):
-            for effort in ("xhigh", "max"):
-                with self.subTest(provider=provider, effort=effort):
-                    profile = self.choose(f"{provider}/gpt-6.1-sol", effort)
-                    self.assertEqual(profile["effort"], "high")
-
-    def test_critic_runs_gpt_6_1_sol_under_its_effort_ceiling(self):
+    def test_critic_runs_gpt_6_1_sol_without_effort_ceiling(self):
         # HOME is a temp dir here, so no models store is read and the effort
-        # arrives unclamped; this pins the ceiling, not the model's own levels.
+        # arrives unclamped.
         answers = {"effort": {"choice": "max"}, "model": {"choice": "builder"}}
         spec = subagent.stage_spec("review", "standards")
         with mock.patch.object(subagent, "jev", return_value=answers):
             with contextlib.redirect_stderr(io.StringIO()):
                 profile = subagent.choose_profile("brief", "review", spec["model"])
         self.assertEqual(profile["model"], "github-copilot/gpt-6.1-sol")
-        self.assertEqual(profile["effort"], "high")
+        self.assertEqual(profile["effort"], "max")
         profile["role"] = spec["role"]
         engine = subagent.engine_spec(profile)
         self.assertEqual(engine["kind"], "pi")
@@ -557,7 +547,7 @@ class EffortCapTest(TempRepoTest):
             engine["argv"][engine["argv"].index("--model") + 1],
             "github-copilot/gpt-6.1-sol",
         )
-        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "high")
+        self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
 
     def test_builder_effort_clamps_to_the_levels_its_model_offers(self):
         """A model without a `medium` level gets the next level up instead."""
@@ -587,10 +577,9 @@ class EffortCapTest(TempRepoTest):
         )
         self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
 
-    def test_the_cap_only_ever_lowers_an_effort(self):
-        profile = self.choose("github-copilot/gpt-6.1-sol", "low")
-        self.assertEqual(profile["effort"], "low")
-        profile = self.choose("opencode-go/some-uncapped-model", "max")
+    def test_builder_runs_deepseek_v4_1_flash_without_effort_ceiling(self):
+        profile = self.choose(subagent.MODELS["builder"][0], "max")
+        self.assertEqual(profile["model"], "opencode-go/deepseek-v4.1-flash")
         self.assertEqual(profile["effort"], "max")
 
     def test_model_override_takes_a_role_or_an_id(self):

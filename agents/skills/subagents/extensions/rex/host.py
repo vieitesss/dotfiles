@@ -50,10 +50,17 @@ def rex_bin():
     sys.exit("rex not found on PATH or in REX_BIN_DIR")
 
 
-def rex(*args, check=True):
-    proc = subprocess.run(
-        [rex_bin(), *args], capture_output=True, text=True, check=False
+def rex_run(*args):
+    # Never start a fresh server: a stale REX_SERVER would get an empty one,
+    # and the Manager's own server must stay untouched.
+    return subprocess.run(
+        [rex_bin(), "--autostart=false", *args],
+        capture_output=True, text=True, check=False,
     )
+
+
+def rex(*args, check=True):
+    proc = rex_run(*args)
     if check and proc.returncode != 0:
         sys.exit(f"rex {' '.join(args[:2])} failed: {clip(proc.stderr or proc.stdout)}")
     return proc.stdout
@@ -96,7 +103,7 @@ def start(name, session, cwd, argv, prompt, kind, recado_bin_dir=None):
     """
     command, temps = host_launch.child_command(name, prompt, kind, argv, recado_bin_dir)
     try:
-        created = rex_json(
+        proc = rex_run(
             "window", "new", "-s", session, name, "-c", cwd,
             "--focus=false", "--keep-open", "--shell=none", "--json",
             "--", *command,
@@ -104,6 +111,15 @@ def start(name, session, cwd, argv, prompt, kind, recado_bin_dir=None):
     except BaseException:
         host_launch.remove_temp(*temps)
         raise
+    if proc.returncode != 0:
+        host_launch.remove_temp(*temps)
+        # A timed-out request may still have created the window.
+        sys.exit(
+            f"rex window new failed: {clip(proc.stderr or proc.stdout)}\n"
+            f"check `rex window ls -s {session}` for a window named {name} "
+            "and close it before relaunching"
+        )
+    created = json.loads(proc.stdout)
     window, block = created["window_id"], created["block_ids"][0]
     print(f"[subagent] {name} window {window} block {block}", file=sys.stderr)
 
@@ -136,7 +152,7 @@ def launch(spec, target=None):
     argv = host_launch.engine_argv(spec)
     window, block, alive = start(name, session, cwd, argv, spec["prompt"], kind, spec.get("recado_bin_dir"))
     if not alive:
-        view = rex("capture", "-b", block, "--trim", check=False)
+        view = rex("capture", "-b", block, "--trim", "--unwrap", check=False)
         retry = host_launch.without_effort(argv, kind, view)
         if retry is not None:
             print(
@@ -146,7 +162,7 @@ def launch(spec, target=None):
             rex("window", "close", window, check=False)
             window, block, alive = start(name, session, cwd, retry, spec["prompt"], kind, spec.get("recado_bin_dir"))
             if not alive:
-                view = rex("capture", "-b", block, "--trim", check=False)
+                view = rex("capture", "-b", block, "--trim", "--unwrap", check=False)
     if not alive:
         tail = "\n".join(view.splitlines()[-15:])
         print(

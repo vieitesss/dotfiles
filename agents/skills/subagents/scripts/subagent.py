@@ -35,7 +35,7 @@ import urllib.request
 # Role: (model, when Jev should pick it). A Stage may pin a role.
 MODELS = {
     "builder": (
-        "github-copilot/gpt-6.1-terra",
+        "opencode-go/deepseek-v4.1-flash",
         "Code, research, and refactoring; the default.",
     ),
     "writer": (
@@ -56,11 +56,6 @@ EFFORTS = {
     "xhigh": "Deep thinking; hard tasks.",
     "max": "Maximum thinking; the hardest or highest-stakes tasks.",
 }
-
-# Hard ceilings: a model listed here is never launched above this effort,
-# whatever Jev asks for. Only ever lowers an effort, never raises it. Keyed by
-# model name without provider, so the cap holds whichever provider serves it.
-MODEL_MAX_EFFORT = {"gpt-6.1-sol": "high"}
 
 # Every Stage a Subagent can run. Shape, Plan, and Ship stay with the Manager.
 # "skills" are loaded in order; "model" pins a MODELS role, else Jev picks.
@@ -434,7 +429,7 @@ def jev_profile(brief, stage, pinned):
 
 
 def choose_profile(brief, stage, pinned):
-    """The model and effort a Stage runs with, capped and clamped to what exists.
+    """The model and effort a Stage runs with, clamped to what exists.
 
     pinned is a MODELS role or a provider/model id; None lets Jev pick a role.
     """
@@ -452,17 +447,6 @@ def choose_profile(brief, stage, pinned):
     elif profile["model"] != pinned:
         profile["model"] = MODELS["builder"][0]
     profile["effort"] = profile["effort"] if profile["effort"] in EFFORTS else None
-
-    # Some models must never be launched above their ceiling, whatever Jev asks.
-    cap = MODEL_MAX_EFFORT.get(profile["model"].partition("/")[2])
-    if cap and profile["effort"]:
-        if THINKING_ORDER.index(profile["effort"]) > THINKING_ORDER.index(cap):
-            print(
-                f"[subagent] {profile['model']} is capped at {cap} effort; "
-                f"using {cap}",
-                file=sys.stderr,
-            )
-            profile["effort"] = cap
 
     # A model may not offer every level; clamp to the nearest one it supports
     # instead of letting pi silently adjust (or fail on) the launch.

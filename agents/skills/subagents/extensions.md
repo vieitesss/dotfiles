@@ -16,7 +16,7 @@ the Subagent's machine (`$SKILL/extensions/<host>.md`,
 | Host  | Extension                       | Pick it when                                     |
 | ----- | ------------------------------- | ------------------------------------------------ |
 | Paseo | [paseo.md](extensions/paseo.md) | `PASEO_AGENT_ID` is set: you are a Paseo agent   |
-| herdr | [herdr.md](extensions/herdr.md) | `HERDR_ENV` is set                               |
+| herdr | [herdr.md](extensions/herdr.md) | `HERDR_ENV` is `1`                               |
 | tmux  | [tmux.md](extensions/tmux.md)   | `TMUX` is set                                    |
 | Rex   | [rex.md](extensions/rex.md)     | `REX_SESSION` is set                             |
 

@@ -37,6 +37,11 @@ import json, os, sys
 
 name = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
+if name == "rex":
+    # The host must never let rex start a server of its own.
+    if args[:1] != ["--autostart=false"]:
+        sys.exit("rex called without --autostart=false")
+    args = args[1:]
 log = os.environ["FAKE_LOG"]
 with open(log, "a", encoding="utf-8") as handle:
     handle.write(json.dumps([name, args]) + "\\n")
@@ -639,6 +644,9 @@ class HerdrHostTest(HostTest):
         prompt = self.actions_for("herdr")[2]
         self.assertEqual(prompt[:3], ["agent", "prompt", spec["name"]])
         self.assertEqual(prompt[3], spec["prompt"])
+        # Launch confirms the turn started instead of trusting the submission.
+        self.assertEqual(prompt[4:9], ["--wait", "--until", "working",
+                                       "--until", "blocked"])
 
     def test_claude_launch_allows_reporting_and_trusts_the_directory(self):
         spec = self.spec(kind="claude", model="claude-code/sonnet", effort="low")
@@ -997,6 +1005,8 @@ class RexSandboxTest(unittest.TestCase):
             PATH=os.pathsep.join([fake_bin, os.environ.get("PATH", "")]),
             REX_SERVER=self.server,
             XDG_STATE_HOME=os.path.join(self.work, "xdg"),
+            # A login zsh rebuilds PATH and would run the real pi, not the fake.
+            SHELL="/bin/sh",
         )
         for var in ("TYPESAFE_API_KEY", "PASEO_AGENT_ID", "TMUX", "HERDR_WORKSPACE_ID"):
             env.pop(var, None)
