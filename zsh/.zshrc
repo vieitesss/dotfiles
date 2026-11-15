@@ -127,13 +127,13 @@ defer_run _defer_autosuggestions_plugin
 
 _defer_sudo_plugin() {
     zinit ice lucid
-    zinit light OMZP::sudo
+    zinit snippet OMZP::sudo
 }
 defer_run _defer_sudo_plugin
 
 _defer_command_not_found_plugin() {
     zinit ice lucid
-    zinit light OMZP::command-not-found
+    zinit snippet OMZP::command-not-found
 }
 defer_run _defer_command_not_found_plugin
 
