@@ -7,6 +7,7 @@ temp dir, and no session host is ever resolved.
 
 import contextlib
 import io
+import json
 import os
 import shlex
 import subprocess
@@ -548,6 +549,42 @@ class ChooseProfileTest(TempRepoTest):
             "github-copilot/gpt-6.1-sol",
         )
         self.assertEqual(engine["argv"][engine["argv"].index("--thinking") + 1], "max")
+
+    def test_refine_pins_sol_and_caps_effort_in_the_launch_spec(self):
+        write_skill(self.repo, "zero-tech-debt")
+        for requested, expected in (("max", "xhigh"), ("xhigh", "xhigh"), ("low", "low")):
+            with self.subTest(effort=requested):
+                answers = {"effort": {"choice": requested}}
+                stdout = io.StringIO()
+                with mock.patch.object(subagent, "jev", return_value=answers) as jev:
+                    with contextlib.redirect_stdout(stdout):
+                        subagent.main([
+                            "--stage", "refine", "--item", "wi-1", "--dry-run",
+                            "--cwd", self.repo, "--extension", self.extension(),
+                            "--manager", "addr-42", "brief",
+                        ])
+                spec = json.loads(stdout.getvalue())
+                self.assertEqual(spec["model"], "github-copilot/gpt-6.1-sol")
+                self.assertEqual(spec["effort"], expected)
+                argv = spec["engine"]["argv"]
+                self.assertEqual(argv[argv.index("--thinking") + 1], expected)
+                self.assertNotIn("model", jev.call_args.args[1])
+
+    def test_refine_effort_clamping_stays_below_the_ceiling(self):
+        answers = {"effort": {"choice": "max"}}
+        with mock.patch.object(subagent, "jev", return_value=answers):
+            with mock.patch.object(subagent, "model_thinking_levels",
+                                   return_value=["low", "high", "max"]):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    profile = subagent.choose_profile("brief", "refine", "critic")
+        self.assertEqual(profile["effort"], "high")
+
+    def test_refine_falls_back_to_its_effort_ceiling(self):
+        with mock.patch.object(subagent, "jev", side_effect=RuntimeError("offline")):
+            with contextlib.redirect_stderr(io.StringIO()):
+                profile = subagent.choose_profile("brief", "refine", "critic")
+        self.assertEqual(profile["model"], "github-copilot/gpt-6.1-sol")
+        self.assertEqual(profile["effort"], "xhigh")
 
     def test_builder_effort_clamps_to_the_levels_its_model_offers(self):
         """A model without a `medium` level gets the next level up instead."""

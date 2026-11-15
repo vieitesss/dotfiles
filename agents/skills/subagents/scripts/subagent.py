@@ -2,8 +2,8 @@
 """Prepare one Stage of one Work Item for a Subagent and print its launch spec.
 
 The Stage decides the Subagent's skills and instructions, and pins the model
-for Write and Review. Jev (TypeSafe) judges only what the Stage leaves open:
-the model, and the thinking effort.
+for Write, Refine, and Review. Jev (TypeSafe) judges only what the Stage leaves
+open: the model, and the thinking effort within any Stage ceiling.
 
 This script never touches a session host. It prints one JSON launch spec on
 stdout; the Markdown extension named by --extension says how the host in use
@@ -98,6 +98,8 @@ STAGES = {
     },
     "refine": {
         "skills": ["zero-tech-debt"],
+        "model": "critic",
+        "max_effort": "xhigh",
         "role": (
             "You run the Refine stage: reshape the code this Work Item touched "
             "toward its intended design, keeping behaviour and tests green. "
@@ -433,25 +435,38 @@ def choose_profile(brief, stage, pinned):
 
     pinned is a MODELS role or a provider/model id; None lets Jev pick a role.
     """
+    max_effort = STAGES[stage].get("max_effort")
     try:
         profile = jev_profile(brief, stage, pinned)
     except (urllib.error.URLError, KeyError, ValueError, RuntimeError) as err:
         print(
-            f"[subagent] jev unavailable ({err}); using the model's default effort",
+            f"[subagent] jev unavailable ({err}); using "
+            f"{max_effort + ' effort' if max_effort else 'the model default effort'}",
             file=sys.stderr,
         )
-        profile = {"model": pinned or "builder", "effort": None}
+        profile = {"model": pinned or "builder", "effort": max_effort}
 
     if profile["model"] in MODELS:
         profile["model"] = MODELS[profile["model"]][0]
     elif profile["model"] != pinned:
         profile["model"] = MODELS["builder"][0]
     profile["effort"] = profile["effort"] if profile["effort"] in EFFORTS else None
+    if max_effort:
+        if (profile["effort"] is None
+                or THINKING_ORDER.index(profile["effort"]) > THINKING_ORDER.index(max_effort)):
+            profile["effort"] = max_effort
 
     # A model may not offer every level; clamp to the nearest one it supports
     # instead of letting pi silently adjust (or fail on) the launch.
     if profile["effort"]:
         levels = model_thinking_levels(profile["model"])
+        if levels is not None and max_effort:
+            levels = [
+                level for level in levels
+                if THINKING_ORDER.index(level) <= THINKING_ORDER.index(max_effort)
+            ]
+            if not levels:
+                sys.exit(f"{profile['model']} has no effort at or below {max_effort}")
         if levels is not None and profile["effort"] not in levels:
             clamped = clamp_effort(profile["effort"], levels)
             print(
