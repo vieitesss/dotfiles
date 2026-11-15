@@ -2,6 +2,9 @@
 
 > Update: recado now carries all Manager–Subagent messages, including remote
 > sessions. Host extensions own launch and close, not messaging.
+>
+> Update: [ADR 0005](0005-rex-is-the-only-host.md) leaves Rex as the only
+> shipped host and drops the selection index.
 
 A session host (Paseo, herdr, tmux, or one not written yet) is a Markdown file the Manager and its Subagents read and follow. `subagent.py` prepares the Stage and prints a launch spec, with `STAGES` still the one routing table; the extension starts, messages, and closes the session, and a pointer index picks it. Adding a host is adding a file, and `--extension FILE` accepts one from anywhere. Helper scripts beside an extension are optional conveniences for mechanics that must be exact (multi-line prompts, secrets, workspace targeting), never a required schema.
 

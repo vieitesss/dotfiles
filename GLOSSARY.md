@@ -27,7 +27,7 @@ An agent the Manager launches in its own session to run one Stage of one Work It
 _Avoid_: Child, worker, delegate
 
 **Host extension**:
-A Markdown file the Manager reads that explains how one session host, such as Paseo, herdr, or tmux, starts and closes Subagent sessions.
+A Markdown file the Manager reads that explains how one session host starts and closes Subagent sessions; Rex is the only one shipped.
 _Avoid_: Adapter, plugin, backend
 
 **Work Item**:

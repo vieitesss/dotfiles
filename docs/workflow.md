@@ -3,15 +3,16 @@
 How a goal moves from the user's request to a shipped change. Terms are
 defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape are
 [ADR 0002](adr/0002-manager-on-request.md),
-[ADR 0003](adr/0003-subagent-is-a-stage-instance.md), and
-[ADR 0004](adr/0004-host-extensions-are-markdown.md).
+[ADR 0003](adr/0003-subagent-is-a-stage-instance.md),
+[ADR 0004](adr/0004-host-extensions-are-markdown.md), and
+[ADR 0005](adr/0005-rex-is-the-only-host.md).
 
 ## Flow
 
 Rounded boxes run in the Manager's own session. Hexagons are Subagents: each
 is a fresh session for one Stage of one Work Item, prepared with
-`subagent.py --stage <stage>` and started through the host extension for the
-Manager's session.
+`subagent.py --stage <stage>` and started in a Rex window, on this machine
+or on another Rex host.
 
 ```mermaid
 flowchart TD
