@@ -26,6 +26,8 @@ scripts/pr-copilot-review-loop.sh|~/.local/bin/pr-copilot-review-loop
 scripts/system-appearance|~/.local/bin/system-appearance
 system-appearance|~/.config/system-appearance
 scripts/lib|~/.local/bin/lib
+agents/skills/subagents/scripts/subagent.py|~/.local/bin/subagent
+agents/skills/manager/scripts/ledger.py|~/.local/bin/ledger
 
 alacritty|~/.config/alacritty
 ghostty|~/.config/ghostty

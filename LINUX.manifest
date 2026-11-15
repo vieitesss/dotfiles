@@ -16,6 +16,8 @@ scripts/herdr-last-space|~/.local/bin/herdr-last-space
 scripts/herdr-break-pane|~/.local/bin/herdr-break-pane
 scripts/diff-so-fancy|~/.local/bin/diff-so-fancy
 scripts/lib|~/.local/bin/lib
+agents/skills/subagents/scripts/subagent.py|~/.local/bin/subagent
+agents/skills/manager/scripts/ledger.py|~/.local/bin/ledger
 
 alacritty|~/.config/alacritty
 ghostty|~/.config/ghostty
