@@ -3,25 +3,24 @@ name: subagents
 description: Launch a Subagent for one Stage of a Work Item in its own session, exchange messages with it, and close it. Use when the Manager delegates a Stage.
 ---
 
-The `manager` skill decides when to delegate and what a brief carries.
 `scripts/subagent.py` prepares one Stage and prints its JSON launch spec;
-a host extension starts the session from it.
-
-**Before preparation**, read [`extensions.md`](extensions.md) and the chosen
-host file. Choose for the Manager's conversation, not the shell executing the
-command; follow the host's remote instructions when the machines differ.
+the [Rex extension](extensions/rex.md) starts a window from it, on this
+machine or on another Rex host. **Before preparation**, read that file.
 
 ```bash
 SKILL=~/.agents/skills/subagents
 
-python3 "$SKILL/scripts/subagent.py" --stages     # Stages, skills, models
+subagent --stages     # Stages, skills, models
 
-spec=$(python3 "$SKILL/scripts/subagent.py" \
+spec=$(subagent \
   --stage STAGE [--axis AXIS] --item ITEM \
-  --cwd DIR --extension "$SKILL/extensions/HOST.md" \
-  --manager MANAGER_ADDRESS [--model ROLE|ID] \
+  --cwd DIR --extension "$SKILL/extensions/rex.md" \
+  --manager "$REX_BLOCK" [--model ROLE|ID] \
   "$(cat BRIEF_FILE)")
 ```
+
+`subagent` is the manifest's link to `scripts/subagent.py` in `~/.local/bin`.
+On a machine without it, run `python3 "$SKILL/scripts/subagent.py"` instead.
 
 `--cwd` defaults to the current directory. `--dry-run` prints the same spec
 without creating the report directory or editing `.git/info/exclude`, so it
@@ -29,21 +28,26 @@ runs anywhere.
 
 ## Extensions
 
-The host file gives launch and close commands; `--extension` also accepts a
-per-session file. `--manager` is your native address on the Manager's host,
-used for launch validation. Prepare on the Stage's machine so `--cwd`, skills,
-report path and extension are readable.
+An extension is a Markdown file the Manager reads: how to launch a session
+from the spec and how to close it. Rex is the only one shipped; any other
+file passed as `--extension` works the same way. `--manager` is the
+Manager's Rex block, used for launch validation. Preparation runs on the
+Stage's machine so `--cwd`, skills, report path and extension are readable;
+the Rex extension's `remote-launch` does that over SSH.
 
 ## Stage and profile
 
 `--stage` decides the Subagent's skills and instructions; Review also takes
-`--axis`. A Stage that pins a model (Write, Review) uses it; for the rest,
-Jev picks the model, and Jev picks the thinking effort for every Stage.
-`--model` overrides both the pin and Jev's pick with a role from `--stages` or
-a `provider/model` id; use it when a model fails a Stage. Jev
-needs `TYPESAFE_API_KEY`; without it preparation uses the default model and its
-default effort. A `claude-code/<model>` model starts Claude Code instead
-of Pi; the extension maps the spec's engine, model and effort onto its host.
+`--axis`. A Stage that pins a model (Write, Refine, Review) uses it; for the
+rest. Jev picks the thinking effort within any Stage's `max_effort` ceiling in
+`STAGES`; that ceiling also bounds model-support clamping and supplies the
+fallback effort when Jev is unavailable. `--model` overrides both the pin and
+Jev's pick with a role from `--stages` or a `provider/model` id; use it when a
+model fails a Stage. Jev needs `TYPESAFE_API_KEY`; without it preparation uses
+the pinned or default model and the Stage's effort ceiling, or the model's
+default effort if uncapped. A `claude-code/<model>` model starts Claude Code
+instead of Pi; the extension maps the spec's engine, model and effort onto its
+host.
 
 Preparation fails before anything launches when a Stage's skill is not
 installed for `--cwd`, when its `SKILL.md` sets
@@ -73,10 +77,9 @@ launcher sets `RECADO_ADDR` to the spec `name`. Reply to a Question with
 `recado reply ID "ANSWER"`; send a follow-up with `recado send NAME "MESSAGE"`
 (or `recado send recado://MACHINE/NAME "MESSAGE"` for a remote Stage).
 
-For remote Stages pass `--manager-recado` with the Manager's upstream address;
-see [Rex remote](extensions/rex-remote.md) or
-[Paseo remote](extensions/paseo-remote.md). Preparation uses that address rather
-than remote `whoami`.
+For a remote Stage, preparation takes `--manager-recado` with the Manager's
+upstream address instead of asking `whoami` on the remote machine; the Rex
+extension's `remote-launch` passes it.
 
 If recado lacks `send` or `ask`, preparation (including `--dry-run`) uses `recado update`
 when available. With no executable or an older one without `update`, it

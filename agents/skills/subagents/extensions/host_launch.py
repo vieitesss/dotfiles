@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch and safety mechanics shared by the host extensions."""
+"""Launch and safety mechanics for the Rex host extension."""
 
 import json
 import os
@@ -69,14 +69,6 @@ def clip(text, limit=2000):
     """Limit failure detail length, without claiming to redact it."""
     text = (text or "").strip()
     return text if len(text) <= limit else f"{text[:limit]}…"
-
-
-def identity_env(spec):
-    """CLI environment flags for hosts that start the agent themselves."""
-    flags = ["--env", f"RECADO_ADDR={spec['name']}"]
-    if spec.get("recado_bin_dir"):
-        flags += ["--env", f"PATH={spec['recado_bin_dir']}:{os.environ.get('PATH', '')}"]
-    return flags
 
 
 def engine_argv(spec):
@@ -151,15 +143,8 @@ def trust_claude_dir(cwd):
 def manager_pane_error(pane, shell_pid):
     """Why pane, whose shell runs as shell_pid, cannot be this Manager's address.
 
-    None when it is. A Paseo agent inherits the pane variables of whatever
-    pane started its daemon, not a pane belonging to the agent itself.
+    None when it is.
     """
-    if os.environ.get("PASEO_AGENT_ID"):
-        return (
-            "the Manager is a Paseo agent with no pane of its own; "
-            f"use {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'paseo.md')} "
-            "and --manager \"$PASEO_AGENT_ID\" instead"
-        )
     if not str(shell_pid).isdigit():
         return f"--manager {pane} is not a pane"
     if int(shell_pid) not in ancestors(os.getpid()):

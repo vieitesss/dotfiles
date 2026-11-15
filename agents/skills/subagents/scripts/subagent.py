@@ -202,8 +202,7 @@ def clamp_effort(level, supported):
 def engine_spec(profile):
     """The engine and its argv for a profile: no session host is assumed.
 
-    The role travels as a system prompt here. A host without such a flag
-    (Paseo) inlines the spec's role instead.
+    The role travels as a system prompt here; the prompt repeats it.
     """
     role = profile["role"]
     if (profile["model"] or "").partition("/")[0] == CLAUDE_PROVIDER:
@@ -559,13 +558,8 @@ def ensure_recado():
         return None
 
 
-def recado_route(extension, manager_recado=None):
-    directory = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "extensions"))
-    extension = os.path.realpath(extension)
-    remote = extension in {
-        os.path.join(directory, name) for name in ("rex-remote.md", "paseo-remote.md")
-    }
-    if (remote or manager_recado is not None) and not re.fullmatch(
+def recado_route(manager_recado=None):
+    if manager_recado is not None and not re.fullmatch(
         r"recado\+upstream://[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-z0-9][a-z0-9._-]*",
         manager_recado or "",
     ):
@@ -738,7 +732,7 @@ def main(argv=None):
 
     spec = stage_spec(args.stage, args.axis)
     skills = stage_skills(args.stage, spec, args.cwd)
-    recado = recado_route(extension, args.manager_recado)
+    recado = recado_route(args.manager_recado)
     profile = choose_profile(args.brief, args.stage, args.model or spec["model"])
     profile.update(skills=skills, role=spec["role"])
     profile["report"] = report_path(

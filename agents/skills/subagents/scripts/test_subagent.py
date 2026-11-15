@@ -105,12 +105,11 @@ class RecadoRouteTest(TempRepoTest):
 
     def test_local_and_remote_preparation_fills_exact_commands(self):
         self.executable("recado", 'if [ "$1" = whoami ]; then echo recado://local/manager-1; fi\n')
-        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
         upstream = "recado+upstream://manager.local/manager-1"
-        for extension, address in ((self.extension_path, "recado://local/manager-1"), (remote, upstream)):
-            with self.subTest(extension=extension):
-                extra = ("--manager-recado", upstream) if extension == remote else ()
-                spec = self.prepare("--extension", extension, "--manager", "block:manager",
+        for remote, address in ((False, "recado://local/manager-1"), (True, upstream)):
+            with self.subTest(remote=remote):
+                extra = ("--manager-recado", upstream) if remote else ()
+                spec = self.prepare("--extension", self.extension_path, "--manager", "block:manager",
                                     *extra, "--dry-run")
                 prompt = spec["prompt"]
                 self.assertEqual(spec["manager"], "block:manager")
@@ -121,8 +120,8 @@ class RecadoRouteTest(TempRepoTest):
                     f'"[{spec["tag"]}] TASK COMPLETE: <one line>"', prompt,
                 )
                 self.assertIn(f'recado ask {address} "[{spec["tag"]}] QUESTION: <question>"', prompt)
-                self.assertNotIn(upstream if extension != remote else "recado://local/manager-1", prompt)
-                if extension == remote:
+                self.assertNotIn("recado://local/manager-1" if remote else upstream, prompt)
+                if remote:
                     self.assertIn("kickoff is not a follow-up", prompt)
 
     def test_missing_recado_is_installed_and_setup_off_path(self):
@@ -132,7 +131,6 @@ class RecadoRouteTest(TempRepoTest):
         )
         self.executable("go", 'printf \'{"GOBIN":"%s","GOPATH":"%s"}\\n\' "$GOBIN" "$GOPATH"\n')
         install = self.executable("install-recado", '/bin/cp "$TEMPLATE" "$INSTALL_DIR/recado"\n')
-        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
         gopath = os.path.join(self.repo, "go path")
         for old_binary in (False, True):
             if old_binary:
@@ -144,10 +142,9 @@ class RecadoRouteTest(TempRepoTest):
                        "TEMPLATE": template, "SETUP_LOG": os.path.join(self.repo, "setup-log"),
                        "RECADO_INSTALL_CMD": shlex.quote(install)}
                 with mock.patch.dict(os.environ, env):
-                    for extension, extra in ((self.extension_path, ()),
-                                             (remote, ("--manager-recado", "recado+upstream://host/manager"))):
-                        with self.subTest(old=old_binary, gobin=gobin, extension=extension):
-                            spec = self.prepare("--extension", extension, "--dry-run", *extra)
+                    for extra in ((), ("--manager-recado", "recado+upstream://host/manager")):
+                        with self.subTest(old=old_binary, gobin=gobin, extra=extra):
+                            spec = self.prepare("--extension", self.extension_path, "--dry-run", *extra)
                             self.assertIn(shlex.quote(os.path.join(installed, "recado")) + " send", spec["prompt"])
                             self.assertEqual(spec["recado_bin_dir"], installed)
                 self.assertTrue(os.path.isfile(env["SETUP_LOG"]))
@@ -193,22 +190,19 @@ class RecadoRouteTest(TempRepoTest):
 
     def test_update_failure_uses_the_same_failure_routes(self):
         self.executable("recado", 'case "$1:$2" in update:--help) exit 0 ;; *) exit 1 ;; esac\n')
-        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
         with self.assertRaisesRegex(SystemExit, "requires a messaging-capable recado"):
             self.prepare("--extension", self.extension_path, "--dry-run")
         with self.assertRaisesRegex(SystemExit, "requires a messaging-capable recado"):
-            self.prepare("--extension", remote, "--manager-recado",
+            self.prepare("--extension", self.extension_path, "--manager-recado",
                          "recado+upstream://host/manager", "--dry-run")
 
     def test_failed_install_stops_local_and_remote_preparation(self):
         self.executable("go", "exit 0\n")
-        remote = os.path.join(os.path.dirname(self.extension_path), "rex-remote.md")
         with mock.patch.dict(os.environ, {"RECADO_INSTALL_CMD": "exit 1"}):
-            for extension, extra in ((self.extension_path, ()),
-                                     (remote, ("--manager-recado", "recado+upstream://host/manager"))):
-                with self.subTest(extension=extension):
+            for extra in ((), ("--manager-recado", "recado+upstream://host/manager")):
+                with self.subTest(extra=extra):
                     with self.assertRaisesRegex(SystemExit, "requires a messaging-capable recado"):
-                        self.prepare("--extension", extension, "--dry-run", *extra)
+                        self.prepare("--extension", self.extension_path, "--dry-run", *extra)
 
     def test_unavailable_or_nonlocal_manager_stops_preparation(self):
         for response in ('exit 1', 'echo recado://other/manager', 'echo recado://local/'):
@@ -228,23 +222,17 @@ class RecadoRouteTest(TempRepoTest):
         spec = self.prepare("--extension", self.extension(), "--dry-run")
         self.assertIn("recado send recado://local/manager-1", spec["prompt"])
 
-    def test_remote_preparation_rejects_missing_or_invalid_upstream(self):
-        for name in ("rex-remote.md", "paseo-remote.md"):
-            remote = os.path.join(os.path.dirname(self.extension_path), name)
-            for extra in ((), ("--manager-recado", "recado://local/manager"),
-                          ("--manager-recado", "recado+upstream://host/Bad-ID")):
-                with self.subTest(extension=name, extra=extra):
-                    with self.assertRaises(SystemExit) as caught:
-                        self.prepare("--extension", remote, "--dry-run", *extra)
-                    self.assertIn("requires --manager-recado", str(caught.exception))
+    def test_remote_preparation_rejects_an_invalid_upstream(self):
+        for address in ("recado://local/manager", "recado+upstream://host/Bad-ID", ""):
+            with self.subTest(address=address):
+                with self.assertRaisesRegex(SystemExit, "requires --manager-recado"):
+                    self.prepare("--extension", self.extension_path, "--dry-run",
+                                 "--manager-recado", address)
 
-    def test_remote_paseo_requires_and_uses_manager_upstream(self):
-        remote = os.path.join(os.path.dirname(self.extension_path), "paseo-remote.md")
+    def test_remote_preparation_uses_the_upstream_without_whoami(self):
         self.executable("recado", 'if [ "$1" = whoami ]; then exit 1; fi\n')
-        with self.assertRaisesRegex(SystemExit, "requires --manager-recado"):
-            self.prepare("--extension", remote, "--dry-run")
         upstream = "recado+upstream://mac.local/manager-1"
-        spec = self.prepare("--extension", remote, "--manager-recado", upstream, "--dry-run")
+        spec = self.prepare("--extension", self.extension_path, "--manager-recado", upstream, "--dry-run")
         self.assertIn(f"recado send {upstream}", spec["prompt"])
         self.assertIn(f"recado ask {upstream}", spec["prompt"])
         self.assertIn("kickoff is not a follow-up", spec["prompt"])
