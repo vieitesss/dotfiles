@@ -32,7 +32,7 @@ trigger holds, skip it otherwise, and record the skip in the Ledger.
 | Shape    | you, with `grilling`                    | the goal or approach is open and a wrong guess is costly         |
 | Research | Subagent                                | the work hinges on facts outside the repo (APIs, docs, specs)    |
 | Design   | you with the user; Subagent to prototype | a state model, UI, or module interface is undecided             |
-| Plan     | the user: suggest `to-spec`, `to-tickets`, `wayfinder` | the work outgrows one session                     |
+| Plan     | the user: suggest `to-spec`, `to-tickets`, `wayfinder` | the work outgrows one session; a Work Item that outgrows one Subagent's context you split yourself, with no Plan |
 | Diagnose | Subagent                                | a bug's cause is unknown                                         |
 | Build    | Subagent                                | the Work Item changes code                                       |
 | Write    | Subagent                                | the Work Item is prose: docs, skills, agent instructions         |
@@ -118,9 +118,19 @@ choice sends a Question, and you answer. Beyond the trivial path, a diff you
 built yourself still gets a fresh `--axis standards` reviewer before Ship.
 
 Every Stage, and every fix round, gets a fresh Subagent. Until you accept a
-report, follow-ups go to the Subagent that wrote it; once you accept, close
-its window. Stages hand over through files: the next brief points at the
-previous report, the diff base, and the worktree.
+report, follow-ups go to the Subagent that wrote it, unless it compacted (see
+Accepting returned work); once you accept, close its window. Stages hand over
+through files: the next brief points at the previous report, the diff base,
+and the worktree.
+
+## Sizing a Work Item
+
+A Subagent that compacts has lost part of its brief. Size every Stage to
+finish in one context window: one module, or three to five related fixes,
+with a brief under about 60 lines. Split anything larger into Work Items, each
+with its own Ledger row, before you launch; run them one after another when
+they share a worktree. More rounds cost you more turns and cold starts; small
+still wins, since rounds that share a worktree run in series anyway.
 
 ## Briefs
 
@@ -130,6 +140,8 @@ a scratch file. It carries:
 - the Work Item, the goal, and what you already know (symptom, repro,
   `file:line`, earlier reports);
 - where: worktree path and branch, the diff base, and what to leave alone;
+- the two or three files it needs, and what it must not read: "read the whole
+  module" spends its context before it edits;
 - the cheapest fix that meets the acceptance criteria, naming any existing
   tool or script that covers part of it; new machinery needs a Question first;
 - a checkable done criterion: named tests, lint, pass counts (`10/10`);
@@ -170,10 +182,11 @@ Change Set spans several modules or reshapes one. Put the diff command,
 commit list, and spec or standards sources in each brief. Present the reports
 side by side.
 
-Loop until no findings remain: Spec findings go to a fresh Build Subagent
-first, then Standards and Debt findings to a fresh Refine Subagent. Re-check
-each fix alone. Never offer Ship while a Change Set's Review trigger holds and
-its loop is not clean.
+Loop until no findings remain. Group the findings by file or theme, at most
+five per group; each group is its own Work Item with a fresh Subagent, and
+must-fix groups go first. Spec groups go to Build, Standards and Debt groups
+to Refine. Re-check each fix alone. Never offer Ship while a Change Set's
+Review trigger holds and its loop is not clean.
 
 Ask the user, and mark the Work Item `blocked on user`, when a finding needs
 their decision, returns after its fix, or disputes the spec itself.
@@ -187,6 +200,9 @@ their decision, returns after its fix, or disputes the spec itself.
   call, then end your turn.
 - Then accept, or send a follow-up and wait for a fresh TASK COMPLETE that
   covers it.
+- A report that mentions compaction, or that dropped part of the brief, means
+  the Work Item was too big: split what is left across fresh Subagents
+  instead of sending the same one a follow-up.
 - On acceptance, close the Subagent's window and move the Work Item to its
   next Stage in the Ledger.
 
