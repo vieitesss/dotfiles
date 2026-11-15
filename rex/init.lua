@@ -173,16 +173,17 @@ rex.action({
       layout = rex.layout.block{
         flavor = terminal .. ".shell",
         options = {
-          -- $HOME is expanded by the server that owns the session, which
-          -- may be a remote host with a different home directory.
-          command = { "/bin/sh", "-c", 'exec "$HOME/.local/bin/rex-sessions"' },
+          -- The shell expands these on the server that owns the session,
+          -- which may be a remote host with a different home directory.
+          command = { "/bin/sh", "-c",
+            'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do "${XDG_CONFIG_HOME:-$HOME/.config}/rex/sessions.lua"' },
           login = true,
           exit = { on_completion = true, quick_exit_threshold_ms = 0 },
         },
       },
     }
     if err ~= nil then error(err, 0) end
-    -- rex-sessions asks the app to show this window itself: ctx.client_id
+    -- sessions.lua asks the app to show this window itself: ctx.client_id
     -- is only valid on this server, not on a remote one.
     return window
   end,
