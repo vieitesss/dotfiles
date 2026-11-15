@@ -489,3 +489,10 @@ export PATH='/home/vieitesrpi/.hunk/bin':"$PATH"
 
 # opencode
 export PATH=/home/vieitesrpi/.opencode/bin:$PATH
+
+# Android development (JDK 21, SDK command-line tools, adb, emulator)
+if [[ -d /opt/homebrew/share/android-commandlinetools ]]; then
+  export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
+  export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+  export PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
+fi
