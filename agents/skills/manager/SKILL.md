@@ -8,15 +8,15 @@ disable-model-invocation: true
 
 You own the session: the conversation with the user, every decision, the
 acceptance of each Subagent's work, and the final report. Subagents run one
-Stage of one Work Item each, launched through the `subagents` skill; they
-never manage.
+Stage of one Work Item each, launched through the `subagents` skill in a Rex
+window, here or on another Rex host; they never manage.
 
 ## Start
 
-1. Read `.agents/ledger.md` at the repo root. If it exists, you are resuming:
-   take up each Work Item at the Stage and status it records.
-   Read the ledger on its own, before any other fetch. Then pull only what the
-   Ledger leaves open, with narrow queries: `gh issue view N --json body,state`,
+1. Read `.agents/ledger.md` at the repo root, before any other fetch. If it
+   exists, you are resuming: take up each Work Item at the Stage and status
+   it records. Then pull only what the Ledger leaves open, with narrow
+   queries: `gh issue view N --json body,state`,
    `gh pr view N --json state,headRefName,statusCheckRollup`. Fetch comments
    only when the Ledger or the body points to one.
 2. Otherwise Shape the goal if it is open, split it into Work Items, and write
@@ -24,9 +24,8 @@ never manage.
 
 ## Stages
 
-Every Work Item passes through these Stages in order. Each one costs time and
-tokens: run a Stage when its trigger holds, skip it otherwise, and record the
-skip in the Ledger.
+Every Work Item passes through these Stages in order. Run a Stage when its
+trigger holds, skip it otherwise, and record the skip in the Ledger.
 
 | Stage    | Run by                                  | Run when                                                         |
 | -------- | --------------------------------------- | ---------------------------------------------------------------- |
@@ -42,31 +41,27 @@ skip in the Ledger.
 | Review   | one Subagent per axis it needs          | the proof budget says so, once per Change Set                    |
 | Ship     | you, with `commit-changes`, `visual-pr` | the user asks, and Review's loop is clean when its trigger holds |
 
-`python3 ~/.agents/skills/subagents/scripts/subagent.py --stages` prints the skills and
-model each Subagent Stage loads; the Stage decides them, so a brief names the
-Stage, never skills.
+`subagent --stages` prints the skills and model each Subagent Stage loads;
+the Stage decides them, so a brief names the Stage, never skills.
 
-Refine runs on Build's green tests and before Prove, so Prove and Review see
-the final shape once. Its scope is the code the Work Item touched; rot beyond
-that becomes a new Work Item. Every Refine runs the `zero-tech-debt` skill over
-that scope: the Stage loads it, and the brief still names it, so the Subagent
-cannot treat the round as a plain edit. When a feature would be bolted onto
-debt, make the Refine its own Work Item ahead of the feature.
-
-### Trivial path
+Refine runs on Build's green tests and before Prove, over the code the Work
+Item touched; rot beyond that becomes a new Work Item. Its brief still names
+`zero-tech-debt`, so the round is never a plain edit.
 
 A Work Item that is a few known lines in one or two files skips straight to
-Build, and you build it yourself. Prove it cheaply: scoped lint and tests,
-then read your own diff. It still gets its Ledger row.
+Build, and you build it yourself. Prove it with scoped lint and tests, then
+read your own diff. It still gets its Ledger row.
+
+Read an existing file before you Write over it, above all in a worktree
+outside the session's directory, and write to a symlink's target.
 
 ## Ledger
 
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
-outlives `/clear`, compaction, a handoff, and resuming from another device,
-so it is the one place the state of the work lives. Preparing a Stage keeps
-it, and the reports beside it, out of git. In the Subagent column keep the
-name and the id the extension's `launch` printed (a Paseo `agentId`, a tmux
-window and pane, a herdr tab): follow-ups and closing need it.
+outlives `/clear`, compaction, a handoff, and resuming from another device.
+Preparing a Stage keeps it, and the reports beside it, out of git. In the
+Subagent column keep the name and the Rex window `launch` printed, plus the
+host for a remote Stage: follow-ups and closing need them.
 
 ```md
 # Ledger
@@ -74,10 +69,10 @@ window and pane, a herdr tab): follow-ups and closing need it.
 Goal: <one line>
 Mode: serial | parallel worktrees | review per PR
 
-| Item       | Stage  | Status   | Subagent                   | Worktree / branch       | Report                                    |
-| ---------- | ------ | -------- | -------------------------- | ----------------------- | ----------------------------------------- |
-| login-form | build  | running  | subagent-build-4123 7f3a9c | ../app-wt/login (login) | .agents/reports/login-form-build.md       |
-| session    | refine | accepted | subagent-refine-4188       | ../app-wt/login (login) | .agents/reports/session-refine.md         |
+| Item       | Stage  | Status   | Subagent                              | Worktree / branch       | Report                              |
+| ---------- | ------ | -------- | ------------------------------------- | ----------------------- | ----------------------------------- |
+| login-form | build  | running  | subagent-build-4123 window:7f3a       | ../app-wt/login (login) | .agents/reports/login-form-build.md |
+| session    | refine | accepted | subagent-refine-4188 rpi window:91c2  | ~/src/app (login)       | .agents/reports/session-refine.md   |
 
 ## Decisions
 - login-form: keep the legacy cookie name (user, 2026-10-04).
@@ -89,165 +84,124 @@ Mode: serial | parallel worktrees | review per PR
 Status is one of `queued`, `running`, `question`, `accepted`, `blocked on
 user`, `done`. Update the Ledger at every change: a Stage starts, a Question
 arrives, you accept a report, the user decides. Edit table rows with
-`python3 ~/.agents/skills/manager/scripts/ledger.py set ITEM COLUMN VALUE` and
-`add ITEM COLUMN=VALUE...`; write Decisions and prose by hand.
+`ledger set ITEM COLUMN VALUE` and `ledger add ITEM COLUMN=VALUE...`; write
+Decisions and prose by hand. `ledger` and `subagent` are manifest links in
+`~/.local/bin`; on a machine without them, run
+`~/.agents/skills/manager/scripts/ledger.py` and
+`~/.agents/skills/subagents/scripts/subagent.py` with `python3`.
 
-Handing the session to another Manager (Claude to Pi, or back) goes through
-the `handoff` skill: its document and the Ledger are the whole handover, so
-the next Manager never parses the old session's transcript. Name in it the
-screenshots the user shared; Claude Code keeps them under
+Handing the session to another Manager goes through the `handoff` skill: its
+document and the Ledger are the whole handover. Name in it the screenshots
+the user shared; Claude Code keeps them under
 `/private/tmp/claude-501/<project>/<session>/images/`.
 
 ## Do it or delegate it
 
-Do the work yourself by default. Delegate a Stage only when a delegate
-trigger holds.
+Do the work yourself by default. Do it yourself when:
 
-Do it yourself when:
-
-- the answer is already in context, or one lookup away (a file, a command,
-  `--help`);
+- the answer is already in context, or one lookup away;
 - the Work Item is on the trivial path;
 - writing the brief would take longer than doing the work;
 - the user is waiting on a quick answer;
-- the work is a decision, an acceptance, or anything that needs the whole
-  conversation.
+- the work is a decision, an acceptance, or needs the whole conversation.
 
 Delegate when:
 
 - the Stage needs its own edit-test loop over many steps;
-- research means reading many files or sources and you need only the
-  conclusion;
+- research means reading many sources and you need only the conclusion;
 - independent Work Items can run in parallel;
 - the work would flood your context (long logs, big diffs, repeated runs);
 - a fresh model should look at it (Review, a second opinion).
 
 Delegating hands off the legwork, never the decisions: a Subagent that hits a
-choice sends a Question, and you answer.
-
-Building a Work Item yourself leaves its proof budget as it was. Beyond the
-trivial path, a fresh `--axis standards` reviewer reads your diff before
-Ship, because the author is the worst judge of their own diff.
-
-## One Subagent per Stage
+choice sends a Question, and you answer. Beyond the trivial path, a diff you
+built yourself still gets a fresh `--axis standards` reviewer before Ship.
 
 Every Stage, and every fix round, gets a fresh Subagent. Until you accept a
 report, follow-ups go to the Subagent that wrote it; once you accept, close
-its session. Stages hand over through files: the next Subagent's brief points
-at the previous report, the diff base, and the worktree.
+its window. Stages hand over through files: the next brief points at the
+previous report, the diff base, and the worktree.
 
 ## Briefs
 
 A Subagent starts cold: its brief is everything it knows. Write each brief to
-a scratch file and pass it as `"$(cat FILE)"`. It carries:
+a scratch file. It carries:
 
-- the Work Item and the goal, plus what you already know (symptom, repro,
-  `file:line`, earlier reports), so the Subagent builds on it instead of
-  re-deriving it;
+- the Work Item, the goal, and what you already know (symptom, repro,
+  `file:line`, earlier reports);
 - where: worktree path and branch, the diff base, and what to leave alone;
-- the **cheapest fix** that meets the acceptance criteria, naming any
-  existing tool, skill, or script that already covers part of it; the
-  Subagent sends a Question before building machinery the brief did not
-  name (a parser, a framework, a new config format);
+- the cheapest fix that meets the acceptance criteria, naming any existing
+  tool or script that covers part of it; new machinery needs a Question first;
 - a checkable done criterion: named tests, lint, pass counts (`10/10`);
 - the decisions it brings back as a Question instead of making.
 
-Never put a report path in the brief: preparation already adds the Stage's
-skills, the one report path, and how to reach you in the launch spec, and
-the Subagent treats that path as authoritative over any path quoted in
-the brief.
+Never put a report path in the brief: preparation adds the one report path.
 
 ## Loops over Work Items
 
-Default: Work Items run one after another in one worktree, each through its
-Stages, and Review runs once over the whole Change Set. Switch the Ledger's
-mode when:
+Default: Work Items run one after another in one worktree, and Review runs
+once over the whole Change Set. Switch the Ledger's mode when:
 
 - **parallel worktrees**: Work Items touch disjoint code. One worktree and one
-  editing Subagent each. Merge each branch into the main branch yourself as
-  soon as its Work Item is done (Refine and Prove passed), without asking;
-  Review still runs once, over the merged Change Set.
-- **review per PR**: Work Items ship as separate PRs. Each one is its own
-  Change Set and gets its own Review. Branch each from main; stack it
-  (`gh-stack`) only when its code builds on another Work Item's code, so a
-  rejected PR blocks nothing else.
+  editing Subagent each; merge each branch into main yourself once Refine and
+  Prove pass. Review runs once, over the merged Change Set.
+- **review per PR**: each Work Item ships as its own PR and gets its own
+  Review. Stack (`gh-stack`) only when its code builds on another's.
 
-At most one Subagent edits a worktree at a time. Review and Research
-Subagents only read, so they share one.
+At most one Subagent edits a worktree at a time; read-only Stages share one.
 
 ## Proof budget
 
-Proof Stages are the expensive ones: Review runs up to three critique sessions,
-`verify-<app>` drives the whole app, and each round costs minutes and the
-user's attention. Spend them where a defect would be costly and the cheap
-checks cannot see it.
-
-- Run lint and the tests scoped to what changed on every Work Item, and the
-  full suite once at the end. These are cheap and always run.
-- Read the final diff yourself once before reporting: the cheapest review.
-- Run `verify-<app>` when the change alters what a user sees or does and the
-  tests do not observe it. Drive the recipe of the touched feature only, once,
-  on the finished change.
-- Run Review once per Change Set that adds behaviour, spans several modules,
-  or touches an interface, stored data, or security. Docs, renames, config,
-  and small fixes a test already pins go without it.
-- A report with passing evidence is proof already: spot-check one claim
-  (re-run the named test, open one evidence file) rather than redo it.
+- Always: lint and the tests scoped to what changed, the full suite once at
+  the end, and your own read of the final diff.
+- `verify-<app>`: when the change alters what a user sees or does and the
+  tests do not observe it. Once, on the finished change.
+- Review: once per Change Set that adds behaviour, spans several modules, or
+  touches an interface, stored data, or security. Docs, renames, config, and
+  small fixes a test already pins go without it.
+- A report with passing evidence is proof already: spot-check one claim.
 
 ## Review
 
-Run the `review` skill's steps 1 to 3 yourself (fixed point, spec, standards
-sources), then launch one read-only Subagent per axis in parallel, with the
-Change Set as `--item`, named without the Stage in it (`batch`, not
-`batch-review`; the filename rule lives in subagents Reports):
+Run the `review` skill's steps 1 to 3 yourself, then launch one read-only
+Subagent per axis in parallel, with the Change Set as `--item` (`batch`, not
+`batch-review`): `--axis spec` always; `standards` and `debt` too when the
+Change Set spans several modules or reshapes one. Put the diff command,
+commit list, and spec or standards sources in each brief. Present the reports
+side by side.
 
-- `--stage review --axis spec` on every Review;
-- `--axis standards` and `--axis debt` as well when the Change Set spans
-  several modules or reshapes one; a Change Set confined to new, focused
-  code gets Spec alone.
+Loop until no findings remain: Spec findings go to a fresh Build Subagent
+first, then Standards and Debt findings to a fresh Refine Subagent. Re-check
+each fix alone. Never offer Ship while a Change Set's Review trigger holds and
+its loop is not clean.
 
-Put the diff command, commit list, and spec or standards sources in each
-brief. Present the reports side by side, as `review` step 5 does.
-
-Then loop over the findings:
-
-- a Spec finding goes to a fresh Build Subagent as a fix round;
-- a Standards or Debt finding goes to a fresh Refine Subagent as a fix round,
-  which runs `zero-tech-debt` over the touched code, not only the findings;
-- after each fix round, re-check that fix alone; the rest of the proof stands.
-
-Order the rounds: Spec fixes first, then Refine on the green result, since
-Refine reshapes what Build just changed. Keep looping until no findings remain.
-
-Never offer a push or Ship for a Change Set whose Review trigger holds
-before Review has run and its loop is clean. Reading the diff yourself
-and sending follow-ups is the cheapest review, not a substitute for Review.
-
-Stop and ask the user when a finding needs a decision that is theirs, when a
-finding returns after its fix, or when reviewers disagree with the spec itself.
-Mark the Work Item `blocked on user` in the Ledger while you wait.
+Ask the user, and mark the Work Item `blocked on user`, when a finding needs
+their decision, returns after its fix, or disputes the spec itself.
 
 ## Accepting returned work
 
-- A Question, or a progress message that proposes an approach, is a decision:
-  answer it, or ask the user and record their answer under Decisions.
-- On TASK COMPLETE, read the report and the diff, and spot-check the
-  evidence. Then accept, or send a follow-up and wait for a fresh TASK
-  COMPLETE.
-- Spot-check with the tests the report names, scoped to the touched files.
-  Run anything that can take over a minute in its own background call, then
-  end your turn: its completion notification resumes you.
-- Check that the next report covers your follow-up; one sent just as the
-  Subagent finished can go unread. Apply a missed small change yourself,
-  otherwise send it again.
-- On acceptance, close the Subagent's session and move the Work Item to its
+- A Question, or a message proposing an approach, is a decision: answer it,
+  or ask the user and record their answer under Decisions.
+- On TASK COMPLETE, read the report and the diff, and spot-check the evidence
+  with the tests it names. Run anything over a minute in its own background
+  call, then end your turn.
+- Then accept, or send a follow-up and wait for a fresh TASK COMPLETE that
+  covers it.
+- On acceptance, close the Subagent's window and move the Work Item to its
   next Stage in the Ledger.
+
+## Waiting on outside state
+
+A CI run, a deploy, or a sandbox render is waited on like a Subagent: start
+one background command that exits when the state arrives (`gh run watch
+--exit-status`, or an `until` loop with its own timeout), then end your turn.
+Its completion notification resumes you. Where the harness has a Monitor
+tool, use it for a state that changes more than once.
 
 ## Report
 
 Every status update, and the final report, lists the branches not yet merged
-into the main branch and what each waits on; "none" when all are merged.
-
-Tell the user what changed and where (branch, worktree), how it was proven,
-which Stages you skipped and why, what is uncommitted, and which decisions
-are still theirs. Point at the Ledger for the full record.
+into main and what each waits on; "none" when all are merged. Tell the user
+what changed and where, how it was proven, which Stages you skipped and why,
+what is uncommitted, and which decisions are still theirs. Point at the
+Ledger for the full record.
