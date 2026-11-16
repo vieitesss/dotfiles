@@ -2,8 +2,8 @@
 # Test for rex/db.lua and rex/last_session.lua. Run: sh tests/rex-db.test.sh
 #
 # The modules need Rex's Lua (rex.json, rex.exec), so the cases run through
-# `rex do` against a throwaway database file. They read and write only that
-# file; they never touch a session.
+# `rex do` against a throwaway database file. Binding tests load only the
+# last-session config block with a fake Rex; no live session actions run.
 set -eu
 
 if ! command -v rex >/dev/null 2>&1; then
@@ -27,4 +27,28 @@ out=$(REX_DB="$tmp/state/db.json" REX_CONFIG_DIR="$repo_root/rex" \
     printf 'FAIL: %s\n' "$out" >&2
     exit 1
 }
+# Writers at the same time must not lose each other's keys: five processes
+# each set their own key twenty times against one database.
+cat >"$tmp/writer.lua" <<'LUA'
+package.path = os.getenv("REX_CONFIG_DIR") .. "/?.lua;" .. package.path
+local db = require("db")
+for n = 1, 20 do db.set(os.getenv("WRITER"), n) end
+LUA
+for w in 1 2 3 4 5; do
+    WRITER="w$w" REX_DB="$tmp/race/db.json" REX_CONFIG_DIR="$repo_root/rex" \
+        rex do "$tmp/writer.lua" >/dev/null 2>&1 &
+done
+wait
+for w in 1 2 3 4 5; do
+    grep -q "\"w$w\": 20" "$tmp/race/db.json" || {
+        printf 'FAIL: concurrent writers lost w%s\n' "$w" >&2
+        cat "$tmp/race/db.json" >&2
+        exit 1
+    }
+done
+[ ! -e "$tmp/race/db.json.lock" ] || {
+    printf 'FAIL: the lock was left behind\n' >&2
+    exit 1
+}
+
 printf 'ok: %s\n' "$0"
