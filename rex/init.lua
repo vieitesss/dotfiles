@@ -1,6 +1,8 @@
 -- Rex keybindings ported from tmux/.tmux.conf. The tmux prefix (C-Space)
 -- becomes the first key of each sequence.
 
+local last_session = require("last_session")
+
 local prefix = "ctrl+space>"
 local terminal = "com.superlogical.terminal"
 
@@ -189,3 +191,62 @@ rex.action({
   end,
 })
 bind("o", "rex_sessions")
+
+-- Keep last_session_watch.lua running, to record each session the app shows.
+-- It starts on every load of this file, and a new one makes the old one stop.
+-- The server's PATH has no rex: see the rexai binding above.
+rex.exec.start({ "/bin/sh", "-c",
+  'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/last_session_watch.lua"' }, {
+  detach = true,
+  stdout = false,
+  stderr = false,
+  env = {
+    PATH = "/Users/vieitesprefapp/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/usr/bin:/bin:/usr/sbin:/sbin",
+  },
+})
+
+-- This server's record of the sessions the app showed, for last_session on
+-- other servers.
+rex.action({
+  name = "last_session_state",
+  title = "Last session record",
+  run = function() return last_session.state() end,
+})
+
+-- Go back to the session shown before this one (tmux: switch-client -l).
+-- Each server records only its own sessions, so ask the other servers the
+-- app is connected to for theirs; a server that can't answer is left out.
+rex.action({
+  name = "last_session",
+  title = "Last session",
+  run = function(ctx)
+    local states = { last_session.state() }
+    for _, name in ipairs(rex.servers()) do
+      local answer, err = rex.server(name).call("client.action", { action = "last_session_state" })
+      local state = answer and answer.result
+      if type(state) == "table" then
+        state.server = name
+        table.insert(states, state)
+      else
+        rex.log("warn", "last_session: " .. name .. ": " .. tostring(err))
+      end
+    end
+
+    local to, from = last_session.target(ctx.session_id, states)
+    if to == nil then error("no previous session recorded", 0) end
+
+    local exists
+    local api = from.server and rex.server(from.server) or rex
+    local list = api.call("session.list")
+    for _, s in ipairs(list and list.sessions or {}) do
+      if s.session_id == to.session_id then exists = true end
+    end
+    if not exists then error("the previous session no longer exists", 0) end
+
+    -- The app selects a session of any of its servers, once this action
+    -- returns. Asking it with client.perform from here would wait on a client
+    -- that is itself waiting for this action.
+    rex.client.queue("session.select", { session_id = to.session_id })
+  end,
+})
+bind("tab", "last_session")

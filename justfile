@@ -15,6 +15,7 @@ check:
     python3 -m unittest discover -s agents/skills/subagents/scripts
     python3 -m unittest discover -s agents/skills/manager/scripts
     ./tests/doctor.test.sh
+    ./tests/rex-db.test.sh
     cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
 
 doctor:
