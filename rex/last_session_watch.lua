@@ -4,10 +4,11 @@
 --
 --   rex do --all ~/.config/rex/last_session_watch.lua
 --
--- Rex has no event for the app showing another session. What it does emit,
--- though it isn't in the events reference, is terminal.size_changed: the app
--- sends a terminal its size each time it shows it, even when the size is the
--- same. So a size from an app client means the app shows that session now.
+-- Rex has no event for the app showing another session. The app does send
+-- terminal.size_changed, though the events reference leaves it out, each
+-- time it shows a terminal, even when the size is unchanged. The event's
+-- owner identifies the sending client, so an app-owned resize marks the
+-- session as shown.
 
 local db = require("db")
 local last_session = require("last_session")

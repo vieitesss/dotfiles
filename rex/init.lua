@@ -1,6 +1,7 @@
 -- Rex keybindings ported from tmux/.tmux.conf. The tmux prefix (C-Space)
 -- becomes the first key of each sequence.
 
+local app_client = require("app_client")
 local last_session = require("last_session")
 
 local prefix = "ctrl+space>"
@@ -205,21 +206,30 @@ rex.exec.start({ "/bin/sh", "-c",
   },
 })
 
--- This server's record of the sessions the app showed, for last_session on
--- other servers.
+-- Expose this server's DB record to last_session on other servers.
 rex.action({
   name = "last_session_state",
   title = "Last session record",
   run = function() return last_session.state() end,
 })
 
+-- Require the target session on the server api reaches. A server that
+-- cannot answer fails the action.
+local function require_session(api, session_id, server_name)
+  local list, err = api.call("session.list")
+  if list == nil then error(tostring(err), 0) end
+  for _, session in ipairs(list.sessions or {}) do
+    if session.session_id == session_id then return end
+  end
+  error((server_name and server_name .. ": " or "") .. "the previous session no longer exists", 0)
+end
+
 -- Go back to the session shown before this one (tmux: switch-client -l).
--- Each server records only its own sessions, so ask the other servers the
--- app is connected to for theirs; a server that can't answer is left out.
+-- Merge the local DB record with records from the app's other servers;
+-- leave out servers that cannot answer.
 --
--- The key runs this action here even in a session of another server. Then
--- ctx.server names that server, and rex.call and rex.client reach it, not
--- this one: this server has no API handle of its own in that case.
+-- ctx.server changes where rex.call and rex.session operate, but not where
+-- the DB lives or where rex.client.queue resolves sessions.
 rex.action({
   name = "last_session",
   title = "Last session",
@@ -236,63 +246,38 @@ rex.action({
       end
     end
 
-    local to, from = last_session.target(ctx.session_id, states)
-    if to == nil then error("no previous session recorded", 0) end
+    local target, target_state = last_session.target(ctx.session_id, states)
+    if target == nil then error("no previous session recorded", 0) end
+    local target_server = target_state.server
+    local where = target_server or "this server"
 
-    -- Check that the session still exists, where a call can reach it.
-    local where = from.server or "this server"
-    local api
-    if from.server == ctx.server then api = rex
-    elseif from.server ~= nil then api = rex.server(from.server) end
-    if api ~= nil then
-      local list, list_err = api.call("session.list")
-      if list == nil then error(where .. ": " .. tostring(list_err), 0) end
-      local exists
-      for _, s in ipairs(list.sessions or {}) do
-        if s.session_id == to.session_id then exists = true end
-      end
-      if not exists then error(where .. ": the previous session no longer exists", 0) end
-    end
-
-    -- Pressed in a session of this server: the app selects the session once
-    -- this action returns. Asking it with client.perform from here would
-    -- wait on a client that is itself waiting for this action.
-    if ctx.server == nil and from.server == nil then
-      rex.client.queue("session.select", { session_id = to.session_id })
+    -- Local key and target: queue selection until this action returns.
+    -- client.perform would wait on the app that is waiting for this action.
+    if ctx.server == nil and target_server == nil then
+      require_session(rex, target.session_id)
+      rex.client.queue("session.select", { session_id = target.session_id })
       return
     end
 
-    -- A queued action reaches only this server's sessions, so ask the app
-    -- through a client of it on another server, which can show a session of
-    -- any server the app is connected to. Pressed in another server's
-    -- session, that is the pressed block's owner there. Otherwise it is the
-    -- app client on the target's server with this app's label, or failing
-    -- that any app client.
-    local client_id
-    if ctx.server ~= nil then
+    local api, client_id
+    if target_server == nil then
+      -- Remote key, local target: no API can list this server's sessions.
+      -- Use the pressed block's owner through the remote context instead.
       api = rex
       local described = rex.session.describe_block{ block_id = ctx.block_id }
       client_id = described and described.block and described.block.owner
     else
-      local mine
-      for _, c in ipairs((rex.call("client.list") or {}).clients or {}) do
-        if c.client_id == ctx.client_id then mine = c.info and c.info.label end
-      end
-      local any
-      for _, c in ipairs((api.call("client.list") or {}).clients or {}) do
-        if c.info and c.info.kind == "app" then
-          any = c.client_id
-          if c.info.label == mine then client_id = c.client_id end
-        end
-      end
-      client_id = client_id or any
+      -- Remote target: use its named server even when it is ctx.server.
+      api = rex.server(target_server)
+      require_session(api, target.session_id, target_server)
+      client_id = app_client.on(api, rex, ctx.client_id)
     end
     if client_id == nil then error(where .. ": this app is not connected", 0) end
     local _, err = api.call("client.perform", {
       client_id = client_id,
       action = "session.select",
       origin = "key",
-      args = { session_id = to.session_id },
+      args = { session_id = target.session_id },
     })
     if err ~= nil then error(where .. ": " .. tostring(err), 0) end
   end,

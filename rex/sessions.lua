@@ -9,6 +9,8 @@ if rex.block_id == nil then
   error("sessions.lua: run inside a Rex terminal", 0)
 end
 
+local app_client = require("app_client")
+
 local home = os.getenv("HOME")
 local terminal = "com.superlogical.terminal"
 
@@ -162,20 +164,8 @@ if host ~= nil then
   label = rest:match("^ session (.*)$")
   selected = rest
 
-  -- The app on that host: the app client there with this app's label, or
-  -- failing that any app client.
-  local mine
-  for _, c in ipairs(rex.call("client.list").clients) do
-    if c.client_id == picker.owner then mine = c.info and c.info.label end
-  end
-  local match, any
-  for _, c in ipairs(api.call("client.list").clients) do
-    if c.info and c.info.kind == "app" then
-      any = c.client_id
-      if c.info.label == mine then match = c.client_id end
-    end
-  end
-  client_id = match or any
+  -- The app on that host.
+  client_id = app_client.on(api, rex, picker.owner)
   if client_id == nil then error("this app is not connected to " .. host, 0) end
 end
 
