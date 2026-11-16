@@ -216,6 +216,10 @@ rex.action({
 -- Go back to the session shown before this one (tmux: switch-client -l).
 -- Each server records only its own sessions, so ask the other servers the
 -- app is connected to for theirs; a server that can't answer is left out.
+--
+-- The key runs this action here even in a session of another server. Then
+-- ctx.server names that server, and rex.call and rex.client reach it, not
+-- this one: this server has no API handle of its own in that case.
 rex.action({
   name = "last_session",
   title = "Last session",
@@ -235,41 +239,57 @@ rex.action({
     local to, from = last_session.target(ctx.session_id, states)
     if to == nil then error("no previous session recorded", 0) end
 
+    -- Check that the session still exists, where a call can reach it.
     local where = from.server or "this server"
-    local api = from.server and rex.server(from.server) or rex
-    local list, list_err = api.call("session.list")
-    if list == nil then error(where .. ": " .. tostring(list_err), 0) end
-    local exists
-    for _, s in ipairs(list.sessions or {}) do
-      if s.session_id == to.session_id then exists = true end
+    local api
+    if from.server == ctx.server then api = rex
+    elseif from.server ~= nil then api = rex.server(from.server) end
+    if api ~= nil then
+      local list, list_err = api.call("session.list")
+      if list == nil then error(where .. ": " .. tostring(list_err), 0) end
+      local exists
+      for _, s in ipairs(list.sessions or {}) do
+        if s.session_id == to.session_id then exists = true end
+      end
+      if not exists then error(where .. ": the previous session no longer exists", 0) end
     end
-    if not exists then error(where .. ": the previous session no longer exists", 0) end
 
-    -- On this server the app selects the session once this action returns.
-    -- Asking it with client.perform from here would wait on a client that
-    -- is itself waiting for this action.
-    if from.server == nil then
+    -- Pressed in a session of this server: the app selects the session once
+    -- this action returns. Asking it with client.perform from here would
+    -- wait on a client that is itself waiting for this action.
+    if ctx.server == nil and from.server == nil then
       rex.client.queue("session.select", { session_id = to.session_id })
       return
     end
 
-    -- A queued action reaches only this server's sessions. On another server
-    -- the app is a different client: the app client there with this app's
-    -- label, or failing that any app client.
-    local mine
-    for _, c in ipairs((rex.call("client.list") or {}).clients or {}) do
-      if c.client_id == ctx.client_id then mine = c.info and c.info.label end
-    end
-    local match, any
-    for _, c in ipairs((api.call("client.list") or {}).clients or {}) do
-      if c.info and c.info.kind == "app" then
-        any = c.client_id
-        if c.info.label == mine then match = c.client_id end
+    -- A queued action reaches only this server's sessions, so ask the app
+    -- through a client of it on another server, which can show a session of
+    -- any server the app is connected to. Pressed in another server's
+    -- session, that is the pressed block's owner there. Otherwise it is the
+    -- app client on the target's server with this app's label, or failing
+    -- that any app client.
+    local client_id
+    if ctx.server ~= nil then
+      api = rex
+      local described = rex.session.describe_block{ block_id = ctx.block_id }
+      client_id = described and described.block and described.block.owner
+    else
+      local mine
+      for _, c in ipairs((rex.call("client.list") or {}).clients or {}) do
+        if c.client_id == ctx.client_id then mine = c.info and c.info.label end
       end
+      local any
+      for _, c in ipairs((api.call("client.list") or {}).clients or {}) do
+        if c.info and c.info.kind == "app" then
+          any = c.client_id
+          if c.info.label == mine then client_id = c.client_id end
+        end
+      end
+      client_id = client_id or any
     end
-    if (match or any) == nil then error(where .. ": this app is not connected", 0) end
+    if client_id == nil then error(where .. ": this app is not connected", 0) end
     local _, err = api.call("client.perform", {
-      client_id = match or any,
+      client_id = client_id,
       action = "session.select",
       origin = "key",
       args = { session_id = to.session_id },
