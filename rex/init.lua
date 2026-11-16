@@ -235,18 +235,46 @@ rex.action({
     local to, from = last_session.target(ctx.session_id, states)
     if to == nil then error("no previous session recorded", 0) end
 
-    local exists
+    local where = from.server or "this server"
     local api = from.server and rex.server(from.server) or rex
-    local list = api.call("session.list")
-    for _, s in ipairs(list and list.sessions or {}) do
+    local list, list_err = api.call("session.list")
+    if list == nil then error(where .. ": " .. tostring(list_err), 0) end
+    local exists
+    for _, s in ipairs(list.sessions or {}) do
       if s.session_id == to.session_id then exists = true end
     end
-    if not exists then error("the previous session no longer exists", 0) end
+    if not exists then error(where .. ": the previous session no longer exists", 0) end
 
-    -- The app selects a session of any of its servers, once this action
-    -- returns. Asking it with client.perform from here would wait on a client
-    -- that is itself waiting for this action.
-    rex.client.queue("session.select", { session_id = to.session_id })
+    -- On this server the app selects the session once this action returns.
+    -- Asking it with client.perform from here would wait on a client that
+    -- is itself waiting for this action.
+    if from.server == nil then
+      rex.client.queue("session.select", { session_id = to.session_id })
+      return
+    end
+
+    -- A queued action reaches only this server's sessions. On another server
+    -- the app is a different client: the app client there with this app's
+    -- label, or failing that any app client.
+    local mine
+    for _, c in ipairs((rex.call("client.list") or {}).clients or {}) do
+      if c.client_id == ctx.client_id then mine = c.info and c.info.label end
+    end
+    local match, any
+    for _, c in ipairs((api.call("client.list") or {}).clients or {}) do
+      if c.info and c.info.kind == "app" then
+        any = c.client_id
+        if c.info.label == mine then match = c.client_id end
+      end
+    end
+    if (match or any) == nil then error(where .. ": this app is not connected", 0) end
+    local _, err = api.call("client.perform", {
+      client_id = match or any,
+      action = "session.select",
+      origin = "key",
+      args = { session_id = to.session_id },
+    })
+    if err ~= nil then error(where .. ": " .. tostring(err), 0) end
   end,
 })
 bind("tab", "last_session")
