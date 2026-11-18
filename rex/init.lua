@@ -206,6 +206,18 @@ rex.exec.start({ "/bin/sh", "-c",
   },
 })
 
+-- Keep snapshot.lua running, to resume each pane's program after the server
+-- restarts. Same launch as last_session_watch.lua above.
+rex.exec.start({ "/bin/sh", "-c",
+  'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/snapshot.lua"' }, {
+  detach = true,
+  stdout = false,
+  stderr = false,
+  env = {
+    PATH = "/Users/vieitesprefapp/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/usr/bin:/bin:/usr/sbin:/sbin",
+  },
+})
+
 -- Expose this server's DB record to last_session on other servers.
 rex.action({
   name = "last_session_state",
