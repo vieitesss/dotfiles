@@ -14,6 +14,26 @@ _Avoid_: Package, deployment
 A `source|destination` mapping that declares one managed symlink.
 _Avoid_: Install rule, copy rule
 
+### Rex project picker
+
+How the Rex key `o` finds a place to work across machines.
+
+**Host**:
+A machine running a Rex server, named by a short label such as `mac` or `rpi`.
+_Avoid_: Server, machine, endpoint
+
+**Current host**:
+The Host of the session the user is focused on when opening the picker.
+_Avoid_: Local host, this machine
+
+**Project**:
+A directory on a Host that a session can be opened in.
+_Avoid_: Repo, folder, workspace
+
+**Session**:
+A running Rex session on a Host, which the picker can switch to.
+_Avoid_: Tab, window
+
 ### Agent workflow
 
 How the user, a Manager, and its Subagents divide work in a session.

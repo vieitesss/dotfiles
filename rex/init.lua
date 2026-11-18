@@ -163,34 +163,8 @@ rex.action({
 -- nexo agents TUI, opened in a new tab of this session (tmux: prefix a)
 bind("a", "nexo_agents")
 
--- Project session picker, opened in a new tab that closes once a session is
--- picked (tmux: prefix o)
-rex.action({
-  name = "rex_sessions",
-  title = "Project sessions",
-  run = function(ctx)
-    local window, err = rex.session.new_window{
-      session_id = ctx.session_id,
-      window_label = "sessions",
-      focus = true,
-      layout = rex.layout.block{
-        flavor = terminal .. ".shell",
-        options = {
-          -- The shell expands these on the server that owns the session,
-          -- which may be a remote host with a different home directory.
-          command = { "/bin/sh", "-c",
-            'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do "${XDG_CONFIG_HOME:-$HOME/.config}/rex/sessions.lua"' },
-          login = true,
-          exit = { on_completion = true, quick_exit_threshold_ms = 0 },
-        },
-      },
-    }
-    if err ~= nil then error(err, 0) end
-    -- sessions.lua asks the app to show this window itself: ctx.client_id
-    -- is only valid on this server, not on a remote one.
-    return window
-  end,
-})
+-- Project session picker in the native palette (tmux: prefix o).
+require("sessions")
 bind("o", "rex_sessions")
 
 -- Keep last_session_watch.lua running, to record each session the app shows.
