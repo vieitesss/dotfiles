@@ -237,27 +237,22 @@ rex.action({
     local target_server = target_state.server
     local where = target_server or "this server"
 
-    -- Local key and target: queue selection until this action returns.
-    -- client.perform would wait on the app that is waiting for this action.
-    if ctx.server == nil and target_server == nil then
-      require_session(rex, target.session_id)
+    -- Local target: queue selection until this action returns; the app
+    -- resolves session.select on the server receiving it, and queue stays
+    -- on this server even when ctx.server is set. client.perform would
+    -- wait on the app that is waiting for this action. With a remote key,
+    -- rex.call reaches ctx.server, so this server's sessions cannot be
+    -- listed; a deleted target then fails in the app instead.
+    if target_server == nil then
+      if ctx.server == nil then require_session(rex, target.session_id) end
       rex.client.queue("session.select", { session_id = target.session_id })
       return
     end
 
-    local api, client_id
-    if target_server == nil then
-      -- Remote key, local target: no API can list this server's sessions.
-      -- Use the pressed block's owner through the remote context instead.
-      api = rex
-      local described = rex.session.describe_block{ block_id = ctx.block_id }
-      client_id = described and described.block and described.block.owner
-    else
-      -- Remote target: use its named server even when it is ctx.server.
-      api = rex.server(target_server)
-      require_session(api, target.session_id, target_server)
-      client_id = app_client.on(api, rex, ctx.client_id)
-    end
+    -- Remote target: use its named server even when it is ctx.server.
+    local api = rex.server(target_server)
+    require_session(api, target.session_id, target_server)
+    local client_id = app_client.on(api, rex, ctx.client_id)
     if client_id == nil then error(where .. ": this app is not connected", 0) end
     local _, err = api.call("client.perform", {
       client_id = client_id,
