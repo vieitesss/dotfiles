@@ -7,9 +7,10 @@
 
 local M = {}
 
--- The app client on the server `api` reaches that has the label of
--- `client_id` on the server `here` reaches, or failing that any app client
--- there. Returns nil when no app is connected to that server.
+-- Find the same app on another server. `client_id` is the app's ID on
+-- `here`. Look up its label, then return the app client on `api` with that
+-- label. If no label matches, return any app client on `api`. Return nil
+-- when no app is connected to `api`.
 function M.on(api, here, client_id)
   local label
   for _, c in ipairs((here.call("client.list") or {}).clients or {}) do
