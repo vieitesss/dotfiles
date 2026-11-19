@@ -133,7 +133,8 @@ Write. Each round gets fresh Subagents, one per axis:
 Loop until no findings remain. Group findings by file or theme, at most five
 per group. Each group is its own Work Item, must-fix groups first: Spec groups
 go to Build, Standards and Debt groups to Refine. Each fix round gets a fresh
-Subagent, and its fix gets a fresh Review round.
+Subagent whose brief points at the previous report, the diff base, and the
+worktree; its fix gets a fresh Review round.
 
 Ask the user, and mark the Work Item `blocked on user`, when a finding needs
 their decision, comes back after its fix, or disputes the spec itself.
@@ -146,13 +147,16 @@ their decision, comes back after its fix, or disputes the spec itself.
 - On TASK COMPLETE, read the report and the diff. Spot-check its evidence by
   running the tests it names. Run anything over a minute in its own background
   call, then end your turn.
-- Accept the report, or start a fix round. A fix round is a fresh Subagent
-  whose brief points at the previous report, the diff base, and the worktree.
-  It is never a follow-up to the Subagent that reported.
+- Before acceptance, a failed spot-check or a missing piece goes as a follow-up
+  to the same Subagent (`recado send NAME`, see `subagents`). It answers with a
+  fresh TASK COMPLETE, read again as above.
 - A report that mentions compaction, or that dropped part of the brief, means
-  the Work Item was too big. Split what is left across fresh Subagents.
-- On acceptance: `subagent close WINDOW`, set the Ledger's Subagent cell to
-  `-`, and move the row to its next Stage.
+  the Work Item was too big. Split what is left across fresh Subagents instead
+  of a follow-up.
+- Fresh Subagents are for each Stage and for each fix round born from Review
+  findings (see Review), never for a follow-up on an unaccepted report.
+- On acceptance, once the evidence checks out: `subagent close WINDOW`, set the
+  Ledger's Subagent cell to `-`, and move the row to its next Stage.
 
 ## Waiting on outside state
 
