@@ -24,7 +24,7 @@ flowchart TD
     kind -- prose --> write{{"Write (writer)"}}
     write --> done
     kind -- code --> build{{"Build (builder)"}}
-    build --> refinep{"Added behaviour or<br/>reshaped a module?"}
+    build --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
     refinep -- yes --> refine{{"Refine (critic)"}}
     refinep -- no --> review
     refine --> review
@@ -104,7 +104,7 @@ sequenceDiagram
     M-->>B: follow-up if the spot-check fails
     B-->>M: TASK COMPLETE
     M->>B: subagent close WINDOW
-    M->>R: subagent launch --stage refine (only if the change reshapes a module)
+    M->>R: subagent launch --stage refine (only if Build reshaped an existing module)
     R->>L: write refine report
     R-->>M: TASK COMPLETE
     M->>R: subagent close WINDOW
