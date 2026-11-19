@@ -30,6 +30,7 @@ new_fixture() {
     fixture_bin="$fixture_tmp/bin"
     fixture_log="$fixture_tmp/rex.log"
     fixture_prompt="$fixture_tmp/prompt.md"
+    fixture_pi_log="$fixture_tmp/pi.log"
     fixture_stderr="$fixture_tmp/stderr"
     fixture_process=
 
@@ -45,32 +46,69 @@ new_fixture() {
         printf -- '---\nname: %s\n---\n' "$skill" > "$fixture_home/.agents/skills/$skill/SKILL.md"
     done
 
-    # rex stub: records its command line, hands back window ids, reports the
-    # block's process. The window's child command is never run.
+    # rex stub: records arguments independently of their order, executes the
+    # window's child command, hands back ids, and reports the block's process.
     cat > "$fixture_bin/rex" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$REX_STUB_LOG"
-case " $* " in
-    *" window new "*)
-        # The prompt travels as a file argument of the child command. Copy it,
-        # then remove it, as the child does once it has read the prompt.
-        for arg in "$@"; do
-            case $arg in
-                */subagent-*.??????)
-                    cp "$arg" "$REX_STUB_PROMPT"
-                    rm -f "$arg"
-                    ;;
-            esac
-        done
+set -eu
+printf '%s\n' "$@" >> "$REX_STUB_LOG"
+[ "${1:-}" != --autostart=false ] || shift
+case "$1 ${2:-}" in
+    'window new')
+        shift 2
+        while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
+        [ "$#" -gt 0 ] || exit 1
+        shift
+        "$@" >"$REX_STUB_LOG.child" 2>&1 || {
+            cat "$REX_STUB_LOG.child" >&2
+            exit 1
+        }
         printf '{"window_id":"win-1","block_ids":["blk-1"]}\n'
         ;;
-    *" block call "*)
+    'block call')
         printf '%s\n' "${REX_STUB_PROCESS:-{\"last_exit\":null}}"
         ;;
-    *" capture "*)
+    'capture '*)
         printf 'simulated agent crash on startup\n'
         ;;
+    *) exit 1 ;;
 esac
+STUB
+
+    # Run the received shell command without login profiles, which could
+    # replace PATH and accidentally resolve a real pi instead of the stub.
+    cat > "$fixture_bin/shell" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[ "${PATH%%:*}" = "$STUB_BIN" ] || exit 99
+case $1 in
+    -c | -lc) shift ;;
+    *) exit 99 ;;
+esac
+exec /bin/bash -c "$@"
+STUB
+
+    # pi stub: record what the child delivers, not how it transports it.
+    cat > "$fixture_bin/pi" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[ "${PATH%%:*}" = "$STUB_BIN" ] || exit 99
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --model | --thinking | --append-system-prompt)
+            printf '%s=%s\n' "$1" "$2" >> "$PI_STUB_LOG"
+            shift 2
+            ;;
+        --)
+            shift
+            [ "$#" -eq 1 ] || exit 1
+            printf '%s\n' "$1" > "$PI_STUB_PROMPT"
+            exit 0
+            ;;
+        *) exit 1 ;;
+    esac
+done
+exit 1
 STUB
 
     # recado stub: whoami names the Manager; nothing is delivered.
@@ -81,7 +119,7 @@ case $1 in
 esac
 STUB
 
-    chmod +x "$fixture_bin/rex" "$fixture_bin/recado"
+    chmod +x "$fixture_bin/rex" "$fixture_bin/recado" "$fixture_bin/pi" "$fixture_bin/shell"
 }
 
 run_subagent() { # run_subagent ARGS... < BRIEF
@@ -90,10 +128,13 @@ run_subagent() { # run_subagent ARGS... < BRIEF
         cd "$fixture_repo" || exit 1
         HOME="$fixture_home" \
             PATH="$fixture_bin:$PATH" \
+            STUB_BIN="$fixture_bin" \
+            SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
             TMPDIR="$fixture_tmp/tmp" \
             REX_SESSION=session:test \
             REX_STUB_LOG="$fixture_log" \
-            REX_STUB_PROMPT="$fixture_prompt" \
+            PI_STUB_LOG="$fixture_pi_log" \
+            PI_STUB_PROMPT="$fixture_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
@@ -152,22 +193,23 @@ $(cat "$fixture_prompt")" ;;
     esac
 }
 
-expect_rex_contains() {
+expect_rex_arg() {
     checks=$((checks + 1))
-    if [ ! -f "$fixture_log" ]; then
-        fail "rex was never called"
-        return
-    fi
-    case "$(cat "$fixture_log")" in
-        *"$1"*) ;;
-        *) fail "expected the rex command line to contain '$1'; got:
-$(cat "$fixture_log")" ;;
-    esac
+    grep -Fxq -- "$1" "$fixture_log" 2>/dev/null ||
+        fail "expected rex to receive argument '$1'; got:
+$(cat "$fixture_log" 2>/dev/null)"
+}
+
+expect_pi_option() {
+    checks=$((checks + 1))
+    grep -Fxq -- "$1=$2" "$fixture_pi_log" 2>/dev/null ||
+        fail "expected pi to receive '$1' with '$2'; got:
+$(cat "$fixture_pi_log" 2>/dev/null)"
 }
 
 expect_no_rex_command() {
     checks=$((checks + 1))
-    if [ -f "$fixture_log" ] && grep -q 'window new' "$fixture_log"; then
+    if [ -f "$fixture_log" ] && grep -Fxq window "$fixture_log"; then
         fail "expected no window to be opened; rex got:
 $(cat "$fixture_log")"
     fi
@@ -220,15 +262,14 @@ run_subagent launch --stage refine --item widget <<'BRIEF'
 Remove the legacy path.
 BRIEF
 expect_status 0
-expect_rex_contains 'window new'
-expect_rex_contains '-s session:test subagent-refine-'
-checks=$((checks + 1))
-case "$(cat "$fixture_log")" in
-    *'--focus=false --keep-open --shell=none --json'*) ;;
-    *) fail "the window is not opened in the background: $(cat "$fixture_log")" ;;
-esac
-expect_rex_contains 'pi '
-expect_rex_contains '--model github-copilot/gpt-6.1-sol --thinking high'
+expect_rex_arg session:test
+expect_rex_arg --focus=false
+expect_rex_arg --keep-open
+expect_rex_arg --shell=none
+expect_pi_option --model github-copilot/gpt-6.1-sol
+expect_pi_option --thinking high
+expect_prompt_contains 'You run the Refine stage:'
+expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'
 
 rm -rf "$fixture_tmp"
