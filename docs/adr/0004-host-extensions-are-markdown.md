@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # Host extensions are Markdown the agent reads
 
 > Update: recado now carries all Manager–Subagent messages, including remote
