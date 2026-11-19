@@ -39,16 +39,12 @@ _Avoid_: Tab, window
 How the user, a Manager, and its Subagents divide work in a session.
 
 **Manager**:
-The agent the user has put in charge of a session with `/manager`; it owns every decision, review, and the final report.
+The agent the user has put in charge of a session with `/manager`; it owns every decision, review, and the final report, and delegates all implementation to Subagents.
 _Avoid_: Supervisor, parent, orchestrator
 
 **Subagent**:
 An agent the Manager launches in its own session to run one Stage of one Work Item and report back; it never delegates.
 _Avoid_: Child, worker, delegate
-
-**Host extension**:
-A Markdown file the Manager reads that explains how one session host starts and closes Subagent sessions; Rex is the only one shipped.
-_Avoid_: Adapter, plugin, backend
 
 **Work Item**:
 One thing to deliver in a session, small enough to pass through the Stages on its own.
@@ -67,7 +63,7 @@ The Manager's record of a session's Work Items and the Stage each one is at.
 _Avoid_: Tracker, todo list
 
 **Model profile**:
-A model identifier and thinking-effort level selected together for a Subagent.
+A model and the one thinking-effort level it always runs with, named by a role such as builder, writer, or critic.
 _Avoid_: Model, effort setting
 
 **Question**:
