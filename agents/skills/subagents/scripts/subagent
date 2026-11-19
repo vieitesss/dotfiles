@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+# Launch one Stage of one Work Item as a Subagent in a Rex window, and close
+# that window once the Manager has accepted the report.
+#
+# Usage:
+#   subagent stages
+#   subagent launch --stage STAGE [--axis AXIS] --item ITEM [--cwd DIR]
+#                   [--model ROLE] < BRIEF
+#   subagent close WINDOW
+#
+# launch reads the brief on stdin and prints one JSON object on stdout:
+#   {"name": ..., "window": ..., "block": ..., "report": ...}
+# Everything else it prints goes to stderr.
+#
+# This must run on macOS's bash 3.2: no associative arrays, no ${var,,}.
+
+set -eu
+
+POLL_INTERVAL=0.25
+STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
+MODEL_EFFORT=high # every model role thinks hard
+
+# The prompt travels through a temp file because Rex rejects over-long
+# commands. The child reads it, deletes it, then execs the agent with the
+# prompt as its last argument; the trailing -- keeps a prompt that starts with
+# a dash from being read as an option.
+# shellcheck disable=SC2016 # the child shell expands these, not this one.
+CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; export RECADO_ADDR="$0"; shift; exec "$@" "$prompt"'
+
+# What every Subagent is told, whichever Stage it runs.
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom, do not poll, and do not read other sessions."
+
+die() {
+    printf '[subagent] %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Prepare and launch one Stage of one Work Item as a Subagent in a Rex window.
+
+Usage:
+  subagent stages
+      Print each Stage with its skills and model.
+
+  subagent launch --stage STAGE [--axis AXIS] --item ITEM [--cwd DIR]
+                  [--model ROLE] < BRIEF
+      Build the prompt, open a Rex window in this Manager's session, and print
+      {"name", "window", "block", "report"} as JSON. The brief comes on stdin.
+      --cwd defaults to the current directory.
+      --axis is required by --stage review, and rejected by every other Stage.
+      --model takes a role: builder, writer, or critic.
+
+  subagent close WINDOW
+      Close the Subagent's Rex window.
+
+REX_SESSION names the Rex session, and recado whoami the Manager's address.
+EOF
+}
+
+# ------------------------------------------------------------------ tables
+
+load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
+    stage_axes=("")
+    case $1 in
+        research)
+            skill_names=research
+            model_role=builder
+            role="You run the Research stage: you are the background agent the research skill describes, so do its job yourself. Change no files except the findings file."
+            ;;
+        build)
+            skill_names='tdd coding'
+            model_role=builder
+            role="You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report."
+            ;;
+        write)
+            skill_names=writing-for-agents
+            model_role=writer
+            role="You run the Write stage: write the prose the brief asks for."
+            ;;
+        refine)
+            skill_names=zero-tech-debt
+            model_role=critic
+            role="You run the Refine stage: reshape the code this Work Item touched toward its intended design, keeping behaviour and tests green. Your scope is the diff since the brief's base, and the code it touches."
+            ;;
+        review)
+            skill_names=review
+            model_role=critic
+            stage_axes=(spec standards debt)
+            role="You run the Review stage, ${2:-} axis: you are the ${2:-} sub-agent the review skill describes, so apply its brief yourself. Change no files."
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+role_known() {
+    case $1 in
+        builder | writer | critic) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+model_for() {
+    case $1 in
+        builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
+        writer) printf '%s\n' 'github-copilot/claude-sonnet-5.5' ;;
+        critic) printf '%s\n' 'github-copilot/gpt-6.1-sol' ;;
+    esac
+}
+
+print_stages() {
+    for stage in research build write refine review; do
+        load_stage "$stage"
+        for axis in "${stage_axes[@]}"; do
+            label=$stage
+            [ -z "$axis" ] || label="$stage --axis $axis"
+            printf '%-24s model %-40s effort %-6s skills %s\n' \
+                "$label" "$(model_for "$model_role")" "$MODEL_EFFORT" \
+                "${skill_names// /, }"
+        done
+    done
+}
+
+check_axis() { # check_axis STAGE AXIS
+    case $1 in
+        review)
+            case $2 in
+                spec | standards | debt) ;;
+                '') die "--stage review needs --axis spec|standards|debt" ;;
+                *) die "--stage review takes --axis spec|standards|debt, not $2" ;;
+            esac
+            ;;
+        *)
+            [ -z "$2" ] || die "--stage $1 takes no --axis"
+            ;;
+    esac
+}
+
+# ----------------------------------------------------------------- helpers
+
+q() { # q TEXT: TEXT quoted for a shell command line
+    printf '%q' "$1"
+}
+
+dq() { # dq TEXT: TEXT escaped for inside a double-quoted shell word
+    printf '%s' "$1" | sed -e 's/[\\"$`]/\\&/g'
+}
+
+find_rex() {
+    if command -v rex >/dev/null 2>&1; then
+        command -v rex
+    elif [ -n "${REX_BIN_DIR:-}" ] && [ -x "$REX_BIN_DIR/rex" ]; then
+        printf '%s\n' "$REX_BIN_DIR/rex"
+    else
+        return 1
+    fi
+}
+
+main_checkout() { # main_checkout DIR: checkout sharing DIR's git dir, '' outside git
+    mc_common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
+        mc_common=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) ||
+        return 0
+    case $mc_common in
+        /*) ;;
+        *) mc_common=$1/$mc_common ;;
+    esac
+    case ${mc_common%/*} in
+        '') printf '%s\n' / ;;
+        *) printf '%s\n' "${mc_common%/*}" ;;
+    esac
+}
+
+skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
+    for root in "$2/.agents/skills" "$3/.agents/skills" \
+        "$HOME/.agents/skills" "$HOME/.pi/agent/skills"; do
+        if [ -f "$root/$1/SKILL.md" ]; then
+            printf '%s\n' "$root/$1/SKILL.md"
+            return 0
+        fi
+    done
+    return 1
+}
+
+still_alive() { # still_alive BLOCK: the agent started and is still running
+    sa_state=$("$rex_cmd" --autostart=false block call -b "$1" process 2>/dev/null) || return 1
+    [ -n "$sa_state" ] || return 1
+    # last_exit stays null until the block's process exits.
+    printf '%s' "$sa_state" | python3 -c 'import json, sys
+try:
+    last_exit = json.load(sys.stdin).get("last_exit")
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if last_exit is None else 1)'
+}
+
+# ------------------------------------------------------------------ launch
+
+cmd_launch() {
+    stage=
+    axis=
+    item=
+    cwd=
+    override=
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --stage | --axis | --item | --cwd | --model)
+                [ $# -ge 2 ] || die "launch: $1 needs a value"
+                flag=$1
+                value=$2
+                shift 2
+                case $flag in
+                    --stage) stage=$value ;;
+                    --axis) axis=$value ;;
+                    --item) item=$value ;;
+                    --cwd) cwd=$value ;;
+                    --model) override=$value ;;
+                esac
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            *) die "launch: unexpected argument: $1" ;;
+        esac
+    done
+
+    [ -n "$stage" ] || die "launch needs --stage"
+    [ -n "$item" ] || die "launch needs --item"
+    load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
+    check_axis "$stage" "$axis"
+    if [ -n "$override" ]; then
+        role_known "$override" || die "--model takes a role: builder, writer, critic"
+        model_role=$override
+    fi
+
+    brief=$(cat)
+    cwd=$(CDPATH='' cd "${cwd:-$PWD}" && pwd -P) || die "cwd is not a directory: ${cwd:-$PWD}"
+    main=$(main_checkout "$cwd")
+    [ -n "$main" ] || main=$cwd
+
+    # Fail before anything launches when a Stage's skill is not installed.
+    missing=
+    skills=
+    for name in $skill_names; do
+        if ! path=$(skill_path "$name" "$cwd" "$main"); then
+            missing="$missing $name"
+            continue
+        fi
+        skills="$skills- $name: $path
+"
+    done
+    [ -z "$missing" ] || die "skills not installed for $cwd:$missing"
+
+    rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
+    [ -n "${REX_SESSION:-}" ] ||
+        die "REX_SESSION is not set; run from the Manager's Rex terminal"
+    command -v recado >/dev/null 2>&1 ||
+        die "recado is not on PATH; install it and run recado skill setup"
+    manager=$(recado whoami 2>/dev/null) ||
+        die "recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session"
+    [ -n "$manager" ] ||
+        die "recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session"
+
+    model=$(model_for "$model_role")
+    effort=$MODEL_EFFORT
+    stage_label=$stage
+    [ -z "$axis" ] || stage_label="$stage $axis"
+    name="subagent-$stage-$$"
+    tag="$name · $item · $stage_label"
+
+    report_dir="$main/.agents/reports"
+    report_name=$item-$stage
+    [ -z "$axis" ] || report_name=$report_name-$axis
+    report=$report_dir/$report_name.md
+    mkdir -p "$report_dir"
+
+    send_cmd="recado send $manager --kind complete"
+    send_cmd="$send_cmd --meta $(q "item=$item") --meta $(q "stage=$stage")"
+    [ -z "$axis" ] || send_cmd="$send_cmd --meta $(q "axis=$axis")"
+    send_cmd="$send_cmd --meta $(q "report=$report")"
+
+    prompt=$role
+    prompt="$prompt
+
+You are $tag. Start every message to the Manager with [$tag], exactly as written here; it is the [TAG] in the commands below."
+    if [ -n "$skills" ]; then
+        prompt="$prompt
+Read and follow these skills:
+$skills"
+    fi
+    prompt="$prompt
+Write your full report to $report; the completion report is one line pointing at it. This path wins over any path in the brief: use it, note the difference, keep working.
+Report through recado to $manager. Its send and ask commands below are the complete route. Ask if the reporting command fails.
+Run these exact commands to report and to ask (the address and tag are already filled in; never retype them):
+$send_cmd \"[$(dq "$tag")] TASK COMPLETE: <one line>\"
+recado ask $manager \"[$(dq "$tag")] QUESTION: <question>\"
+
+$SUBAGENT_RULES
+
+$brief"
+
+    prompt_file=$(mktemp "${TMPDIR:-/tmp}/$name.XXXXXX")
+    printf '%s\n' "$prompt" >"$prompt_file"
+    trap 'rm -f "$prompt_file" "$prompt_file.err"' EXIT
+
+    printf '[subagent] %s model %s effort %s\n' "$name" "$model" "$effort" >&2
+    created=$(
+        "$rex_cmd" --autostart=false window new \
+            -s "$REX_SESSION" "$name" -c "$cwd" \
+            --focus=false --keep-open --shell=none --json \
+            -- "${SHELL:-/bin/sh}" -lc "$CHILD_SCRIPT" "$name" "$prompt_file" \
+            pi --append-system-prompt "$role" --model "$model" --thinking "$effort" -- \
+            2>"$prompt_file.err"
+    ) || die "rex window new failed: $(cat "$prompt_file.err")
+check \`$rex_cmd window ls -s $REX_SESSION\` for a window named $name and close it before relaunching"
+    rm -f "$prompt_file.err"
+    trap - EXIT
+
+    window=$(printf '%s' "$created" | python3 -c 'import json, sys
+print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new output: $created"
+    block=$(printf '%s' "$created" | python3 -c 'import json, sys
+print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
+    printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
+
+    alive=1
+    for ((poll = 0; poll < STARTUP_POLLS; poll++)); do
+        if ! still_alive "$block"; then
+            alive=0
+            break
+        fi
+        sleep "$POLL_INTERVAL"
+    done
+    if [ "$alive" -eq 1 ]; then
+        still_alive "$block" || alive=0
+    fi
+    if [ "$alive" -eq 0 ]; then
+        rm -f "$prompt_file"
+        tailview=$("$rex_cmd" --autostart=false capture -b "$block" --trim --unwrap 2>/dev/null || true)
+        printf '%s\n' "$tailview" | tail -n 15 >&2
+        die "agent start failed for $name; window $window is left open"
+    fi
+
+    python3 -c 'import json, sys
+print(json.dumps(dict(zip(("name", "window", "block", "report"), sys.argv[1:])), separators=(",", ":")))' \
+        "$name" "$window" "$block" "$report"
+}
+
+# ------------------------------------------------------------------- close
+
+cmd_close() {
+    [ $# -eq 1 ] || die "close needs exactly one WINDOW"
+    rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
+    "$rex_cmd" --autostart=false window close "$1" >/dev/null
+}
+
+# -------------------------------------------------------------------- main
+
+command_name=${1-}
+shift || true
+case $command_name in
+    stages)
+        [ $# -eq 0 ] || die "stages takes no arguments"
+        print_stages
+        ;;
+    launch) cmd_launch "$@" ;;
+    close) cmd_close "$@" ;;
+    help | -h | --help) usage ;;
+    '')
+        usage >&2
+        exit 2
+        ;;
+    *)
+        usage >&2
+        die "unknown command: $command_name"
+        ;;
+esac
