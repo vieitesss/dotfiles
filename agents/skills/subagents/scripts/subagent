@@ -60,9 +60,35 @@ EOF
 
 # ------------------------------------------------------------------ tables
 
-stage_known() {
+load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
+    stage_axes=("")
     case $1 in
-        research | build | write | refine | review) return 0 ;;
+        research)
+            skill_names=research
+            model_role=builder
+            role="You run the Research stage: you are the background agent the research skill describes, so do its job yourself. Change no files except the findings file."
+            ;;
+        build)
+            skill_names='tdd coding'
+            model_role=builder
+            role="You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report."
+            ;;
+        write)
+            skill_names=writing-for-agents
+            model_role=writer
+            role="You run the Write stage: write the prose the brief asks for."
+            ;;
+        refine)
+            skill_names=zero-tech-debt
+            model_role=critic
+            role="You run the Refine stage: reshape the code this Work Item touched toward its intended design, keeping behaviour and tests green. Your scope is the diff since the brief's base, and the code it touches."
+            ;;
+        review)
+            skill_names=review
+            model_role=critic
+            stage_axes=(spec standards debt)
+            role="You run the Review stage, ${2:-} axis: you are the ${2:-} sub-agent the review skill describes, so apply its brief yourself. Change no files."
+            ;;
         *) return 1 ;;
     esac
 }
@@ -74,39 +100,6 @@ role_known() {
     esac
 }
 
-stage_skills() { # stage_skills STAGE: its skills, one name per line
-    case $1 in
-        research) printf '%s\n' research ;;
-        build) printf '%s\n' tdd coding ;;
-        write) printf '%s\n' writing-for-agents ;;
-        refine) printf '%s\n' zero-tech-debt ;;
-        review) printf '%s\n' review ;;
-    esac
-}
-
-join_skills() { # join_skills STAGE: its skills on one comma-separated line
-    js_out=
-    while IFS= read -r js_name; do
-        [ -n "$js_name" ] || continue
-        if [ -z "$js_out" ]; then
-            js_out=$js_name
-        else
-            js_out="$js_out, $js_name"
-        fi
-    done <<EOF
-$(stage_skills "$1")
-EOF
-    printf '%s\n' "$js_out"
-}
-
-stage_model_role() {
-    case $1 in
-        write) printf '%s\n' writer ;;
-        refine | review) printf '%s\n' critic ;;
-        *) printf '%s\n' builder ;;
-    esac
-}
-
 model_for() {
     case $1 in
         builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
@@ -115,43 +108,16 @@ model_for() {
     esac
 }
 
-stage_role() { # stage_role STAGE [AXIS]
-    case $1 in
-        research)
-            printf '%s\n' "You run the Research stage: you are the background agent the research skill describes, so do its job yourself. Change no files except the findings file."
-            ;;
-        build)
-            printf '%s\n' "You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report."
-            ;;
-        write)
-            printf '%s\n' "You run the Write stage: write the prose the brief asks for."
-            ;;
-        refine)
-            printf '%s\n' "You run the Refine stage: reshape the code this Work Item touched toward its intended design, keeping behaviour and tests green. Your scope is the diff since the brief's base, and the code it touches."
-            ;;
-        review)
-            printf '%s\n' "You run the Review stage, $2 axis: you are the $2 sub-agent the review skill describes, so apply its brief yourself. Change no files."
-            ;;
-    esac
-}
-
 print_stages() {
-    for row in research build write refine review:spec review:standards review:debt; do
-        case $row in
-            *:*)
-                stage=${row%%:*}
-                axis=${row#*:}
-                label="$stage --axis $axis"
-                ;;
-            *)
-                stage=$row
-                axis=
-                label=$stage
-                ;;
-        esac
-        printf '%-24s model %-40s effort %-6s skills %s\n' \
-            "$label" "$(model_for "$(stage_model_role "$stage")")" "$MODEL_EFFORT" \
-            "$(join_skills "$stage")"
+    for stage in research build write refine review; do
+        load_stage "$stage"
+        for axis in "${stage_axes[@]}"; do
+            label=$stage
+            [ -z "$axis" ] || label="$stage --axis $axis"
+            printf '%-24s model %-40s effort %-6s skills %s\n' \
+                "$label" "$(model_for "$model_role")" "$MODEL_EFFORT" \
+                "${skill_names// /, }"
+        done
     done
 }
 
@@ -260,13 +226,11 @@ cmd_launch() {
 
     [ -n "$stage" ] || die "launch needs --stage"
     [ -n "$item" ] || die "launch needs --item"
-    stage_known "$stage" || die "unknown stage: $stage; see \`subagent stages\`"
+    load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
     check_axis "$stage" "$axis"
     if [ -n "$override" ]; then
         role_known "$override" || die "--model takes a role: builder, writer, critic"
         model_role=$override
-    else
-        model_role=$(stage_model_role "$stage")
     fi
 
     brief=$(cat)
@@ -277,17 +241,14 @@ cmd_launch() {
     # Fail before anything launches when a Stage's skill is not installed.
     missing=
     skills=
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
+    for name in $skill_names; do
         if ! path=$(skill_path "$name" "$cwd" "$main"); then
             missing="$missing $name"
             continue
         fi
         skills="$skills- $name: $path
 "
-    done <<EOF
-$(stage_skills "$stage")
-EOF
+    done
     [ -z "$missing" ] || die "skills not installed for $cwd:$missing"
 
     rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
@@ -302,7 +263,6 @@ EOF
 
     model=$(model_for "$model_role")
     effort=$MODEL_EFFORT
-    role=$(stage_role "$stage" "$axis")
     stage_label=$stage
     [ -z "$axis" ] || stage_label="$stage $axis"
     name="subagent-$stage-$$"
