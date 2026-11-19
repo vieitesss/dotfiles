@@ -1,91 +1,72 @@
 # Agent workflow
 
-How a goal moves from the user's request to a shipped change. Terms are
-defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape are
-[ADR 0002](adr/0002-manager-on-request.md),
-[ADR 0003](adr/0003-subagent-is-a-stage-instance.md),
-[ADR 0004](adr/0004-host-extensions-are-markdown.md), and
-[ADR 0005](adr/0005-rex-is-the-only-host.md).
+How a goal moves from the user's request to a changed, reviewed branch. Terms
+are defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape
+are [ADR 0003](adr/0003-subagent-is-a-stage-instance.md),
+[ADR 0006](adr/0006-manager-always-delegates.md), and
+[ADR 0007](adr/0007-bash-launcher-rex-only.md).
 
 ## Flow
 
 Rounded boxes run in the Manager's own session. Hexagons are Subagents: each
-is a fresh session for one Stage of one Work Item, prepared with
-`subagent.py --stage <stage>` and started in a Rex window, on this machine
-or on another Rex host.
+is a fresh session for one Stage of one Work Item, started by
+`subagent launch --stage <stage>` in a local Rex window.
 
 ```mermaid
 flowchart TD
-    req([User request]) --> mgr{"/manager invoked?"}
-    mgr -- no --> plain(["Plain agent does the work itself<br/>no Ledger, no Subagents"])
-    mgr -- yes --> shape{"Goal or approach open?"}
-    shape -- yes --> grill(["Shape: grill the user"])
-    shape -- no --> split
-    grill --> split(["Split the goal into Work Items<br/>write the Ledger"])
-
+    req([User ready to implement]) --> mgr(["/manager invoked"])
+    mgr --> split(["Split the goal into Work Items<br/>write .agents/ledger.md"])
     split --> next(["Take the next Work Item"])
-    next --> trivial{"Trivial?"}
-    trivial -- yes --> selfbuild(["Manager builds it"])
-    selfbuild --> cheapprove(["Prove: scoped lint and tests<br/>read own diff"])
-    cheapprove --> done
+    next --> facts{"Needs outside facts?"}
+    facts -- yes --> research{{"Research (builder)"}}
+    facts -- no --> kind{"Code or prose?"}
+    research --> kind
+    kind -- prose --> write{{"Write (writer)"}}
+    write --> done
+    kind -- code --> build{{"Build (builder)"}}
+    build --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
+    refinep -- yes --> refine{{"Refine (critic)"}}
+    refinep -- no --> review
+    refine --> review
 
-    trivial -- no --> facts{"Needs outside facts?"}
-    facts -- yes --> research{{"Research"}}
-    facts -- no --> design
-    research --> design{"State model, UI, or<br/>interface undecided?"}
-    design -- yes --> designstage(["Design: codebase-design with the user<br/>prototype Subagent if needed"])
-    design -- no --> cause
-    designstage --> cause{"Bug with unknown cause?"}
-    cause -- yes --> diagnose{{"Diagnose"}}
-    cause -- no --> kind
-    diagnose --> kind{"Code or prose?"}
-    kind -- code --> build{{"Build"}}
-    kind -- prose --> write{{"Write"}}
-    build --> refinep{"Added behaviour or<br/>reshaped a module?"}
-    refinep -- yes --> refine{{"Refine"}}
-    refinep -- no --> prove
-    refine --> prove(["Prove: scoped lint and tests"])
-    write --> prove
-    prove --> visible{"User-visible change<br/>tests don't observe?"}
-    visible -- yes --> verify{{"Prove: verify-app"}}
-    visible -- no --> done
-    verify --> done(["Mark the Work Item done in the Ledger"])
-
-    done --> more{"More Work Items?"}
-    more -- yes --> next
-    more -- no --> budget{"Change Set needs Review?<br/>(proof budget)"}
-    budget -- no --> report
-    budget -- yes --> review
-
-    subgraph review [Review: in parallel, critique model, read-only]
-        standards{{"Standards"}}
-        spec{{"Spec"}}
-        debt{{"Debt"}}
+    subgraph review [Review: fresh critics, one per axis, read-only]
+        spec{{"Spec: always"}}
+        standards{{"Standards: several modules or reshaped"}}
+        debt{{"Debt: several modules or reshaped"}}
     end
 
     review --> findings{"Findings?"}
-    findings -- none --> report
+    findings -- none --> prove(["Manager may run tests and lint"])
+    prove --> done
     findings -- "needs the user" --> ask(["Ask the user"])
     ask --> findings
-    findings -- Spec --> fixbuild{{"Build: fix round"}}
-    findings -- "Standards / Debt" --> fixrefine{{"Refine: fix round"}}
-    fixbuild --> recheck(["Re-check that fix only"])
-    fixrefine --> recheck
-    recheck --> findings
+    findings -- Spec --> fixbuild{{"Build: fresh fix round"}}
+    findings -- "Standards / Debt" --> fixrefine{{"Refine: fresh fix round"}}
+    fixbuild --> review
+    fixrefine --> review
 
-    report(["Report to the user"]) --> ship{"User asks to ship?"}
-    ship -- yes --> shipstage(["Ship: commit-changes, visual-pr"])
-    ship -- no --> stop(["Stop: work stays uncommitted"])
+    done(["Mark the Work Item done in the Ledger"]) --> more{"More Work Items?"}
+    more -- yes --> next
+    more -- no --> report(["Report to the user:<br/>changes, tests, open decisions"])
 ```
 
 Defaults the flow leaves implicit:
 
-- Work Items run one after another in one worktree, and Review runs once over
-  the Change Set. Items that touch disjoint code may run in parallel, each in
-  its own worktree, and the Manager merges each into the main branch once it
-  is done; items that ship as separate PRs go through Review one by one.
+- The Manager is invoked only when the user is ready to implement. Shaping,
+  design, diagnosis, planning, and shipping happen outside it.
+- Review follows every round that wrote code, Build or Refine, and never
+  follows Write. Spec always runs. Standards and Debt run when the change spans
+  several modules or reshapes one.
+- Every round uses fresh Subagents. A follow-up before the Manager accepts a
+  report goes to the same Subagent.
+- Work Items on disjoint code run in parallel, each in its own worktree.
+  Overlapping Work Items run one after another in one worktree. The Manager
+  merges each finished branch.
 - At most one Subagent edits a worktree at a time. Review Subagents only read,
   so they share it.
+- Each Stage's model profile (builder, writer, or critic) is fixed in the Stage
+  table of `agents/skills/subagents/scripts/subagent`.
+- The Manager closes a Subagent's window when its report is accepted.
 - The Manager asks the user instead of looping when a decision belongs to the
   user, when a finding comes back after its fix, or when reviewers disagree
   with the spec itself.
@@ -98,9 +79,11 @@ this repository: they come from the shared checkout at `~/work/prefapp/skills`.
 ## Sessions
 
 Every Subagent talks only to the Manager; the user talks only to the Manager.
-Sessions hand work over through files: the brief going in, the report coming
-out, the diff in the worktree, and the Ledger. All messages between the
-Manager and Subagents travel over recado, including across machines.
+Sessions hand work over through files: the brief going in on stdin to
+`subagent launch`, the report coming out at
+`.agents/reports/<item>-<stage>[-<axis>].md`, the diff in the worktree, and the
+Ledger at `.agents/ledger.md`. All messages between the Manager and Subagents
+travel over recado on this machine.
 
 ```mermaid
 sequenceDiagram
@@ -112,25 +95,24 @@ sequenceDiagram
     participant V as Subagents: Review
 
     U->>M: /manager + goal
-    M->>L: write Work Items
-    M->>B: launch --stage build (brief file)
+    M->>L: write Work Items to .agents/ledger.md
+    M->>B: subagent launch --stage build --item I
     B-->>M: QUESTION
     M-->>B: answer (or ask the User first)
     B->>L: write build report
     B-->>M: TASK COMPLETE
     M-->>B: follow-up if the spot-check fails
     B-->>M: TASK COMPLETE
-    M->>B: close
-    M->>L: Work Item at Refine
-    M->>R: launch --stage refine (brief + build report + diff base)
+    M->>B: subagent close WINDOW
+    M->>R: subagent launch --stage refine (only if Build reshaped an existing module)
     R->>L: write refine report
     R-->>M: TASK COMPLETE
-    M->>R: close
-    Note over M: Prove, then the next Work Item repeats Build and Refine
-    M->>V: launch --stage review, one per axis
+    M->>R: subagent close WINDOW
+    M->>V: subagent launch --stage review, one per axis
     V->>L: write findings
     V-->>M: TASK COMPLETE
-    M->>V: close
-    Note over M: fix rounds launch fresh Build or Refine Subagents
-    M->>U: report: changes, proof, skipped Stages, open decisions
+    M->>V: subagent close WINDOW
+    Note over M: a fix round launches fresh Build or Refine, then Review again
+    Note over M: Manager may run tests and lint, then marks the Work Item done
+    M->>U: report: changes, tests, open decisions
 ```

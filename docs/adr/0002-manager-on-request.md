@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0006
+---
+
 # The Manager runs only on request and delegates only when it pays
 
 The Manager is a mode the user switches on with `/manager`; no agent enters it on its own. Once on, it does trivial work, decisions, and anything that needs the whole conversation itself, and launches a Subagent only when a delegate trigger holds (a long edit-test loop, wide reading, parallel pieces, context flooding, or the need for a fresh model). This replaces an earlier rule that the Manager classified every task and always delegated: that kept the discipline, but paid spawn latency and tokens on work that was faster to do inline.

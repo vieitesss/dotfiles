@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # Rex is the only session host
 
 Subagents run in Rex windows. A local Stage gets a background window in the
