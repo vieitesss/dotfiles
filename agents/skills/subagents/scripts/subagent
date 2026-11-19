@@ -362,6 +362,8 @@ print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new ou
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
 
+    deadline=$(python3 -c 'import sys, time
+print(time.time() + float(sys.argv[1]))' "$STARTUP_GRACE")
     started=$SECONDS
     alive=1
     while [ "$((SECONDS - started))" -lt "$STARTUP_GRACE" ]; do
@@ -371,6 +373,15 @@ print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new
         fi
         sleep "$POLL_INTERVAL"
     done
+    if [ "$alive" -eq 1 ]; then
+        # $SECONDS counts whole seconds, so the loop can end a fraction of the
+        # grace early: wait out the rest, then read liveness at the deadline.
+        python3 -c 'import sys, time
+remaining = float(sys.argv[1]) - time.time()
+if remaining > 0:
+    time.sleep(remaining)' "$deadline"
+        still_alive "$block" || alive=0
+    fi
     if [ "$alive" -eq 0 ]; then
         rm -f "$prompt_file"
         tailview=$("$rex_cmd" --autostart=false capture -b "$block" --trim --unwrap 2>/dev/null || true)
@@ -378,7 +389,8 @@ print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new
         die "agent start failed for $name; window $window is left open"
     fi
 
-    printf '{"name":"%s","window":"%s","block":"%s","report":"%s"}\n' \
+    python3 -c 'import json, sys
+print(json.dumps(dict(zip(("name", "window", "block", "report"), sys.argv[1:])), separators=(",", ":")))' \
         "$name" "$window" "$block" "$report"
 }
 

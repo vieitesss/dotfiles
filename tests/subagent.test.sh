@@ -233,6 +233,27 @@ expect_contains '"name":"subagent-refine-'
 
 rm -rf "$fixture_tmp"
 
+# --- launch output stays valid JSON when the path needs escaping -------------
+
+new_fixture
+fixture_repo="$fixture_tmp/a\"b"
+mv "$fixture_tmp/repo" "$fixture_repo"
+run_subagent launch --stage build --item widget <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+checks=$((checks + 1))
+printf '%s' "$output" | python3 -c 'import json, sys
+launch = json.load(sys.stdin)
+expected = {"window": "win-1", "block": "blk-1", "report": sys.argv[1]}
+if not launch["name"].startswith("subagent-build-"):
+    sys.exit(1)
+if any(launch.get(key) != value for key, value in expected.items()):
+    sys.exit(1)' "$fixture_repo/.agents/reports/widget-build.md" ||
+    fail "launch output is not JSON a caller can parse for a path with a quote: $output"
+
+rm -rf "$fixture_tmp"
+
 # --- an agent that dies at startup makes launch fail ------------------------
 
 new_fixture
