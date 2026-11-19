@@ -1,6 +1,6 @@
 ---
 name: manager
-description: Run the session as the Manager for implementation: split the goal into Work Items, delegate every Stage to a fresh Subagent, accept or send back each report, and own the final report.
+description: "Run the session as the Manager for implementation: split the goal into Work Items, delegate every Stage to a fresh Subagent, accept or send back each report, and own the final report."
 disable-model-invocation: true
 ---
 
