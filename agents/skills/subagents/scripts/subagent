@@ -16,8 +16,8 @@
 
 set -eu
 
-STARTUP_GRACE=3 # seconds the Rex child must survive to count as launched
 POLL_INTERVAL=0.25
+STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
 MODEL_EFFORT=high # every model role thinks hard
 
 # The prompt travels through a temp file because Rex rejects over-long
@@ -322,11 +322,8 @@ print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new ou
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
 
-    deadline=$(python3 -c 'import sys, time
-print(time.time() + float(sys.argv[1]))' "$STARTUP_GRACE")
-    started=$SECONDS
     alive=1
-    while [ "$((SECONDS - started))" -lt "$STARTUP_GRACE" ]; do
+    for ((poll = 0; poll < STARTUP_POLLS; poll++)); do
         if ! still_alive "$block"; then
             alive=0
             break
@@ -334,12 +331,6 @@ print(time.time() + float(sys.argv[1]))' "$STARTUP_GRACE")
         sleep "$POLL_INTERVAL"
     done
     if [ "$alive" -eq 1 ]; then
-        # $SECONDS counts whole seconds, so the loop can end a fraction of the
-        # grace early: wait out the rest, then read liveness at the deadline.
-        python3 -c 'import sys, time
-remaining = float(sys.argv[1]) - time.time()
-if remaining > 0:
-    time.sleep(remaining)' "$deadline"
         still_alive "$block" || alive=0
     fi
     if [ "$alive" -eq 0 ]; then
