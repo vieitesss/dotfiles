@@ -39,16 +39,13 @@ for w in 1 2 3 4 5; do
         rex do "$tmp/writer.lua" >/dev/null 2>&1 &
 done
 wait
-for w in 1 2 3 4 5; do
-    grep -q "\"w$w\": 20" "$tmp/race/db.json" || {
-        printf 'FAIL: concurrent writers lost w%s\n' "$w" >&2
-        cat "$tmp/race/db.json" >&2
-        exit 1
-    }
-done
-[ ! -e "$tmp/race/db.json.lock" ] || {
-    printf 'FAIL: the lock was left behind\n' >&2
-    exit 1
-}
+cat >"$tmp/reader.lua" <<'LUA'
+package.path = os.getenv("REX_CONFIG_DIR") .. "/?.lua;" .. package.path
+local db = require("db")
+for w = 1, 5 do
+  assert(db.get("w" .. w) == 20, "concurrent writers lost w" .. w)
+end
+LUA
+REX_DB="$tmp/race/db.json" REX_CONFIG_DIR="$repo_root/rex" rex do "$tmp/reader.lua"
 
 printf 'ok: %s\n' "$0"

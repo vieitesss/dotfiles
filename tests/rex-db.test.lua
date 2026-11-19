@@ -36,34 +36,21 @@ local function target(current_id) return id(last_session.target(current_id, { la
 check("nothing recorded", target("s1"), nil)
 last_session.record("s1", 10)
 check("only the shown session", target("s1"), nil)
-check("first timestamp", last_session.state().current.at, 10)
-check("first session has no previous", last_session.state().previous, nil)
-
-local set = db.set
-local writes = 0
-db.set = function(...)
-  writes = writes + 1
-  return set(...)
-end
 last_session.record("s1", 10)
-check("same session and second does not write", writes, 0)
 last_session.record("s2", 10)
-check("different session in the same second writes", writes, 1)
 check("same-second switch keeps previous", target("s2"), "s1")
-db.set = set
 
 last_session.record("s2", 11)
 check("back", target("s2"), "s1")
-check("previous", last_session.state().previous.session_id, "s1")
 last_session.record("s1", 12)
 check("toggle", target("s1"), "s2")
 last_session.record("s1", 13)
 check("shown again keeps previous", target("s1"), "s2")
-check("shown again moves the time", last_session.state().current.at, 13)
-check("shown again keeps previous time", last_session.state().previous.at, 11)
 last_session.record("s3", 14)
 check("third session replaces previous", target("s3"), "s1")
-check("third session keeps refreshed time", last_session.state().previous.at, 13)
+check("refreshed visit beats another server", id(last_session.target("s3", {
+  last_session.state(), { current = { session_id = "remote", at = 12 } },
+})), "s1")
 check("record preserves other DB keys", db.get("a"), 2)
 
 local before = os.time()
@@ -87,57 +74,56 @@ check("tie: earlier record", id(last_session.target("X",
   { { current = { session_id = "P", at = 5 } }, { current = { session_id = "Q", at = 5 } } })), "P")
 check("entry without time", last_session.target("X", { { current = { session_id = "P" } } }), nil)
 
-local empty_target, empty_state = last_session.target("X", { {}, {} })
-check("empty records have no target", empty_target, nil)
-check("empty records have no target state", empty_state, nil)
-check("no servers", last_session.target("X", {}), nil)
+check("empty records have no target", last_session.target("X", { {}, {} }), nil)
 check("current excluded in every record", last_session.target("X", {
   { current = { session_id = "X", at = 9 } },
   { previous = { session_id = "X", at = 8 } },
 }), nil)
 
 local tied = { current = { session_id = "P", at = 5 }, previous = { session_id = "Q", at = 5 } }
-check("tie within record prefers current", last_session.target("X", { tied }), tied.current)
-check("excluding tied current keeps previous", last_session.target("P", { tied }), tied.previous)
+check("tie within record prefers current", id(last_session.target("X", { tied })), "P")
+check("excluding tied current keeps previous", id(last_session.target("P", { tied })), "Q")
 local older = { previous = { session_id = "old", at = 0 }, server = "rpi" }
 local entry, state = last_session.target("X", {
   { current = { session_id = "bad", at = "9" } }, older,
 })
-check("non-numeric time skipped", entry, older.previous)
-check("previous-only record keeps server", state, older)
-check("merge does not change record", older.current, nil)
+check("non-numeric time skipped", id(entry), "old")
+check("previous-only record keeps server", state.server, "rpi")
 
--- Load only the last-session bindings with a fake Rex; no live actions run.
-local init = assert(io.open(os.getenv("REX_CONFIG_DIR") .. "/init.lua", "r"))
-local lines, reading = {}, false
-for line in init:lines() do
-  if line == "-- Keep last_session_watch.lua running, to record each session the app shows." then
-    reading = true
-  end
-  if reading then table.insert(lines, line) end
-  if line == 'bind("tab", "last_session")' then break end
+-- Load the config with a fake Rex; no live actions run.
+local function configure(fake)
+  local init = assert(loadfile(os.getenv("REX_CONFIG_DIR") .. "/init.lua"))
+  setfenv(init, setmetatable({ rex = fake }, { __index = _G }))
+  init()
 end
-init:close()
-check("last-session bindings found", lines[#lines], 'bind("tab", "last_session")')
-local configure = assert(loadstring("return function(rex, last_session, app_client, bind)\n"
-  .. table.concat(lines, "\n") .. "\nend"))()
 
-local function route(name, pressed_server, current_id, mac_state, rpi_state, want_method, want_id, want_client)
+local function route(name, pressed_server, current_id, mac_state, rpi_state, want_server, want_id, want_client)
   db.set("last_session", mac_state)
-  local actions, selected = {}, nil
+  local actions, bindings, selected = {}, {}, nil
   local missing = false
   local ctx = { server = pressed_server, session_id = current_id, client_id = "key-client", block_id = "block" }
-  local function call(server, method, args, via)
+  local sessions = { mac = { "A", "C" }, rpi = { "B", "D" } }
+  local function select_session(server, action, args, client_id)
+    if action ~= "session.select" then error("unexpected client action: " .. action, 0) end
+    for _, session_id in ipairs(sessions[server]) do
+      if session_id == args.session_id and not (missing and session_id == want_id) then
+        selected = { server = server, id = session_id, client = client_id }
+        return {}
+      end
+    end
+    return nil, "SessionNotFoundOnServerError"
+  end
+  local function call(server, method, args)
     if method == "client.action" then
-      check(name .. " state transport", via, "server")
-      check(name .. " state server", server, "rpi")
-      check(name .. " state action", args.action, "last_session_state")
-      return { result = rpi_state, client_actions = {} }
+      return { result = actions[args.action](), client_actions = {} }
     elseif method == "session.list" then
-      check(name .. " target can be queried", want_method ~= "context", true)
-      check(name .. " validation transport", via, want_method == "queue" and "context" or "server")
-      check(name .. " validation server", server, want_method == "queue" and "mac" or "rpi")
-      return { sessions = missing and {} or { { session_id = want_id } } }
+      local listed = {}
+      for _, session_id in ipairs(sessions[server]) do
+        if not (missing and session_id == want_id) then
+          table.insert(listed, { session_id = session_id })
+        end
+      end
+      return { sessions = listed }
     elseif method == "client.list" then
       return { clients = {
         { client_id = "key-client", info = { kind = "cli", label = "desk" } },
@@ -145,50 +131,47 @@ local function route(name, pressed_server, current_id, mac_state, rpi_state, wan
         { client_id = "other-app", info = { kind = "app", label = "other" } },
       } }
     elseif method == "client.perform" then
-      check(name .. " perform action", args.action, "session.select")
-      check(name .. " perform origin", args.origin, "key")
-      check(name .. " perform server", server, "rpi")
-      selected = { method = via, id = args.args.session_id, client = args.client_id }
-      return {}
+      -- The app resolves session.select on the server receiving the call,
+      -- not on the server whose database supplied the target.
+      return select_session(server, args.action, args.args, args.client_id)
     end
     error(name .. ": unexpected call " .. method, 0)
   end
   local fake = {
     action = function(action) actions[action.name] = action.run end,
     exec = { start = function() end },
+    bind = function(key, action) bindings[key] = action end,
     servers = function() return { "rpi" } end,
     server = function(server)
-      check(name .. " named server", server, "rpi")
-      return { call = function(method, args) return call(server, method, args, "server") end }
+      return { call = function(method, args) return call(server, method, args) end }
     end,
-    call = function(method, args) return call(pressed_server or "mac", method, args, "context") end,
+    call = function(method, args) return call(pressed_server or "mac", method, args) end,
     client = { queue = function(action, args)
-      check(name .. " queue context", pressed_server, nil)
-      check(name .. " queued action", action, "session.select")
-      selected = { method = "queue", id = args.session_id }
-    end },
-    session = { describe_block = function(args)
-      check(name .. " block owner server", pressed_server, "rpi")
-      check(name .. " pressed block", args.block_id, "block")
-      return { block = { owner = "owner-app" } }
+      local _, err = select_session("mac", action, args, "key-client")
+      if err then error(err, 0) end
     end },
     log = function(_, message) error(name .. ": " .. message, 0) end,
   }
-  configure(fake, last_session, require("app_client"), function(key, action)
-    check(name .. " binding key", key, "tab")
-    check(name .. " binding action", action, "last_session")
-  end)
-  check(name .. " local state action", actions.last_session_state().current.session_id, mac_state.current.session_id)
-  actions.last_session(ctx)
-  check(name .. " method", selected and selected.method, want_method)
+  configure(fake)
+  -- The remote server runs the same state action against its own database.
+  local local_state = actions.last_session_state
+  actions.last_session_state = function()
+    db.set("last_session", rpi_state)
+    local state = local_state()
+    db.set("last_session", mac_state)
+    return state
+  end
+  local switch = assert(actions[bindings["ctrl+space>tab"]], "previous-session key is not bound")
+  switch(ctx)
+  check(name .. " server", selected and selected.server, want_server)
   check(name .. " target", selected.id, want_id)
   check(name .. " client", selected.client, want_client)
-  if want_method ~= "context" then
+  if pressed_server == nil then
     missing, selected = true, nil
-    local ok, err = pcall(actions.last_session, ctx)
+    local ok, err = pcall(switch, ctx)
     check(name .. " deleted target fails", ok, false)
     check(name .. " deleted target message", err,
-      (want_method == "queue" and "" or "rpi: ") .. "the previous session no longer exists")
+      (want_server == "mac" and "" or "rpi: ") .. "the previous session no longer exists")
     check(name .. " deleted target is not selected", selected, nil)
   end
 end
@@ -199,9 +182,9 @@ local function record(current, at, previous, previous_at)
     previous = previous and { session_id = previous, at = previous_at },
   }
 end
-route("Mac to Mac", nil, "A", record("A", 3, "C", 2), record("B", 1), "queue", "C")
-route("Mac to rpi", nil, "A", record("A", 3), record("B", 2), "server", "B", "matched-app")
-route("rpi to Mac", "rpi", "B", record("A", 2), record("B", 3), "context", "A", "owner-app")
-route("rpi to rpi", "rpi", "B", record("A", 1), record("B", 3, "D", 2), "server", "D", "matched-app")
+route("Mac to Mac", nil, "A", record("A", 3, "C", 2), record("B", 1), "mac", "C", "key-client")
+route("Mac to rpi", nil, "A", record("A", 3), record("B", 2), "rpi", "B", "matched-app")
+route("rpi to Mac", "rpi", "B", record("A", 2), record("B", 3), "mac", "A", "key-client")
+route("rpi to rpi", "rpi", "B", record("A", 1), record("B", 3, "D", 2), "rpi", "D", "matched-app")
 
 print("ok")

@@ -35,6 +35,6 @@ check("pi unknown session", cmd("pi --model m"), "pi --model m")
 
 -- Anything else runs again, quoted for the shell.
 check("leaf", cmd("leaf diff"), "leaf diff")
-check("quoted", snapshot.join({ "echo", "it's", "a b" }), [[echo 'it'\''s' 'a b']])
+check("quoted", snapshot.command({ "echo", "it's", "a b" }), [[echo 'it'\''s' 'a b']])
 
 print("ok")
