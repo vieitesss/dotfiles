@@ -290,7 +290,7 @@ $skills"
     fi
     prompt="$prompt
 Write your full report to $report; the completion report is one line pointing at it. This path wins over any path in the brief: use it, note the difference, keep working.
-Report through recado to $manager. Its send and ask commands below are the complete route; do not use the host extension to report. Ask if the reporting command fails.
+Report through recado to $manager. Its send and ask commands below are the complete route. Ask if the reporting command fails.
 Run these exact commands to report and to ask (the address and tag are already filled in; never retype them):
 $send_cmd \"[$(dq "$tag")] TASK COMPLETE: <one line>\"
 recado ask $manager \"[$(dq "$tag")] QUESTION: <question>\"
