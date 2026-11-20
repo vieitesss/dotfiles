@@ -26,7 +26,8 @@ subagent launch --stage STAGE [--axis AXIS] --item ITEM \
 - The brief goes on stdin. The launcher adds the tag, report path and recado commands.
 
 Launch prints JSON `{name, window, block, report}`. Keep `name` and `window`.
-`report` is `.agents/reports/<item>-<stage>[-<axis>].md` in the main checkout.
+`report` is `.agents/reports/<item>-<stage>[-<axis>].md` in the main checkout,
+suffixed `-r2`, `-r3`, ... automatically if a prior report already exists.
 
 Launch exits non-zero before anything runs when the Stage's skill is not
 installed for `--cwd`. It also exits non-zero when the agent dies in its first

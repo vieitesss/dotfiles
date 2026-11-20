@@ -104,7 +104,7 @@ model_for() {
     case $1 in
         builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
         writer) printf '%s\n' 'github-copilot/claude-sonnet-5.5' ;;
-        critic) printf '%s\n' 'github-copilot/gpt-6.1-sol' ;;
+        critic) printf '%s\n' 'github-copilot/gpt-6.2-sol' ;;
     esac
 }
 
@@ -272,6 +272,13 @@ cmd_launch() {
     report_name=$item-$stage
     [ -z "$axis" ] || report_name=$report_name-$axis
     report=$report_dir/$report_name.md
+    if [ -e "$report" ]; then
+        round=2
+        while [ -e "$report_dir/$report_name-r$round.md" ]; do
+            round=$((round + 1))
+        done
+        report=$report_dir/$report_name-r$round.md
+    fi
     mkdir -p "$report_dir"
 
     send_cmd="recado send $manager --kind complete"
@@ -289,7 +296,7 @@ Read and follow these skills:
 $skills"
     fi
     prompt="$prompt
-Write your full report to $report; the completion report is one line pointing at it. This path wins over any path in the brief: use it, note the difference, keep working.
+Write your full report to $report; the completion report is one line pointing at it.
 Report through recado to $manager. Its send and ask commands below are the complete route. Ask if the reporting command fails.
 Run these exact commands to report and to ask (the address and tag are already filled in; never retype them):
 $send_cmd \"[$(dq "$tag")] TASK COMPLETE: <one line>\"
