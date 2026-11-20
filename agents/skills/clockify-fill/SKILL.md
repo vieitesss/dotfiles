@@ -10,8 +10,9 @@ Gather GitHub activity, read work-hour messages from Google Chat with `gog`, bui
 
 ## Configuration
 
-- **GitHub user**: `vieitesss`.
-- **Repos to search**: all repos under the `~/work` path in this machine. First level are organization names, and second level are repositories names (`~/work/<organization>/<repository>`).
+- **GitHub account**: the active `gh` account. Get its login with `gh api user --jq .login`.
+- **GitHub scope**: all repositories visible to that account, except `vieitesss/*`. Local clones do not limit the search.
+- **Clockify project**: `Firestarter: a CI/CD service`, unless the user names another.
 - **Workweek**: Monday through Friday.
 - **Timezone**: `Europe/Madrid`.
 - **Chat account**: `daniel.vieites@prefapp.es`.
@@ -27,42 +28,22 @@ Run `clockify-cli report last-day` to find the last day with entries.
 - **Fill range**: the day after that last entry through today (or through the user-specified end date).
 - **Chat range**: that last filled day (inclusive, 00:00 `Europe/Madrid`) through now.
 
-If the user provides explicit dates, those dates are both the fill range and the Chat range.
+If the user provides explicit dates, those dates are both the fill range and the Chat range. Apply any excluded day to the schedule, activity report, entries and totals.
 
 Done when both ranges are concrete `YYYY-MM-DD` bounds.
 
 ### Step 2: Gather activity
 
-Run all of these in parallel for the determined date range:
+Gather all sources for the full fill range, even when one already covers every day. Run contribution, event and search queries in parallel; use their results to find PR and ticket IDs.
 
-#### 2a. GitHub activity
+1. **Contributions:** query GraphQL `user.contributionsCollection` for commits by repository, PRs, issues and reviews.
+2. **Events:** paginate `gh api "users/$login/events" --paginate` and collect pushes, PRs, reviews and ticket actions. Fetch commit details for relevant pushed branch heads not covered by PRs.
+3. **Search:** use `gh search commits --author="$login"` with both author-date and committer-date queries. Search PRs and issues with `--involves="$login" --updated="$start..$end"`. Split date ranges when results hit a limit. Use search results to discover work items, not to attribute their `updatedAt` to the user.
+4. **Details:** paginate `repos/{owner}/{repo}/pulls/{number}/commits` for relevant PRs and `repos/{owner}/{repo}/issues/{number}/timeline` for relevant issues and PRs. Keep commits and actions attributed to the configured account.
 
-First derive the owners to search from the org directories under `~/work`, then build the `--owner` flags:
+Exclude the `vieitesss` owner in every source, including detail fetches. Convert timestamps to `Europe/Madrid`, deduplicate by commit SHA or event identity, and summarize by day and work item. Flag source limits or permission gaps rather than treating missing data as inactivity.
 
-```bash
-owners=$(ls -d ~/work/*/ | xargs -n1 basename | sed 's/^/--owner=/' | tr '\n' ' ')
-```
-
-Search commits, PRs, and issues across those owners:
-
-```bash
-# Commits by user in date range
-gh search commits --author=vieitesss --committer-date=YYYY-MM-DD..YYYY-MM-DD $owners --json repository,sha,commit --limit 100
-
-# PRs authored/reviewed
-gh search prs --author=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD $owners --json title,repository,url,createdAt --limit 100
-
-# Issues assigned or mentioned
-gh search issues --assignee=vieitesss --created=YYYY-MM-DD..YYYY-MM-DD $owners --json title,repository,url,createdAt --limit 100
-```
-
-#### 2b. Clockify projects
-
-Fetch the available project list to map work to correct projects:
-
-```bash
-clockify-cli project list
-```
+Done when all four sources have been checked for the range and each day has evidence or a flagged gap.
 
 ### Step 2.5: Work hours from Chat
 
@@ -118,7 +99,7 @@ For each workday in the range:
 
 1. Cross-reference commits, PRs, and issues to identify distinct work items
 2. Group related activity (e.g. multiple commits to the same issue/PR = one entry)
-3. Map each work item to a Clockify project based on the repo/client relationship
+3. Use the default Clockify project unless the user specifies another
 4. Fit entries into the **actual work sessions** from Step 2.5 (or default 8h/day for a day with no Chat events)
 5. Split time proportionally across work items within the real time blocks
 6. Build a description for each entry summarizing the work (repo, issue/PR number, brief description)
@@ -128,48 +109,29 @@ For each workday in the range:
 - Split time proportionally across identified work items
 - Entries must not overlap with lunch breaks — create separate entries for morning and afternoon sessions when needed
 - Minimum entry size: 30 minutes
-- Round to nearest 30-minute block
+- Round internal splits to 30-minute blocks where possible. Keep confirmed session boundaries exact.
 
 ### Step 4: Preview entries
 
-Present a markdown table to the user with ALL proposed entries:
+Write one temporary batch with one row per entry: `START|END|PROJECT|DESCRIPTION`. Use `YYYY-MM-DD HH:MM` in `Europe/Madrid`. Leave `PROJECT` empty to use the default. Check that the rows exactly cover the confirmed work sessions without crossing breaks.
 
-```
-| Date       | Project              | Description                              | Start | End   | Duration |
-|------------|----------------------|------------------------------------------|-------|-------|----------|
-| 2026-05-05 | usc-devops           | gitops-k8s#1556: Fix helm chart defaults | 09:00 | 12:00 | 3:00     |
-| 2026-05-05 | prefapp-dev          | tfm#1253: Add validation module          | 12:00 | 14:00 | 2:00     |
-| ...        | ...                  | ...                                      | ...   | ...   | ...      |
+Run the script next to this `SKILL.md` (requires `python3`):
+
+```bash
+"$HOME/.agents/skills/clockify-fill/commit-entries.py" preview /path/to/entries-file
 ```
 
-After the table, show:
-- Total hours per day
-- Total hours for the full range
-- Any days with no activity found (flag for user attention)
-
-**This full entry table is the table that gets committed.** Never substitute it with an hours-per-day summary — the per-day/per-range totals are an addition to the table, not a replacement for it. Whenever entries change (user-requested edits, retries after failures) or the table is shown again for any reason, re-render the complete table with every entry, not a summary.
-
-**CRITICAL: Do NOT proceed to commit entries until the user explicitly confirms the preview is correct.** Ask the user to review and confirm. The user may request changes (adjust times, change projects, add/remove entries).
+Show the complete rendered table and its totals, plus any days without activity. Keep the preview token with the batch. If entries change, render the complete table again. **Commit only after the user explicitly confirms that preview.**
 
 ### Step 5: Commit entries
 
-Only after user confirmation, write the confirmed table to a temp file, one line per entry, pipe-separated as `START|END|PROJECT|DESCRIPTION` (`START`/`END` as `YYYY-MM-DD HH:MM`), then commit it with the skill's script:
+After confirmation, commit the same file with its preview token:
 
 ```bash
-agents/skills/mine/clockify-fill/commit-entries.sh /path/to/entries-file
+"$HOME/.agents/skills/clockify-fill/commit-entries.py" commit /path/to/entries-file PREVIEW_TOKEN
 ```
 
-The script calls `clockify-cli manual --allow-name-for-id -i=0 -b` for each line, prints `OK`/`FAILED` per entry, and ends with a `SUMMARY: N succeeded, M failed` line. If any entry fails, its error is printed; report it and continue — the script already processes the rest sequentially. Never hand-roll this loop inline; always invoke the script.
-
-### Step 6: Verify
-
-After committing, run a report to confirm:
-
-```bash
-clockify-cli report <start-date> <end-date> --with-totals
-```
-
-Show the final report to the user.
+The script rejects a changed batch or destination, writes by project and workspace ID, and verifies each row against a Clockify report. Report the verified count and totals. If a batch partially fails, the same command skips rows already recorded. A change to the batch requires a new preview and confirmation.
 
 ## Error Handling
 
@@ -182,5 +144,4 @@ Show the final report to the user.
 - Always use `--allow-name-for-id` to make project matching by name possible
 - Descriptions should be concise: `repo#number: brief summary`
 - If the user provides additional context about what they worked on, incorporate it
-- Commit entries only via `commit-entries.sh` (see Step 5), resolved relative to this SKILL.md's directory
-- Always show the full entries table (never an hours-only summary) whenever entries are presented or re-presented
+- Use `commit-entries.py` for preview and commit; never construct a separate commit table.

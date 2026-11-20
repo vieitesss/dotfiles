@@ -15,6 +15,7 @@ check:
     ./tests/subagent.test.sh
     ./tests/doctor.test.sh
     ./tests/rex-db.test.sh
+    bash ./tests/clockify-fill.test.sh
     cd agents/skills/review-github-pr-comments/scripts && if [ -d node_modules ]; then npm test; else npm ci && npm test; fi
 
 doctor:
