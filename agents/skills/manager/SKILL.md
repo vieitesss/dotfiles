@@ -34,26 +34,31 @@ Each Subagent runs one Stage of one Work Item in its own Rex window. The
 Each Work Item passes through these Stages in order. Run a Stage when its
 trigger holds; skip it otherwise.
 
-| Stage    | Run when                                                                 |
-| -------- | ------------------------------------------------------------------------ |
-| Research | the work hinges on facts outside the repo: APIs, docs, specs             |
-| Build    | the Work Item changes code                                               |
-| Write    | the Work Item is prose: docs, skills, agent instructions                 |
-| Refine   | Build reshaped an existing module, or Review returned Standards or Debt findings. Skip for new code, hotfixes, security backports, and small fixes |
-| Review   | after every round that wrote code (Build or Refine); see Review          |
+| Stage    | Run when                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------ |
+| Research | the work hinges on facts outside the repo: APIs, docs, specs                               |
+| Build    | the Work Item changes code, or fixes findings returned by Review                           |
+| Write    | the Work Item is prose: docs, skills, agent instructions                                   |
+| Refine   | Build reshaped an existing module and its tests pass, or the user asks for a cleanup pass  |
+| Review   | after Build or Refine; see Review                                                          |
 
 `subagent stages` prints each Stage's skills and model. Name the Stage in a
 brief, never its skills.
 
-Refine runs on the code the Work Item touched, after Build's tests pass. Rot
-beyond that code becomes a new Work Item.
+Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
+diff (`diff base != HEAD`), never a clean branch and never a fix round for
+Review findings. Skip it for new code, hotfixes, security backports, and small
+fixes. Rot beyond the touched code becomes a new Work Item.
 
 ## Ledger
 
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
 outlives `/clear`, compaction, a handoff, and resuming on another device. The
-`git/ignore` manifest keeps it and `.agents/reports/` out of git. Hand-edit it
-from the template in `LEDGER_EXAMPLE.md`.
+`git/ignore` manifest keeps it and `.agents/reports/` out of git. Edit it with
+your file-edit tools (`edit` / `write`, not shell scripts) from the template in
+`LEDGER_EXAMPLE.md`. When starting a new goal, archive or clear completed rows
+and stale decisions from earlier goals so the Ledger holds only the active
+goal.
 
 - **Subagent**: the name and window that `subagent launch` printed, while the
   Subagent is open. Write `-` once you close it.
@@ -81,7 +86,7 @@ series.
 ## Briefs
 
 A Subagent starts cold: its brief is everything it knows. Write each brief to
-a scratch file, then launch:
+a scratch file with `write` (not a shell heredoc), then launch:
 
 ```bash
 subagent launch --stage S [--axis A] --item I --cwd WORKTREE < BRIEF_FILE
@@ -116,8 +121,8 @@ Merge a branch into main yourself once its Work Item's Review loop is clean.
 
 ## Review
 
-Run Review after every round that wrote code, Build or Refine. Never after
-Write. Each round gets fresh Subagents, one per axis:
+Run Review after Build, and after Refine when Refine ran. Never after Write.
+Each round gets fresh Subagents, one per axis:
 
 1. Take the fixed point, spec source, and standards sources from steps 1 to 3
    of the `review` skill. Do this yourself.
@@ -130,14 +135,21 @@ Write. Each round gets fresh Subagents, one per axis:
    standards sources.
 3. Present the reports side by side.
 
-Loop until no findings remain. Group findings by file or theme, at most five
-per group. Each group is its own Work Item, must-fix groups first: Spec groups
-go to Build, Standards and Debt groups to Refine. Each fix round gets a fresh
-Subagent whose brief points at the previous report, the diff base, and the
-worktree; its fix gets a fresh Review round.
+Group accepted findings by file or theme, at most five per group. Every fix
+group goes to **Build** (Spec, Standards, and Debt alike), must-fix groups
+first, in a fresh Subagent whose brief points at the review report, the diff
+base, and the worktree. Pre-existing bugs that already behaved the same on
+`main` (not regressions of this diff) become a separate follow-up Work Item
+instead of blocking the merge.
 
-Ask the user, and mark the Work Item `blocked on user`, when a finding needs
-their decision, comes back after its fix, or disputes the spec itself.
+Bound the Review loop to at most **one** verification Review after fixes,
+scoped strictly to whether the fix diff resolved the original findings without
+regressing them. If that verification Review still returns must-fix findings,
+stop looping, mark the Work Item `blocked on user`, and ask the user how to
+proceed.
+
+Ask the user, and mark the Work Item `blocked on user`, whenever a finding
+needs their decision, comes back after its fix, or disputes the spec itself.
 
 ## Accepting returned work
 

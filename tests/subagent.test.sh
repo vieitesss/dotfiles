@@ -266,7 +266,7 @@ expect_rex_arg session:test
 expect_rex_arg --focus=false
 expect_rex_arg --keep-open
 expect_rex_arg --shell=none
-expect_pi_option --model github-copilot/gpt-6.1-sol
+expect_pi_option --model github-copilot/gpt-6.2-sol
 expect_pi_option --thinking high
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
@@ -292,6 +292,27 @@ if not launch["name"].startswith("subagent-build-"):
 if any(launch.get(key) != value for key, value in expected.items()):
     sys.exit(1)' "$fixture_repo/.agents/reports/widget-build.md" ||
     fail "launch output is not JSON a caller can parse for a path with a quote: $output"
+
+rm -rf "$fixture_tmp"
+
+# --- repeated launches on the same item do not overwrite prior reports ------
+
+new_fixture
+mkdir -p "$fixture_repo/.agents/reports"
+: > "$fixture_repo/.agents/reports/widget-build.md"
+run_subagent launch --stage build --item widget <<'BRIEF'
+Second round.
+BRIEF
+expect_status 0
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build-r2.md\""
+expect_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
+
+: > "$fixture_repo/.agents/reports/widget-build-r2.md"
+run_subagent launch --stage build --item widget <<'BRIEF'
+Third round.
+BRIEF
+expect_status 0
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build-r3.md\""
 
 rm -rf "$fixture_tmp"
 
