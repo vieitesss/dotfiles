@@ -151,8 +151,8 @@ ctrl-alt-enter = 'exec-and-forget sketchybar --trigger change_keyboard_layout'
 # See: https://nikitabobko.github.io/AeroSpace/commands#mode
 ctrl-alt-shift-u = 'mode service'
 
-# fullscreen
-alt-shift-f = 'layout floating tiling'
+# Maximize within the workspace, keeping the outer gaps.
+alt-shift-f = 'fullscreen'
 
 # 'service' binding mode declaration.
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
