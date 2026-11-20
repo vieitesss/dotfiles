@@ -38,12 +38,11 @@ flowchart TD
     review --> findings{"Findings?"}
     findings -- none --> prove(["Manager may run tests and lint"])
     prove --> done
-    findings -- "needs the user" --> ask(["Ask the user"])
+    findings -- "needs the user /<br/>still failing after verify" --> ask(["Ask the user"])
     ask --> findings
-    findings -- Spec --> fixbuild{{"Build: fresh fix round"}}
-    findings -- "Standards / Debt" --> fixrefine{{"Refine: fresh fix round"}}
-    fixbuild --> review
-    fixrefine --> review
+    findings -- "Spec / Standards / Debt" --> fixbuild{{"Build: fresh fix round"}}
+    fixbuild --> verify{{"Review: at most one<br/>verification round"}}
+    verify --> findings
 
     done(["Mark the Work Item done in the Ledger"]) --> more{"More Work Items?"}
     more -- yes --> next
@@ -54,9 +53,17 @@ Defaults the flow leaves implicit:
 
 - The Manager is invoked only when the user is ready to implement. Shaping,
   design, diagnosis, planning, and shipping happen outside it.
-- Review follows every round that wrote code, Build or Refine, and never
-  follows Write. Spec always runs. Standards and Debt run when the change spans
-  several modules or reshapes one.
+- Review follows Build (and Refine when Refine ran), never Write. Spec always
+  runs. Standards and Debt run when the change spans several modules or
+  reshapes one.
+- Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
+  diff, never a fix round for Review findings. All Review findings (Spec,
+  Standards, and Debt) go to a fresh Build Subagent.
+- Verification after a fix round runs at most one Review scoped to the original
+  findings; if must-fix findings remain after that verification round, the
+  Manager stops looping and asks the user.
+- Pre-existing bugs that already behaved the same on `main` become separate
+  follow-up Work Items instead of blocking the merge.
 - Every round uses fresh Subagents. A follow-up before the Manager accepts a
   report goes to the same Subagent.
 - Work Items on disjoint code run in parallel, each in its own worktree.
@@ -112,7 +119,7 @@ sequenceDiagram
     V->>L: write findings
     V-->>M: TASK COMPLETE
     M->>V: subagent close WINDOW
-    Note over M: a fix round launches fresh Build or Refine, then Review again
+    Note over M: review findings go to a fresh Build, then at most one verification Review
     Note over M: Manager may run tests and lint, then marks the Work Item done
     M->>U: report: changes, tests, open decisions
 ```
