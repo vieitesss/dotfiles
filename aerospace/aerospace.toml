@@ -154,6 +154,9 @@ ctrl-alt-shift-u = 'mode service'
 # Maximize within the workspace, keeping the outer gaps.
 alt-shift-f = 'fullscreen'
 
+# Toggle between floating and tiling.
+alt-shift-t = 'layout floating tiling'
+
 # 'service' binding mode declaration.
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
 [mode.service.binding]
