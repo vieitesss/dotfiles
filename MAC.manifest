@@ -1,9 +1,12 @@
 # agents/skills/workflow|~/.agents/skills/workflow
 agents/skills/*|~/.agents/skills/*
 agents/skills/*|~/.claude/skills/*
+agents/skills/*|~/.gemini/config/skills/*
 
 claude/statusline.sh|~/.claude/statusline.sh
 claude/hooks/caveman-session-start|~/.claude/hooks/caveman-session-start
+
+antigravity/statusline.sh|~/.gemini/antigravity-cli/statusline.sh
 
 zsh/.zshrc|~/.zshrc
 zsh/.zshenv|~/.zshenv

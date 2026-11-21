@@ -11,7 +11,7 @@ repo_root=$(CDPATH='' cd "$(dirname "$0")/.." && pwd -P)
 # Whitespace-safe lists: a path may contain spaces. Keep them non-empty; bash
 # 3.2 under set -u aborts when expanding an empty array.
 manifest_names="MAC.manifest LINUX.manifest"
-skills_dirs=("$HOME/.agents/skills" "$HOME/.claude/skills")
+skills_dirs=("$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.gemini/config/skills")
 
 problems=0
 

@@ -25,9 +25,12 @@ wezterm|~/.config/wezterm
 
 agents/skills/*|~/.agents/skills/*
 agents/skills/*|~/.claude/skills/*
+agents/skills/*|~/.gemini/config/skills/*
 
 claude/statusline.sh|~/.claude/statusline.sh
 claude/hooks/caveman-session-start|~/.claude/hooks/caveman-session-start
+
+antigravity/statusline.sh|~/.gemini/antigravity-cli/statusline.sh
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/extensions|~/.pi/agent/extensions
