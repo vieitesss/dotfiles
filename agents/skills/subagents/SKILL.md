@@ -6,8 +6,24 @@ description: Launch a Subagent for one Stage of a Work Item in its own session, 
 Launch one Subagent per Stage in its own Rex window. Message it over recado
 until you accept its report, then close its window.
 
+Always use `subagent` and `recado` even if your harness has its own built-in
+subagent, swarm, or messaging tools (such as `agy`'s `invoke_subagent`, `swarm`,
+or `send_message`).
+
 `subagent` is a link in `~/.local/bin`. Without it, run
 `bash ~/.agents/skills/subagents/scripts/subagent` instead.
+
+## Harnesses
+
+`recado` works across `pi`, Claude Code, OpenCode, and `agy` once
+`recado skill setup` has installed each harness's hooks or shim (for `agy`,
+`~/.gemini/config/hooks.json` and `~/.gemini/config/skills/recado`).
+
+- In `subagent`, models prefixed with `agy/<model>` launch `agy --mode auto` in
+  the Rex window; all other `<provider>/<model>` entries launch `pi`.
+- `subagent` and `recado` talk to Rex and local agent endpoints outside the
+  workspace. On a sandboxed harness such as `agy`, run `subagent` and `recado`
+  commands outside the sandbox when the sandbox blocks them.
 
 ## Launch
 

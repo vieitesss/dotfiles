@@ -25,10 +25,10 @@ MODEL_EFFORT=high # every model role thinks hard
 # prompt as its last argument; the trailing -- keeps a prompt that starts with
 # a dash from being read as an option.
 # shellcheck disable=SC2016 # the child shell expands these, not this one.
-CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; export RECADO_ADDR="$0"; shift; exec "$@" "$prompt"'
+CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN; export RECADO_ADDR="$0"; shift; exec "$@" "$prompt"'
 
 # What every Subagent is told, whichever Stage it runs.
-SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom, do not poll, and do not read other sessions."
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions."
 
 die() {
     printf '[subagent] %s\n' "$*" >&2
@@ -172,7 +172,7 @@ main_checkout() { # main_checkout DIR: checkout sharing DIR's git dir, '' outsid
 
 skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
     for root in "$2/.agents/skills" "$3/.agents/skills" \
-        "$HOME/.agents/skills" "$HOME/.pi/agent/skills"; do
+        "$HOME/.agents/skills" "$HOME/.pi/agent/skills" "$HOME/.gemini/config/skills"; do
         if [ -f "$root/$1/SKILL.md" ]; then
             printf '%s\n' "$root/$1/SKILL.md"
             return 0
@@ -310,13 +310,22 @@ $brief"
     printf '%s\n' "$prompt" >"$prompt_file"
     trap 'rm -f "$prompt_file" "$prompt_file.err"' EXIT
 
+    case $model in
+        agy/*)
+            agent_cmd=(agy --model "${model#agy/}" --effort "$effort" --mode auto -i)
+            ;;
+        *)
+            agent_cmd=(pi --append-system-prompt "$role" --model "$model" --thinking "$effort" --)
+            ;;
+    esac
+
     printf '[subagent] %s model %s effort %s\n' "$name" "$model" "$effort" >&2
     created=$(
         "$rex_cmd" --autostart=false window new \
             -s "$REX_SESSION" "$name" -c "$cwd" \
             --focus=false --keep-open --shell=none --json \
             -- "${SHELL:-/bin/sh}" -lc "$CHILD_SCRIPT" "$name" "$prompt_file" \
-            pi --append-system-prompt "$role" --model "$model" --thinking "$effort" -- \
+            "${agent_cmd[@]}" \
             2>"$prompt_file.err"
     ) || die "rex window new failed: $(cat "$prompt_file.err")
 check \`$rex_cmd window ls -s $REX_SESSION\` for a window named $name and close it before relaunching"

@@ -14,9 +14,13 @@ one-line fix. You may read files, run tests and lint, and merge finished
 branches. You never edit repo files; the Ledger and brief files are session
 files outside git.
 
-Each Subagent runs one Stage of one Work Item in its own Rex window. The
-`subagents` skill documents the CLI (`subagent stages`, `subagent launch`,
-`subagent close`) and the messages. This skill does not repeat it.
+Each Subagent runs one Stage of one Work Item in its own Rex window, whether
+the Manager or Subagent runs on `pi`, Claude Code, OpenCode, or `agy`. Always
+delegate through `subagent launch` and communicate through `recado` — never
+through a harness's built-in subagent, swarm, or messaging tools (such as
+`agy`'s `invoke_subagent`, `swarm`, or `send_message`). The `subagents` skill
+documents the CLI (`subagent stages`, `subagent launch`, `subagent close`) and
+the messages. This skill does not repeat it.
 
 ## Start
 
@@ -55,10 +59,10 @@ fixes. Rot beyond the touched code becomes a new Work Item.
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
 outlives `/clear`, compaction, a handoff, and resuming on another device. The
 `git/ignore` manifest keeps it and `.agents/reports/` out of git. Edit it with
-your file-edit tools (`edit` / `write`, not shell scripts) from the template in
-`LEDGER_EXAMPLE.md`. When starting a new goal, archive or clear completed rows
-and stale decisions from earlier goals so the Ledger holds only the active
-goal.
+your file-edit tools (`edit` / `write` / `edit_file` / `write_file`, not shell
+scripts) from the template in `LEDGER_EXAMPLE.md`. When starting a new goal,
+archive or clear completed rows and stale decisions from earlier goals so the
+Ledger holds only the active goal.
 
 - **Subagent**: the name and window that `subagent launch` printed, while the
   Subagent is open. Write `-` once you close it.
@@ -86,7 +90,8 @@ series.
 ## Briefs
 
 A Subagent starts cold: its brief is everything it knows. Write each brief to
-a scratch file with `write` (not a shell heredoc), then launch:
+a scratch file with your file-write tool (`write` / `write_file`, not a shell
+heredoc), then launch:
 
 ```bash
 subagent launch --stage S [--axis A] --item I --cwd WORKTREE < BRIEF_FILE

@@ -39,3 +39,10 @@ keeps its routing rule; its update note says how launching now works.
 - Offline tests use stub `rex` and `recado` on `PATH`. They cover the prompt,
   the missing-skill check, the model and effort passed to `pi`, and a Subagent
   that dies at startup.
+
+> Update (2026-11-21): a model role whose value starts with `agy/` launches
+> `agy --model <model> --effort <effort> --mode auto -i <prompt>` in the Rex
+> window; every other `<provider>/<model>` entry still launches `pi`. `recado`
+> supports `agy` natively via `~/.gemini/config/hooks.json` and
+> `agentapi send-message`, so Manager and Subagents communicate over `recado`
+> regardless of harness.

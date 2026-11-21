@@ -8,6 +8,7 @@ disable-model-invocation: true
 
 You receive a message like: "use <model> [instead of <model>]"
 - `<model>` ~= `<provider>/<actual_model>`. If `model` is not provided like `provider/actual_model`, ask the user to specify both elements.
+- Use `agy/<model>` for models that should launch in the `agy` harness (`agy --mode auto`); any other `<provider>/<actual_model>` launches in `pi`.
 - Ask the user for the thinking effort too, even if the message gives none.
 - the text in `[]` is optional by the user.
 
