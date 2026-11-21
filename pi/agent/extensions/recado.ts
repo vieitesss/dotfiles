@@ -1,4 +1,4 @@
-// recado-shim: "4"
+// recado-shim: "5"
 /**
  * recado's Pi extension: turns recado messages into user turns and reports the
  * session and turn lifecycle to `recado hook pi ...`.
@@ -34,9 +34,12 @@ function ownedDir(dir: string): void {
 }
 
 // launcherAddr is RECADO_ADDR as the launcher set it, before this extension
-// writes a session id. Shutdown restores it before /reload reevaluates the
-// extension, so a derived id never becomes a launcher override.
-const launcherAddr = process.env.RECADO_ADDR;
+// writes a session id. A RECADO_ADDR exported by another harness belongs to
+// the parent that spawned Pi, not to this session. Shutdown restores it before
+// /reload reevaluates the extension, so a derived id never becomes a launcher
+// override.
+const launcherAddr =
+	!process.env.RECADO_HARNESS || process.env.RECADO_HARNESS === "pi" ? process.env.RECADO_ADDR : undefined;
 
 // agentID is the launcher's RECADO_ADDR when it set one, else the session id
 // lowercased into recado's id charset.
