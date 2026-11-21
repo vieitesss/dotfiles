@@ -25,10 +25,10 @@ MODEL_EFFORT=high # every model role thinks hard
 # prompt as its last argument; the trailing -- keeps a prompt that starts with
 # a dash from being read as an option.
 # shellcheck disable=SC2016 # the child shell expands these, not this one.
-CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN; export RECADO_ADDR="$0"; shift; exec "$@" "$prompt"'
+CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
 
 # What every Subagent is told, whichever Stage it runs.
-SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions."
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, slice or filter outputs in JS so each call returns under ~20 KB without truncation."
 
 die() {
     printf '[subagent] %s\n' "$*" >&2
@@ -49,7 +49,8 @@ Usage:
       {"name", "window", "block", "report"} as JSON. The brief comes on stdin.
       --cwd defaults to the current directory.
       --axis is required by --stage review, and rejected by every other Stage.
-      --model takes a role: builder, writer, or critic.
+      --model takes a role (builder, writer, critic) or a provider/model id
+      such as agy/gemini-4-neon-high.
 
   subagent close WINDOW
       Close the Subagent's Rex window.
@@ -71,7 +72,7 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
         build)
             skill_names='tdd coding'
             model_role=builder
-            role="You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report."
+            role="You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report. The brief is your approved plan; commit your work on the branch. Use \`recado ask\` when the brief leaves a product choice open instead of guessing."
             ;;
         write)
             skill_names=writing-for-agents
@@ -82,6 +83,11 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
             skill_names=zero-tech-debt
             model_role=critic
             role="You run the Refine stage: reshape the code this Work Item touched toward its intended design, keeping behaviour and tests green. Your scope is the diff since the brief's base, and the code it touches."
+            ;;
+        retro)
+            skill_names='retro writing-for-agents'
+            model_role=writer
+            role="You run the Retro stage: conduct a read-only retrospective of the session the brief names and write your findings to the report file. Change no files except the report file."
             ;;
         review)
             skill_names=review
@@ -100,6 +106,15 @@ role_known() {
     esac
 }
 
+model_id_known() { # model_id_known TEXT: TEXT is provider/model
+    case $1 in
+        *[[:space:]]*) return 1 ;;
+        /* | */) return 1 ;;
+        */*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 model_for() {
     case $1 in
         builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
@@ -109,7 +124,7 @@ model_for() {
 }
 
 print_stages() {
-    for stage in research build write refine review; do
+    for stage in research build write refine review retro; do
         load_stage "$stage"
         for axis in "${stage_axes[@]}"; do
             label=$stage
@@ -201,6 +216,7 @@ cmd_launch() {
     item=
     cwd=
     override=
+    override_model=
     while [ $# -gt 0 ]; do
         case $1 in
             --stage | --axis | --item | --cwd | --model)
@@ -229,8 +245,13 @@ cmd_launch() {
     load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
     check_axis "$stage" "$axis"
     if [ -n "$override" ]; then
-        role_known "$override" || die "--model takes a role: builder, writer, critic"
-        model_role=$override
+        if role_known "$override"; then
+            model_role=$override
+        elif model_id_known "$override"; then
+            override_model=$override
+        else
+            die "--model takes a role (builder, writer, critic) or a provider/model id such as agy/gemini-4-neon-high, not $override"
+        fi
     fi
 
     brief=$(cat)
@@ -261,7 +282,11 @@ cmd_launch() {
     [ -n "$manager" ] ||
         die "recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session"
 
-    model=$(model_for "$model_role")
+    if [ -n "$override_model" ]; then
+        model=$override_model
+    else
+        model=$(model_for "$model_role")
+    fi
     effort=$MODEL_EFFORT
     stage_label=$stage
     [ -z "$axis" ] || stage_label="$stage $axis"
