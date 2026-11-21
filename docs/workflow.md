@@ -64,10 +64,11 @@ Defaults the flow leaves implicit:
 - Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
   diff, never a fix round for Review findings. All Review findings (Spec,
   Standards, and Debt) go to a fresh Build Subagent.
-- Verification after a fix round runs at most one Review scoped to the original
-  findings; if findings remain after that verification round, the Manager stops
-  looping, creates one follow-up issue listing them, and marks the Work Item
-  `blocked on user` if any finding blocks merge.
+- Verification after a fix round runs one Review scoped to the original
+  findings (never `r3`/`r4` Review rounds); if findings remain, non-blocking
+  ones become one follow-up issue before merge, while merge-blocking ones get
+  at most one targeted final Build round verified by the Manager (or a
+  follow-up issue and `blocked on user` if any repro still fails).
 - Pre-existing bugs that already behaved the same on `main` become separate
   follow-up Work Items instead of blocking the merge.
 - Every round uses fresh Subagents. A follow-up before the Manager accepts a

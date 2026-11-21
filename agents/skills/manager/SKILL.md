@@ -120,8 +120,9 @@ in the Ledger. The brief carries:
   fix brief states a checkable repro for each must-fix finding;
 - the decisions it brings back as a Question instead of making.
 
-Never put a report path in the brief; launch adds it. Stages hand over through
-files: the next brief points at the previous report, the diff base, and the
+Never put the new report path in the brief; launch adds it. Stages hand over
+through files: point the next brief at earlier reports using **absolute paths**
+(worktrees have no `.agents/reports/` directory), the diff base, and the
 worktree.
 
 ## Parallel Work Items
@@ -133,6 +134,9 @@ two concurrent builds per provider, or stagger launches, to avoid rate limits.
 Create each worktree before you launch into it, and pass its path as `--cwd`.
 
 Merge a branch into main yourself once its Work Item's Review loop is clean.
+When a merged Work Item is one part of a split parent issue that stays open,
+post a one-line comment on the parent issue stating what landed so parallel or
+triage sessions see live state.
 
 ## Review
 
@@ -158,12 +162,16 @@ base, and the worktree. Pre-existing bugs that already behaved the same on
 `main` (not regressions of this diff) become a separate follow-up Work Item
 instead of blocking the merge.
 
-Bound the Review loop to at most **one** verification Review after fixes,
-scoped strictly to whether the fix diff resolved the original findings without
-regressing them. If that verification Review still returns findings, stop
-looping and create one follow-up issue listing those remaining findings instead
-of launching `r3`/`r4` rounds, then mark the Work Item `blocked on user` if any
-finding blocks merge.
+Run **one** verification Review whenever a fix round addressed must-fix
+findings, scoped strictly to whether the fix diff resolved the original
+findings without regressing them (do not skip it on multi-file fixes, and never
+launch `r3`/`r4` Review rounds). If that verification Review still returns
+findings:
+
+- **Non-blocking findings:** create one follow-up issue listing them and merge.
+- **Merge-blocking findings:** run at most one targeted final Build round and
+  verify each reported repro yourself before merging; if any repro still fails,
+  create one follow-up issue and mark the Work Item `blocked on user`.
 
 Ask the user, and mark the Work Item `blocked on user`, whenever a finding
 needs their decision, blocks merge after verification, or disputes the spec

@@ -26,9 +26,10 @@ has installed each harness's hooks or shim (for `agy`,
 | `claude`   | alias (`opus`, `sonnet`) or full id     | `--effort <effort>` (`--permission-mode auto`) |
 | `opencode` | `<provider>/<model>` (or `#variant`)    | none (encode variant in `--model` if supported) |
 
-- `subagent` and `recado` talk to Rex and local agent endpoints outside the
-  workspace. On a sandboxed harness such as `agy`, run `subagent` and `recado`
-  commands outside the sandbox when the sandbox blocks them.
+- `subagent`, `recado`, `gh`, and commands targeting sibling worktrees (`git`
+  or package-manager commands outside the main checkout) reach state outside
+  the workspace. On a sandboxed Harness such as `agy`, run those commands
+  outside the sandbox directly rather than retrying after a sandbox denial.
 
 ## Launch
 
@@ -99,8 +100,9 @@ launch. Each follow-up earns a fresh TASK COMPLETE.
 ## Waiting
 
 After a launch or a message, end your turn. The Subagent's next message
-resumes you and is the only signal to act on. Do not read its session status
-or message queue.
+resumes you and is the only signal to act on. Check `recado inbox` only on
+session start, after compaction, or on a user-initiated turn — never in empty
+poll loops, and never by reading another Subagent's session status.
 
 A Subagent can stall on an approval only the user can give. It waits in its
 window: tell the user to answer it there.
