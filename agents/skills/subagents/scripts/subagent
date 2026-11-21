@@ -103,7 +103,7 @@ role_known() {
 model_for() {
     case $1 in
         builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
-        writer) printf '%s\n' 'github-copilot/claude-sonnet-5.5' ;;
+        writer) printf '%s\n' 'agy/gemini-4-neon-medium' ;;
         critic) printf '%s\n' 'github-copilot/gpt-6.2-sol' ;;
     esac
 }
