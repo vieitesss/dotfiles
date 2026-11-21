@@ -45,9 +45,11 @@ trigger holds; skip it otherwise.
 | Write    | the Work Item is prose: docs, skills, agent instructions                                   |
 | Refine   | Build reshaped an existing module and its tests pass, or the user asks for a cleanup pass  |
 | Review   | after Build or Refine; see Review                                                          |
+| Retro    | conducting a read-only retrospective of a session, writing one report                      |
 
 `subagent stages` prints each Stage's skills and model. Name the Stage in a
-brief, never its skills.
+brief, never its skills. Keep every Stage on its configured `subagent stages`
+model; stagger launches instead of swapping models for rate limits.
 
 Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
 diff (`diff base != HEAD`), never a clean branch and never a fix round for
@@ -62,7 +64,9 @@ outlives `/clear`, compaction, a handoff, and resuming on another device. The
 your file-edit tools (`edit` / `write` / `edit_file` / `write_file`, not shell
 scripts) from the template in `LEDGER_EXAMPLE.md`. When starting a new goal,
 archive or clear completed rows and stale decisions from earlier goals so the
-Ledger holds only the active goal.
+Ledger holds only the active goal. Once more than 10 rows accumulate, archive
+merged rows into a single `Merged: ...` summary line so `edit` stays trivial
+and shell or Python scripts are never needed.
 
 - **Subagent**: the name and window that `subagent launch` printed, while the
   Subagent is open. Write `-` once you close it.
@@ -108,7 +112,8 @@ in the Ledger. The brief carries:
   module" spends its context before it edits;
 - the cheapest fix that meets the acceptance criteria, naming any existing
   tool or script that covers part of it. New machinery needs a Question first;
-- a checkable done criterion: named tests, lint, pass counts (`10/10`);
+- a checkable done criterion: named tests, lint, pass counts (`10/10`); every
+  fix brief states a checkable repro for each must-fix finding;
 - the decisions it brings back as a Question instead of making.
 
 Never put a report path in the brief; launch adds it. Stages hand over through
@@ -119,23 +124,25 @@ worktree.
 
 Work Items on disjoint code run in parallel, one worktree each. Work Items that
 overlap run in series in one worktree. At most one Subagent edits a worktree at
-a time; read-only Stages (Research) may share one. Create each worktree before
-you launch into it, and pass its path as `--cwd`.
+a time; read-only Stages (Research, Review, Retro) may share one. Run at most
+two concurrent builds per provider, or stagger launches, to avoid rate limits.
+Create each worktree before you launch into it, and pass its path as `--cwd`.
 
 Merge a branch into main yourself once its Work Item's Review loop is clean.
 
 ## Review
 
-Run Review after Build, and after Refine when Refine ran. Never after Write.
-Each round gets fresh Subagents, one per axis:
+Run Review after Build, and after Refine when Refine ran. Never after Write or
+Retro. Each round gets fresh Subagents, one per axis:
 
 1. Take the fixed point, spec source, and standards sources from steps 1 to 3
    of the `review` skill. Do this yourself.
 2. Launch one Subagent per axis, in parallel, with the Work Item as `--item`
    (`batch`, not `batch-review`):
    - `--axis spec` always;
-   - `--axis standards` and `--axis debt` when the change spans several modules
-     or reshapes one.
+   - `--axis standards` and `--axis debt` in parallel with `--axis spec` when
+     the change spans several modules or reshapes one; keep all three axes
+     rather than collapsing them into `--axis spec`.
    Each brief carries the diff command, the commit list, and the spec or
    standards sources.
 3. Present the reports side by side.
@@ -149,12 +156,14 @@ instead of blocking the merge.
 
 Bound the Review loop to at most **one** verification Review after fixes,
 scoped strictly to whether the fix diff resolved the original findings without
-regressing them. If that verification Review still returns must-fix findings,
-stop looping, mark the Work Item `blocked on user`, and ask the user how to
-proceed.
+regressing them. If that verification Review still returns findings, stop
+looping and create one follow-up issue listing those remaining findings instead
+of launching `r3`/`r4` rounds, then mark the Work Item `blocked on user` if any
+finding blocks merge.
 
 Ask the user, and mark the Work Item `blocked on user`, whenever a finding
-needs their decision, comes back after its fix, or disputes the spec itself.
+needs their decision, blocks merge after verification, or disputes the spec
+itself.
 
 ## Accepting returned work
 

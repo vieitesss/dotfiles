@@ -46,3 +46,8 @@ keeps its routing rule; its update note says how launching now works.
 > supports `agy` natively via `~/.gemini/config/hooks.json` and
 > `agentapi send-message`, so Manager and Subagents communicate over `recado`
 > regardless of harness.
+
+> Update (2026-11-21): `--model` now also accepts a `<provider>/<model>` id
+> (e.g. `agy/gemini-4-neon-high`) in addition to a role (`builder`, `writer`,
+> `critic`), and the read-only `retro` Stage was added to the Stage table for
+> session retrospectives.

@@ -31,14 +31,14 @@ or `send_message`).
 subagent stages                  # each Stage, its skills and model
 
 subagent launch --stage STAGE [--axis AXIS] --item ITEM \
-  [--cwd DIR] [--model ROLE] < BRIEF_FILE
+  [--cwd DIR] [--model ROLE|PROVIDER/MODEL] < BRIEF_FILE
 ```
 
-- `--stage` picks the Stage's skills and model.
+- `--stage` picks the Stage's skills and model (`subagent stages` lists all Stages, including `retro`).
 - `--axis` applies to `review` only: `spec`, `standards` or `debt`.
 - `--item` names the Work Item. Leave the Stage name out: `batch`, not `batch-review`.
 - `--cwd` defaults to the current directory. Create the worktree first and pass its path.
-- `--model ROLE` swaps in another role (`builder`, `writer`, `critic`) when a model fails the Stage.
+- `--model` accepts either a role (`builder`, `writer`, `critic`) or a `<provider>/<model>` id (e.g. `agy/gemini-4-neon-high`) when a model fails the Stage.
 - The brief goes on stdin. The launcher adds the tag, report path and recado commands.
 
 Launch prints JSON `{name, window, block, report}`. Keep `name` and `window`.

@@ -19,10 +19,12 @@ flowchart TD
     split --> next(["Take the next Work Item"])
     next --> facts{"Needs outside facts?"}
     facts -- yes --> research{{"Research (builder)"}}
-    facts -- no --> kind{"Code or prose?"}
+    facts -- no --> kind{"Code, prose, or retro?"}
     research --> kind
     kind -- prose --> write{{"Write (writer)"}}
     write --> done
+    kind -- retro --> retro{{"Retro (read-only)"}}
+    retro --> done
     kind -- code --> build{{"Build (builder)"}}
     build --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
     refinep -- yes --> refine{{"Refine (critic)"}}
@@ -38,11 +40,12 @@ flowchart TD
     review --> findings{"Findings?"}
     findings -- none --> prove(["Manager may run tests and lint"])
     prove --> done
-    findings -- "needs the user /<br/>still failing after verify" --> ask(["Ask the user"])
+    findings -- "needs the user" --> ask(["Ask the user"])
     ask --> findings
     findings -- "Spec / Standards / Debt" --> fixbuild{{"Build: fresh fix round"}}
     fixbuild --> verify{{"Review: at most one<br/>verification round"}}
-    verify --> findings
+    verify -- clean --> prove
+    verify -- "findings remain" --> followup(["Create one follow-up issue;<br/>block on user if merge-blocking"])
 
     done(["Mark the Work Item done in the Ledger"]) --> more{"More Work Items?"}
     more -- yes --> next
@@ -53,15 +56,18 @@ Defaults the flow leaves implicit:
 
 - The Manager is invoked only when the user is ready to implement. Shaping,
   design, diagnosis, planning, and shipping happen outside it.
-- Review follows Build (and Refine when Refine ran), never Write. Spec always
-  runs. Standards and Debt run when the change spans several modules or
-  reshapes one.
+- Review follows Build (and Refine when Refine ran), never Write or Retro. Spec
+  always runs. Standards and Debt run in parallel with Spec when the change
+  spans several modules or reshapes one.
+- Retro runs a read-only retrospective of a session and writes one report; it
+  never edits code and skips Review.
 - Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
   diff, never a fix round for Review findings. All Review findings (Spec,
   Standards, and Debt) go to a fresh Build Subagent.
 - Verification after a fix round runs at most one Review scoped to the original
-  findings; if must-fix findings remain after that verification round, the
-  Manager stops looping and asks the user.
+  findings; if findings remain after that verification round, the Manager stops
+  looping, creates one follow-up issue listing them, and marks the Work Item
+  `blocked on user` if any finding blocks merge.
 - Pre-existing bugs that already behaved the same on `main` become separate
   follow-up Work Items instead of blocking the merge.
 - Every round uses fresh Subagents. A follow-up before the Manager accepts a
@@ -69,14 +75,14 @@ Defaults the flow leaves implicit:
 - Work Items on disjoint code run in parallel, each in its own worktree.
   Overlapping Work Items run one after another in one worktree. The Manager
   merges each finished branch.
-- At most one Subagent edits a worktree at a time. Review Subagents only read,
-  so they share it.
+- At most one Subagent edits a worktree at a time. Read-only Stages (Research,
+  Review, Retro) share it.
 - Each Stage's model profile (builder, writer, or critic) is fixed in the Stage
   table of `agents/skills/subagents/scripts/subagent`.
 - The Manager closes a Subagent's window when its report is accepted.
 - The Manager asks the user instead of looping when a decision belongs to the
-  user, when a finding comes back after its fix, or when reviewers disagree
-  with the spec itself.
+  user, when a remaining finding blocks merge after verification, or when
+  reviewers disagree with the spec itself.
 
 Some Stage skills (grilling, tdd, review, zero-tech-debt and others) are not in
 this repository: they come from the shared checkout at `~/work/prefapp/skills`.
@@ -119,7 +125,7 @@ sequenceDiagram
     V->>L: write findings
     V-->>M: TASK COMPLETE
     M->>V: subagent close WINDOW
-    Note over M: review findings go to a fresh Build, then at most one verification Review
+    Note over M: review findings go to a fresh Build, then at most one verification Review (remaining findings become one follow-up issue)
     Note over M: Manager may run tests and lint, then marks the Work Item done
     M->>U: report: changes, tests, open decisions
 ```
