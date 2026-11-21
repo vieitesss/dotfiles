@@ -381,7 +381,7 @@ expect_prompt_contains "recado send recado://local/manager --kind complete"
 expect_prompt_contains "recado ask recado://local/manager"
 expect_prompt_contains "Add the widget."
 expect_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
-expect_prompt_contains 'in codemode, slice or filter outputs in JS so each call returns under ~20 KB without truncation.'
+expect_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
 expect_prompt_contains 'The brief is your approved plan; commit your work on the branch.'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
 expect_contains '"window":"win-1"'
