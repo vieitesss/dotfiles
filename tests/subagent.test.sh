@@ -31,6 +31,9 @@ new_fixture() {
     fixture_log="$fixture_tmp/rex.log"
     fixture_prompt="$fixture_tmp/prompt.md"
     fixture_pi_log="$fixture_tmp/pi.log"
+    fixture_agy_log="$fixture_tmp/agy.log"
+    fixture_agy_prompt="$fixture_tmp/agy-prompt.md"
+    fixture_agy_env="$fixture_tmp/agy-env"
     fixture_stderr="$fixture_tmp/stderr"
     fixture_process=
 
@@ -41,7 +44,7 @@ new_fixture() {
         commit -q --allow-empty -m fixture
 
     # Every skill the Stage table names, installed in the throwaway HOME.
-    for skill in research tdd coding writing-for-agents zero-tech-debt review; do
+    for skill in research tdd coding writing-for-agents zero-tech-debt retro review; do
         mkdir -p "$fixture_home/.agents/skills/$skill"
         printf -- '---\nname: %s\n---\n' "$skill" > "$fixture_home/.agents/skills/$skill/SKILL.md"
     done
@@ -111,6 +114,36 @@ done
 exit 1
 STUB
 
+    # agy stub: record what the child delivers, its environment, and whether
+    # the prompt arrives as the value of -i.
+    cat > "$fixture_bin/agy" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[ "${PATH%%:*}" = "$STUB_BIN" ] || exit 99
+prompt=
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --model | --effort | --mode)
+            printf '%s=%s\n' "$1" "$2" >> "$AGY_STUB_LOG"
+            shift 2
+            ;;
+        -i)
+            printf '%s\n' -i >> "$AGY_STUB_LOG"
+            shift
+            [ "$#" -eq 1 ] || exit 1
+            prompt=$1
+            shift
+            ;;
+        *) exit 1 ;;
+    esac
+done
+[ -n "$prompt" ] || exit 1
+printf '%s\n' "$prompt" > "$AGY_STUB_PROMPT"
+for name in GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_TERMINAL_PROMPT GIT_PAGER PAGER GH_PROMPT_DISABLED CI; do
+    printf '%s=%s\n' "$name" "$(printenv "$name" || printf '<unset>')" >> "$AGY_STUB_ENV"
+done
+STUB
+
     # recado stub: whoami names the Manager; nothing is delivered.
     cat > "$fixture_bin/recado" <<'STUB'
 #!/usr/bin/env bash
@@ -119,14 +152,18 @@ case $1 in
 esac
 STUB
 
-    chmod +x "$fixture_bin/rex" "$fixture_bin/recado" "$fixture_bin/pi" "$fixture_bin/shell"
+    chmod +x "$fixture_bin/rex" "$fixture_bin/recado" "$fixture_bin/pi" "$fixture_bin/agy" "$fixture_bin/shell"
 }
 
 run_subagent() { # run_subagent ARGS... < BRIEF
     set +e
     output=$(
         cd "$fixture_repo" || exit 1
-        HOME="$fixture_home" \
+        # Drop the variables the child must set itself, so a value inherited
+        # from the caller cannot make the assertion pass.
+        env -u CI -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
+            -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED \
+            HOME="$fixture_home" \
             PATH="$fixture_bin:$PATH" \
             STUB_BIN="$fixture_bin" \
             SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
@@ -135,6 +172,9 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             REX_STUB_LOG="$fixture_log" \
             PI_STUB_LOG="$fixture_pi_log" \
             PI_STUB_PROMPT="$fixture_prompt" \
+            AGY_STUB_LOG="$fixture_agy_log" \
+            AGY_STUB_PROMPT="$fixture_agy_prompt" \
+            AGY_STUB_ENV="$fixture_agy_env" \
             REX_STUB_PROCESS="$fixture_process" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
@@ -207,6 +247,41 @@ expect_pi_option() {
 $(cat "$fixture_pi_log" 2>/dev/null)"
 }
 
+expect_agy_option() {
+    checks=$((checks + 1))
+    grep -Fxq -- "$1=$2" "$fixture_agy_log" 2>/dev/null ||
+        fail "expected agy to receive '$1' with '$2'; got:
+$(cat "$fixture_agy_log" 2>/dev/null)"
+}
+
+expect_agy_flag() {
+    checks=$((checks + 1))
+    grep -Fxq -- "$1" "$fixture_agy_log" 2>/dev/null ||
+        fail "expected agy to receive the flag '$1'; got:
+$(cat "$fixture_agy_log" 2>/dev/null)"
+}
+
+expect_agy_env() {
+    checks=$((checks + 1))
+    grep -Fxq -- "$1=$2" "$fixture_agy_env" 2>/dev/null ||
+        fail "expected the agent to run with $1=$2; got:
+$(cat "$fixture_agy_env" 2>/dev/null)"
+}
+
+expect_agy_prompt_contains() {
+    checks=$((checks + 1))
+    if [ ! -f "$fixture_agy_prompt" ]; then
+        fail "no agy prompt; rex was called with:
+$(cat "$fixture_log" 2>/dev/null)"
+        return
+    fi
+    case "$(cat "$fixture_agy_prompt")" in
+        *"$1"*) ;;
+        *) fail "expected the agy prompt to contain '$1'; got:
+$(cat "$fixture_agy_prompt")" ;;
+    esac
+}
+
 expect_no_rex_command() {
     checks=$((checks + 1))
     if [ -f "$fixture_log" ] && grep -Fxq window "$fixture_log"; then
@@ -233,6 +308,9 @@ expect_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
 expect_prompt_contains "recado send recado://local/manager --kind complete"
 expect_prompt_contains "recado ask recado://local/manager"
 expect_prompt_contains "Add the widget."
+expect_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
+expect_prompt_contains 'in codemode, slice or filter outputs in JS so each call returns under ~20 KB without truncation.'
+expect_prompt_contains 'The brief is your approved plan; commit your work on the branch.'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
 expect_contains '"window":"win-1"'
 expect_contains '"block":"blk-1"'
@@ -271,6 +349,63 @@ expect_pi_option --thinking high
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'
+
+rm -rf "$fixture_tmp"
+
+# --- the child runs the agent non-interactively ---------------------------
+
+new_fixture
+run_subagent launch --stage write --item widget <<'BRIEF'
+Write the changelog.
+BRIEF
+expect_status 0
+expect_agy_env GIT_EDITOR true
+expect_agy_env GIT_SEQUENCE_EDITOR true
+expect_agy_env GIT_TERMINAL_PROMPT 0
+expect_agy_env GIT_PAGER cat
+expect_agy_env PAGER cat
+expect_agy_env GH_PROMPT_DISABLED 1
+expect_agy_env CI '<unset>'
+
+rm -rf "$fixture_tmp"
+
+# --- a model id reaches agy, and the retro Stage carries its own skills ----
+
+new_fixture
+run_subagent launch --stage retro --item retro-2 --model agy/gemini-4-neon-high <<'BRIEF'
+Retrospect the launcher session.
+BRIEF
+expect_status 0
+expect_agy_option --model gemini-4-neon-high
+expect_agy_option --effort high
+expect_agy_option --mode auto
+expect_agy_flag -i
+expect_agy_prompt_contains 'You run the Retro stage:'
+expect_agy_prompt_contains '· retro-2 · retro]'
+expect_agy_prompt_contains 'retro/SKILL.md'
+expect_agy_prompt_contains 'writing-for-agents/SKILL.md'
+expect_agy_prompt_contains 'Retrospect the launcher session.'
+
+rm -rf "$fixture_tmp"
+
+# --- an unknown --model fails before a window opens ------------------------
+
+new_fixture
+run_subagent launch --stage build --item widget --model critic <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+expect_pi_option --model github-copilot/gpt-6.2-sol
+
+for bad_model in bogus /model provider/ 'a b/c' ''; do
+    rm -f "$fixture_log"
+    run_subagent launch --stage build --item widget --model "$bad_model" <<'BRIEF'
+Add the widget.
+BRIEF
+    expect_nonzero
+    expect_stderr_contains '--model takes a role (builder, writer, critic)'
+    expect_no_rex_command
+done
 
 rm -rf "$fixture_tmp"
 
