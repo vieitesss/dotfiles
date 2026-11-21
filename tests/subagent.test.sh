@@ -397,7 +397,7 @@ BRIEF
 expect_status 0
 expect_pi_option --model github-copilot/gpt-6.2-sol
 
-for bad_model in bogus /model provider/ 'a b/c'; do
+for bad_model in bogus /model provider/ 'a b/c' ''; do
     rm -f "$fixture_log"
     run_subagent launch --stage build --item widget --model "$bad_model" <<'BRIEF'
 Add the widget.

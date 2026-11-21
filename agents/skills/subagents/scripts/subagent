@@ -216,6 +216,7 @@ cmd_launch() {
     item=
     cwd=
     override=
+    override_set=0
     override_model=
     while [ $# -gt 0 ]; do
         case $1 in
@@ -229,7 +230,7 @@ cmd_launch() {
                     --axis) axis=$value ;;
                     --item) item=$value ;;
                     --cwd) cwd=$value ;;
-                    --model) override=$value ;;
+                    --model) override=$value; override_set=1 ;;
                 esac
                 ;;
             -h | --help)
@@ -244,12 +245,14 @@ cmd_launch() {
     [ -n "$item" ] || die "launch needs --item"
     load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
     check_axis "$stage" "$axis"
-    if [ -n "$override" ]; then
+    if [ "$override_set" -eq 1 ]; then
         if role_known "$override"; then
             model_role=$override
         elif model_id_known "$override"; then
             override_model=$override
         else
+            # An explicit empty --model is invalid, not an omission.
+            [ -n "$override" ] || override='an empty value'
             die "--model takes a role (builder, writer, critic) or a provider/model id such as agy/gemini-4-neon-high, not $override"
         fi
     fi
