@@ -7,7 +7,7 @@
 status line JSON that Antigravity CLI writes to stdin and prints one line:
 
 ```text
-<tokens> · <context %> · <cost>        <cwd> · <branch>        <model> · <effort>
+<tokens> · <context %> · <cost>        <cwd> · <branch>        <model> · <effort> · <mode>
 ```
 
 | Segment | Antigravity CLI field | Pi source |
@@ -19,6 +19,7 @@ status line JSON that Antigravity CLI writes to stdin and prints one line:
 | branch | `git branch --show-current` in the cwd | same |
 | model | `model.id` (falls back to `model.display_name`, strips trailing `(Effort)`) | `model.id` |
 | effort | `model.effort` (falls back to parenthetical effort in model name, else `off`) | active thinking level |
+| mode | `cycle_mode` (`default`, `accept-edits`, `auto`, `plan`) | — |
 
 Colors follow the Gruber themes Pi uses (`gruber-lighter` / `gruber-darker`);
 on macOS the script auto-detects the system appearance, elsewhere it defaults

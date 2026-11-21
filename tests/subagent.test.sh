@@ -4,7 +4,8 @@
 # Usage: ./tests/subagent.test.sh
 #
 # Every case runs the launcher in a throwaway git repo with a throwaway HOME,
-# and stubs rex, recado and pi on PATH: no window opens and no Subagent starts.
+# and stubs rex, recado, pi, agy, claude and opencode on PATH: no window opens
+# and no Subagent starts.
 
 set -eu
 
@@ -34,6 +35,11 @@ new_fixture() {
     fixture_agy_log="$fixture_tmp/agy.log"
     fixture_agy_prompt="$fixture_tmp/agy-prompt.md"
     fixture_agy_env="$fixture_tmp/agy-env"
+    fixture_claude_log="$fixture_tmp/claude.log"
+    fixture_claude_prompt="$fixture_tmp/claude-prompt.md"
+    fixture_claude_env="$fixture_tmp/claude-env"
+    fixture_opencode_log="$fixture_tmp/opencode.log"
+    fixture_opencode_prompt="$fixture_tmp/opencode-prompt.md"
     fixture_stderr="$fixture_tmp/stderr"
     fixture_process=
 
@@ -79,7 +85,7 @@ esac
 STUB
 
     # Run the received shell command without login profiles, which could
-    # replace PATH and accidentally resolve a real pi instead of the stub.
+    # replace PATH and accidentally resolve a real harness instead of the stub.
     cat > "$fixture_bin/shell" <<'STUB'
 #!/usr/bin/env bash
 set -eu
@@ -144,7 +150,59 @@ for name in GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_TERMINAL_PROMPT GIT_PAGER PAGER G
 done
 STUB
 
-    # recado stub: whoami names the Manager; nothing is delivered.
+    # claude stub: record options, environment, and prompt after --.
+    cat > "$fixture_bin/claude" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[ "${PATH%%:*}" = "$STUB_BIN" ] || exit 99
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --model | --effort | --permission-mode | --append-system-prompt)
+            printf '%s=%s\n' "$1" "$2" >> "$CLAUDE_STUB_LOG"
+            shift 2
+            ;;
+        --)
+            shift
+            [ "$#" -eq 1 ] || exit 1
+            printf '%s\n' "$1" > "$CLAUDE_STUB_PROMPT"
+            printf 'CLAUDECODE=%s\n' "$(printenv CLAUDECODE || printf '<unset>')" >> "$CLAUDE_STUB_ENV"
+            exit 0
+            ;;
+        *) exit 1 ;;
+    esac
+done
+exit 1
+STUB
+
+    # opencode stub: expect `opencode mini --model M --prompt P`.
+    cat > "$fixture_bin/opencode" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+[ "${PATH%%:*}" = "$STUB_BIN" ] || exit 99
+[ "${1:-}" = mini ] || exit 1
+printf 'subcmd=%s\n' "$1" >> "$OPENCODE_STUB_LOG"
+shift
+prompt=
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --model)
+            printf '%s=%s\n' "$1" "$2" >> "$OPENCODE_STUB_LOG"
+            shift 2
+            ;;
+        --prompt)
+            shift
+            [ "$#" -eq 1 ] || exit 1
+            prompt=$1
+            shift
+            ;;
+        *) exit 1 ;;
+    esac
+done
+[ -n "$prompt" ] || exit 1
+printf '%s\n' "$prompt" > "$OPENCODE_STUB_PROMPT"
+STUB
+
+    # recado stub: whoami names the caller; nothing is delivered.
     cat > "$fixture_bin/recado" <<'STUB'
 #!/usr/bin/env bash
 case $1 in
@@ -152,7 +210,8 @@ case $1 in
 esac
 STUB
 
-    chmod +x "$fixture_bin/rex" "$fixture_bin/recado" "$fixture_bin/pi" "$fixture_bin/agy" "$fixture_bin/shell"
+    chmod +x "$fixture_bin/rex" "$fixture_bin/recado" "$fixture_bin/pi" \
+        "$fixture_bin/agy" "$fixture_bin/claude" "$fixture_bin/opencode" "$fixture_bin/shell"
 }
 
 run_subagent() { # run_subagent ARGS... < BRIEF
@@ -163,6 +222,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
         # from the caller cannot make the assertion pass.
         env -u CI -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
             -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED \
+            CLAUDECODE=1 \
             HOME="$fixture_home" \
             PATH="$fixture_bin:$PATH" \
             STUB_BIN="$fixture_bin" \
@@ -175,6 +235,11 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             AGY_STUB_LOG="$fixture_agy_log" \
             AGY_STUB_PROMPT="$fixture_agy_prompt" \
             AGY_STUB_ENV="$fixture_agy_env" \
+            CLAUDE_STUB_LOG="$fixture_claude_log" \
+            CLAUDE_STUB_PROMPT="$fixture_claude_prompt" \
+            CLAUDE_STUB_ENV="$fixture_claude_env" \
+            OPENCODE_STUB_LOG="$fixture_opencode_log" \
+            OPENCODE_STUB_PROMPT="$fixture_opencode_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
@@ -219,18 +284,36 @@ $error" ;;
     esac
 }
 
-expect_prompt_contains() {
+expect_file_contains() { # expect_file_contains FILE LABEL NEEDLE
     checks=$((checks + 1))
-    if [ ! -f "$fixture_prompt" ]; then
-        fail "no prompt file; rex was called with:
+    if [ ! -f "$1" ]; then
+        fail "no $2; rex was called with:
 $(cat "$fixture_log" 2>/dev/null)"
         return
     fi
-    case "$(cat "$fixture_prompt")" in
-        *"$1"*) ;;
-        *) fail "expected the prompt to contain '$1'; got:
-$(cat "$fixture_prompt")" ;;
+    case "$(cat "$1")" in
+        *"$3"*) ;;
+        *) fail "expected $2 to contain '$3'; got:
+$(cat "$1")" ;;
     esac
+}
+
+expect_file_not_contains() { # expect_file_not_contains FILE LABEL NEEDLE
+    checks=$((checks + 1))
+    if [ ! -f "$1" ]; then
+        fail "no $2; rex was called with:
+$(cat "$fixture_log" 2>/dev/null)"
+        return
+    fi
+    case "$(cat "$1")" in
+        *"$3"*) fail "expected $2 not to contain '$3'; got:
+$(cat "$1")" ;;
+        *) ;;
+    esac
+}
+
+expect_prompt_contains() {
+    expect_file_contains "$fixture_prompt" "prompt file" "$1"
 }
 
 expect_rex_arg() {
@@ -240,47 +323,23 @@ expect_rex_arg() {
 $(cat "$fixture_log" 2>/dev/null)"
 }
 
-expect_pi_option() {
+expect_log_line() { # expect_log_line FILE LABEL LINE
     checks=$((checks + 1))
-    grep -Fxq -- "$1=$2" "$fixture_pi_log" 2>/dev/null ||
-        fail "expected pi to receive '$1' with '$2'; got:
-$(cat "$fixture_pi_log" 2>/dev/null)"
+    grep -Fxq -- "$3" "$1" 2>/dev/null ||
+        fail "expected $2 to contain '$3'; got:
+$(cat "$1" 2>/dev/null)"
 }
 
-expect_agy_option() {
-    checks=$((checks + 1))
-    grep -Fxq -- "$1=$2" "$fixture_agy_log" 2>/dev/null ||
-        fail "expected agy to receive '$1' with '$2'; got:
-$(cat "$fixture_agy_log" 2>/dev/null)"
-}
-
-expect_agy_flag() {
-    checks=$((checks + 1))
-    grep -Fxq -- "$1" "$fixture_agy_log" 2>/dev/null ||
-        fail "expected agy to receive the flag '$1'; got:
-$(cat "$fixture_agy_log" 2>/dev/null)"
-}
-
-expect_agy_env() {
-    checks=$((checks + 1))
-    grep -Fxq -- "$1=$2" "$fixture_agy_env" 2>/dev/null ||
-        fail "expected the agent to run with $1=$2; got:
-$(cat "$fixture_agy_env" 2>/dev/null)"
-}
-
-expect_agy_prompt_contains() {
-    checks=$((checks + 1))
-    if [ ! -f "$fixture_agy_prompt" ]; then
-        fail "no agy prompt; rex was called with:
-$(cat "$fixture_log" 2>/dev/null)"
-        return
-    fi
-    case "$(cat "$fixture_agy_prompt")" in
-        *"$1"*) ;;
-        *) fail "expected the agy prompt to contain '$1'; got:
-$(cat "$fixture_agy_prompt")" ;;
-    esac
-}
+expect_pi_option() { expect_log_line "$fixture_pi_log" "pi" "$1=$2"; }
+expect_agy_option() { expect_log_line "$fixture_agy_log" "agy" "$1=$2"; }
+expect_agy_flag() { expect_log_line "$fixture_agy_log" "agy" "$1"; }
+expect_agy_env() { expect_log_line "$fixture_agy_env" "agy env" "$1=$2"; }
+expect_agy_prompt_contains() { expect_file_contains "$fixture_agy_prompt" "agy prompt" "$1"; }
+expect_claude_option() { expect_log_line "$fixture_claude_log" "claude" "$1=$2"; }
+expect_claude_env() { expect_log_line "$fixture_claude_env" "claude env" "$1=$2"; }
+expect_claude_prompt_contains() { expect_file_contains "$fixture_claude_prompt" "claude prompt" "$1"; }
+expect_opencode_option() { expect_log_line "$fixture_opencode_log" "opencode" "$1=$2"; }
+expect_opencode_prompt_contains() { expect_file_contains "$fixture_opencode_prompt" "opencode prompt" "$1"; }
 
 expect_no_rex_command() {
     checks=$((checks + 1))
@@ -289,6 +348,19 @@ expect_no_rex_command() {
 $(cat "$fixture_log")"
     fi
 }
+
+# --- stages lists harness, model, effort and skills -------------------------
+
+new_fixture
+run_subagent stages </dev/null
+expect_status 0
+expect_contains 'build'
+expect_contains 'harness pi'
+expect_contains 'harness agy'
+expect_contains 'model gemini-4-neon-medium'
+expect_contains 'effort high'
+
+rm -rf "$fixture_tmp"
 
 # --- the prompt names the tag, the report and the Manager -------------------
 
@@ -359,6 +431,10 @@ run_subagent launch --stage write --item widget <<'BRIEF'
 Write the changelog.
 BRIEF
 expect_status 0
+expect_agy_option --model gemini-4-neon-medium
+expect_agy_option --effort high
+expect_agy_option --mode auto
+expect_agy_flag -i
 expect_agy_env GIT_EDITOR true
 expect_agy_env GIT_SEQUENCE_EDITOR true
 expect_agy_env GIT_TERMINAL_PROMPT 0
@@ -369,15 +445,15 @@ expect_agy_env CI '<unset>'
 
 rm -rf "$fixture_tmp"
 
-# --- a model id reaches agy, and the retro Stage carries its own skills ----
+# --- explicit --harness, --model, and --effort override Stage defaults ------
 
 new_fixture
-run_subagent launch --stage retro --item retro-2 --model agy/gemini-4-neon-high <<'BRIEF'
+run_subagent launch --stage retro --item retro-2 --harness agy --model gemini-4-neon-high --effort medium <<'BRIEF'
 Retrospect the launcher session.
 BRIEF
 expect_status 0
 expect_agy_option --model gemini-4-neon-high
-expect_agy_option --effort high
+expect_agy_option --effort medium
 expect_agy_option --mode auto
 expect_agy_flag -i
 expect_agy_prompt_contains 'You run the Retro stage:'
@@ -388,22 +464,90 @@ expect_agy_prompt_contains 'Retrospect the launcher session.'
 
 rm -rf "$fixture_tmp"
 
-# --- an unknown --model fails before a window opens ------------------------
+# --- --model ROLE swaps the full profile; explicit --effort still wins ------
 
 new_fixture
-run_subagent launch --stage build --item widget --model critic <<'BRIEF'
-Add the widget.
+run_subagent launch --stage build --item widget --model writer --effort low <<'BRIEF'
+Draft the guide.
 BRIEF
 expect_status 0
-expect_pi_option --model github-copilot/gpt-6.2-sol
+expect_agy_option --model gemini-4-neon-medium
+expect_agy_option --effort low
 
-for bad_model in bogus /model provider/ 'a b/c' ''; do
+rm -rf "$fixture_tmp"
+
+# --- ad-hoc launches work without --stage across claude and opencode --------
+
+new_fixture
+rm -rf "$fixture_home/.agents/skills"
+run_subagent launch --item cmp-claude --harness claude --model opus --effort xhigh <<'BRIEF'
+Compare approach A.
+BRIEF
+expect_status 0
+expect_claude_option --model opus
+expect_claude_option --effort xhigh
+expect_claude_option --permission-mode auto
+expect_claude_env CLAUDECODE '<unset>'
+expect_claude_prompt_contains '· cmp-claude]'
+expect_claude_prompt_contains 'Compare approach A.'
+expect_file_not_contains "$fixture_claude_prompt" "claude prompt" "Read and follow these skills:"
+expect_contains '"name":"subagent-adhoc-'
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/cmp-claude.md\""
+
+run_subagent launch --item cmp-oc --harness opencode --model anthropic/claude-sonnet-4-5 <<'BRIEF'
+Compare approach B.
+BRIEF
+expect_status 0
+expect_opencode_option subcmd mini
+expect_opencode_option --model anthropic/claude-sonnet-4-5
+expect_opencode_prompt_contains '· cmp-oc]'
+expect_opencode_prompt_contains 'Compare approach B.'
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/cmp-oc.md\""
+
+rm -rf "$fixture_tmp"
+
+# --- --axis is rejected without --stage review ------------------------------
+
+new_fixture
+run_subagent launch --item widget --axis spec <<'BRIEF'
+Check spec.
+BRIEF
+expect_nonzero
+expect_stderr_contains '--axis requires --stage review'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+# --- invalid --harness, --model, and --effort fail before a window opens ----
+
+new_fixture
+for bad_harness in bogus '' 'pi agy'; do
+    rm -f "$fixture_log"
+    run_subagent launch --stage build --item widget --harness "$bad_harness" <<'BRIEF'
+Add the widget.
+BRIEF
+    expect_nonzero
+    expect_stderr_contains '--harness takes pi, agy, claude, or opencode'
+    expect_no_rex_command
+done
+
+for bad_model in 'a b' ''; do
     rm -f "$fixture_log"
     run_subagent launch --stage build --item widget --model "$bad_model" <<'BRIEF'
 Add the widget.
 BRIEF
     expect_nonzero
     expect_stderr_contains '--model takes a role (builder, writer, critic)'
+    expect_no_rex_command
+done
+
+for bad_effort in turbo '' 'high max'; do
+    rm -f "$fixture_log"
+    run_subagent launch --stage build --item widget --effort "$bad_effort" <<'BRIEF'
+Add the widget.
+BRIEF
+    expect_nonzero
+    expect_stderr_contains '--effort takes off, minimal, low, medium, high, xhigh, or max'
     expect_no_rex_command
 done
 

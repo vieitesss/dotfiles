@@ -2,7 +2,7 @@
 # Antigravity CLI (agy) status line mirroring the custom Pi footer defined in
 # pi/agent/extensions/custom-footer.ts and claude/statusline.sh.
 #
-#   <tokens> · <context %> · <cost>        <cwd> · <branch>        <model> · <effort>
+#   <tokens> · <context %> · <cost>        <cwd> · <branch>        <model> · <effort> · <mode>
 #
 # Reads the Antigravity CLI status line JSON on stdin. Requires bash and jq.
 # Colors follow the Gruber theme Pi uses; on macOS they auto-switch with the
@@ -19,6 +19,7 @@ parsed=$(jq -r '
   (.context_window.total_input_tokens // .context_window.current_usage.input_tokens // ""),
   (.context_window.used_percentage // ""),
   (.model.effort // .effort.level // ""),
+  (.cycle_mode // ""),
   (.terminal_width // 0)
 ' <<<"$input" 2>/dev/null) || parsed=''
 
@@ -29,6 +30,7 @@ parsed=$(jq -r '
   IFS= read -r tokens
   IFS= read -r percent
   IFS= read -r effort
+  IFS= read -r mode
   IFS= read -r term_width
 } <<<"$parsed"
 
@@ -38,7 +40,13 @@ cost=${cost:-0}
 tokens=${tokens:-}
 percent=${percent:-}
 effort=${effort:-}
+mode=${mode:-}
 term_width=${term_width:-0}
+
+case $mode in
+  accept_edits | accept-edits | 'accept edits') mode='accept-edits' ;;
+  '') mode='default' ;;
+esac
 
 # Antigravity model names often embed the effort in parentheses, e.g.
 # "Gemini 4 Neon (Medium)". Strip the suffix to avoid repeating it next to
@@ -126,12 +134,12 @@ sep_dim="$(fg "$dim")$sep$reset"
 left="$(fg "$yellow")$tokens$reset $sep_dim $(fg "$dim")$percent$reset $sep_dim $(fg "$dim")$cost$reset"
 middle="$(fg "$dim")$cwd$reset"
 [ -n "$branch" ] && middle="$middle $sep_dim $(fg "$dim")$branch$reset"
-right="$(fg "$dim")$model $sep $effort$reset"
+right="$(fg "$dim")$model $sep $effort $sep $mode$reset"
 
 # --- layout (mirrors custom-footer.ts) --------------------------------------
 plain_left="$tokens $sep $percent $sep $cost"
 plain_middle="$cwd${branch:+ $sep $branch}"
-plain_right="$model $sep $effort"
+plain_right="$model $sep $effort $sep $mode"
 cols=${COLUMNS:-$term_width}
 width=$((cols - 4))
 if [ "$width" -gt 0 ] 2>/dev/null; then

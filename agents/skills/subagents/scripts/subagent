@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Launch one Stage of one Work Item as a Subagent in a Rex window, and close
-# that window once the Manager has accepted the report.
+# Launch a Subagent (for one Stage of a Work Item, or an ad-hoc task) in a Rex
+# window, and close that window once its report is accepted.
 #
 # Usage:
 #   subagent stages
-#   subagent launch --stage STAGE [--axis AXIS] --item ITEM [--cwd DIR]
-#                   [--model ROLE] < BRIEF
+#   subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR]
+#                   [--harness HARNESS] [--model ROLE|MODEL] [--effort EFFORT] < BRIEF
 #   subagent close WINDOW
 #
 # launch reads the brief on stdin and prints one JSON object on stdout:
@@ -18,17 +18,19 @@ set -eu
 
 POLL_INTERVAL=0.25
 STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
-MODEL_EFFORT=high # every model role thinks hard
 
 # The prompt travels through a temp file because Rex rejects over-long
 # commands. The child reads it, deletes it, then execs the agent with the
-# prompt as its last argument; the trailing -- keeps a prompt that starts with
-# a dash from being read as an option.
+# prompt as its last argument; a trailing -- (where the harness supports it)
+# keeps a prompt that starts with a dash from being read as an option.
 # shellcheck disable=SC2016 # the child shell expands these, not this one.
-CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
+CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
 
-# What every Subagent is told, whichever Stage it runs.
+# What every Stage Subagent is told, whichever Stage it runs.
 SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, slice or filter outputs in JS so each call returns under ~20 KB without truncation."
+
+# What an ad-hoc Subagent (launched without --stage) is told.
+ADHOC_RULES="The calling agent coordinates the work; you run this task and report. Send it two kinds of message only: the completion report, and questions. A decision the brief leaves open is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt is a follow-up: apply it, update your report file, and report again. Do every part of this task yourself. Reporting is part of every task, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, slice or filter outputs in JS so each call returns under ~20 KB without truncation."
 
 die() {
     printf '[subagent] %s\n' "$*" >&2
@@ -37,25 +39,31 @@ die() {
 
 usage() {
     cat <<'EOF'
-Prepare and launch one Stage of one Work Item as a Subagent in a Rex window.
+Prepare and launch a Subagent in a Rex window.
 
 Usage:
   subagent stages
-      Print each Stage with its skills and model.
+      Print each Stage with its default harness, model, effort and skills.
 
-  subagent launch --stage STAGE [--axis AXIS] --item ITEM [--cwd DIR]
-                  [--model ROLE] < BRIEF
-      Build the prompt, open a Rex window in this Manager's session, and print
+  subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR]
+                  [--harness HARNESS] [--model ROLE|MODEL] [--effort EFFORT] < BRIEF
+      Build the prompt, open a Rex window in the caller's session, and print
       {"name", "window", "block", "report"} as JSON. The brief comes on stdin.
+      --stage selects a Stage's skills, role prompt, and default model profile.
+          Omit --stage for an ad-hoc Subagent with no Stage skills injected.
+      --axis is required by --stage review, and rejected otherwise.
       --cwd defaults to the current directory.
-      --axis is required by --stage review, and rejected by every other Stage.
-      --model takes a role (builder, writer, critic) or a provider/model id
-      such as agy/gemini-4-neon-high.
+      --harness overrides the harness: pi, agy, claude, or opencode.
+      --model takes a role (builder, writer, critic) to swap the whole profile,
+          or a harness-appropriate model id (e.g. provider/model for pi/opencode,
+          gemini-4-neon-high for agy, opus or claude-sonnet-4-6 for claude).
+      --effort overrides the thinking effort:
+          off, minimal, low, medium, high, xhigh, or max.
 
   subagent close WINDOW
       Close the Subagent's Rex window.
 
-REX_SESSION names the Rex session, and recado whoami the Manager's address.
+REX_SESSION names the Rex session, and recado whoami the caller's address.
 EOF
 }
 
@@ -106,31 +114,57 @@ role_known() {
     esac
 }
 
-model_id_known() { # model_id_known TEXT: TEXT is provider/model
+harness_known() {
     case $1 in
-        *[[:space:]]*) return 1 ;;
-        /* | */) return 1 ;;
-        */*) return 0 ;;
+        pi | agy | claude | opencode) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-model_for() {
+effort_known() {
     case $1 in
-        builder) printf '%s\n' 'opencode-go/deepseek-v4.1-flash' ;;
-        writer) printf '%s\n' 'agy/gemini-4-neon-medium' ;;
-        critic) printf '%s\n' 'github-copilot/gpt-6.2-sol' ;;
+        off | minimal | low | medium | high | xhigh | max) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+model_value_known() { # model_value_known TEXT: non-empty, no whitespace
+    case $1 in
+        '' | *[[:space:]]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+load_profile() { # load_profile ROLE: set profile_harness, profile_model, profile_effort
+    case $1 in
+        builder)
+            profile_harness=pi
+            profile_model=opencode-go/deepseek-v4.1-flash
+            profile_effort=high
+            ;;
+        writer)
+            profile_harness=agy
+            profile_model=gemini-4-neon-medium
+            profile_effort=high
+            ;;
+        critic)
+            profile_harness=pi
+            profile_model=github-copilot/gpt-6.2-sol
+            profile_effort=high
+            ;;
+        *) return 1 ;;
     esac
 }
 
 print_stages() {
     for stage in research build write refine review retro; do
         load_stage "$stage"
+        load_profile "$model_role"
         for axis in "${stage_axes[@]}"; do
             label=$stage
             [ -z "$axis" ] || label="$stage --axis $axis"
-            printf '%-24s model %-40s effort %-6s skills %s\n' \
-                "$label" "$(model_for "$model_role")" "$MODEL_EFFORT" \
+            printf '%-24s harness %-10s model %-36s effort %-8s skills %s\n' \
+                "$label" "$profile_harness" "$profile_model" "$profile_effort" \
                 "${skill_names// /, }"
         done
     done
@@ -144,6 +178,9 @@ check_axis() { # check_axis STAGE AXIS
                 '') die "--stage review needs --axis spec|standards|debt" ;;
                 *) die "--stage review takes --axis spec|standards|debt, not $2" ;;
             esac
+            ;;
+        '')
+            [ -z "$2" ] || die "--axis requires --stage review"
             ;;
         *)
             [ -z "$2" ] || die "--stage $1 takes no --axis"
@@ -215,12 +252,15 @@ cmd_launch() {
     axis=
     item=
     cwd=
-    override=
-    override_set=0
+    override_harness=
+    override_harness_set=0
     override_model=
+    override_model_set=0
+    override_effort=
+    override_effort_set=0
     while [ $# -gt 0 ]; do
         case $1 in
-            --stage | --axis | --item | --cwd | --model)
+            --stage | --axis | --item | --cwd | --harness | --model | --effort)
                 [ $# -ge 2 ] || die "launch: $1 needs a value"
                 flag=$1
                 value=$2
@@ -230,7 +270,9 @@ cmd_launch() {
                     --axis) axis=$value ;;
                     --item) item=$value ;;
                     --cwd) cwd=$value ;;
-                    --model) override=$value; override_set=1 ;;
+                    --harness) override_harness=$value; override_harness_set=1 ;;
+                    --model) override_model=$value; override_model_set=1 ;;
+                    --effort) override_effort=$value; override_effort_set=1 ;;
                 esac
                 ;;
             -h | --help)
@@ -241,19 +283,53 @@ cmd_launch() {
         esac
     done
 
-    [ -n "$stage" ] || die "launch needs --stage"
     [ -n "$item" ] || die "launch needs --item"
-    load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
-    check_axis "$stage" "$axis"
-    if [ "$override_set" -eq 1 ]; then
-        if role_known "$override"; then
-            model_role=$override
-        elif model_id_known "$override"; then
-            override_model=$override
+    if [ -n "$stage" ]; then
+        load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
+        check_axis "$stage" "$axis"
+        load_profile "$model_role"
+        rules=$SUBAGENT_RULES
+    else
+        check_axis '' "$axis"
+        skill_names=
+        role="You are a Subagent running an ad-hoc task for the calling agent. Follow the brief and report back when done."
+        load_profile builder
+        rules=$ADHOC_RULES
+    fi
+
+    harness=$profile_harness
+    model=$profile_model
+    effort=$profile_effort
+
+    if [ "$override_model_set" -eq 1 ]; then
+        if role_known "$override_model"; then
+            load_profile "$override_model"
+            harness=$profile_harness
+            model=$profile_model
+            effort=$profile_effort
+        elif model_value_known "$override_model"; then
+            model=$override_model
         else
-            # An explicit empty --model is invalid, not an omission.
-            [ -n "$override" ] || override='an empty value'
-            die "--model takes a role (builder, writer, critic) or a provider/model id such as agy/gemini-4-neon-high, not $override"
+            [ -n "$override_model" ] || override_model='an empty value'
+            die "--model takes a role (builder, writer, critic) or a non-empty model id without whitespace, not $override_model"
+        fi
+    fi
+
+    if [ "$override_harness_set" -eq 1 ]; then
+        if harness_known "$override_harness"; then
+            harness=$override_harness
+        else
+            [ -n "$override_harness" ] || override_harness='an empty value'
+            die "--harness takes pi, agy, claude, or opencode, not $override_harness"
+        fi
+    fi
+
+    if [ "$override_effort_set" -eq 1 ]; then
+        if effort_known "$override_effort"; then
+            effort=$override_effort
+        else
+            [ -n "$override_effort" ] || override_effort='an empty value'
+            die "--effort takes off, minimal, low, medium, high, xhigh, or max, not $override_effort"
         fi
     fi
 
@@ -277,28 +353,28 @@ cmd_launch() {
 
     rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
     [ -n "${REX_SESSION:-}" ] ||
-        die "REX_SESSION is not set; run from the Manager's Rex terminal"
+        die "REX_SESSION is not set; run from a Rex terminal"
     command -v recado >/dev/null 2>&1 ||
         die "recado is not on PATH; install it and run recado skill setup"
     manager=$(recado whoami 2>/dev/null) ||
-        die "recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session"
+        die "recado whoami cannot identify the caller; run recado skill setup and restart the session"
     [ -n "$manager" ] ||
-        die "recado whoami cannot identify the Manager; run recado skill setup and restart the Manager session"
+        die "recado whoami cannot identify the caller; run recado skill setup and restart the session"
 
-    if [ -n "$override_model" ]; then
-        model=$override_model
+    if [ -n "$stage" ]; then
+        stage_label=$stage
+        [ -z "$axis" ] || stage_label="$stage $axis"
+        name="subagent-$stage-$$"
+        tag="$name · $item · $stage_label"
+        report_name=$item-$stage
+        [ -z "$axis" ] || report_name=$report_name-$axis
     else
-        model=$(model_for "$model_role")
+        name="subagent-adhoc-$$"
+        tag="$name · $item"
+        report_name=$item
     fi
-    effort=$MODEL_EFFORT
-    stage_label=$stage
-    [ -z "$axis" ] || stage_label="$stage $axis"
-    name="subagent-$stage-$$"
-    tag="$name · $item · $stage_label"
 
     report_dir="$main/.agents/reports"
-    report_name=$item-$stage
-    [ -z "$axis" ] || report_name=$report_name-$axis
     report=$report_dir/$report_name.md
     if [ -e "$report" ]; then
         round=2
@@ -310,14 +386,15 @@ cmd_launch() {
     mkdir -p "$report_dir"
 
     send_cmd="recado send $manager --kind complete"
-    send_cmd="$send_cmd --meta $(q "item=$item") --meta $(q "stage=$stage")"
+    send_cmd="$send_cmd --meta $(q "item=$item")"
+    [ -z "$stage" ] || send_cmd="$send_cmd --meta $(q "stage=$stage")"
     [ -z "$axis" ] || send_cmd="$send_cmd --meta $(q "axis=$axis")"
     send_cmd="$send_cmd --meta $(q "report=$report")"
 
     prompt=$role
     prompt="$prompt
 
-You are $tag. Start every message to the Manager with [$tag], exactly as written here; it is the [TAG] in the commands below."
+You are $tag. Start every message to the caller with [$tag], exactly as written here; it is the [TAG] in the commands below."
     if [ -n "$skills" ]; then
         prompt="$prompt
 Read and follow these skills:
@@ -330,7 +407,7 @@ Run these exact commands to report and to ask (the address and tag are already f
 $send_cmd \"[$(dq "$tag")] TASK COMPLETE: <one line>\"
 recado ask $manager \"[$(dq "$tag")] QUESTION: <question>\"
 
-$SUBAGENT_RULES
+$rules
 
 $brief"
 
@@ -338,16 +415,22 @@ $brief"
     printf '%s\n' "$prompt" >"$prompt_file"
     trap 'rm -f "$prompt_file" "$prompt_file.err"' EXIT
 
-    case $model in
-        agy/*)
-            agent_cmd=(agy --model "${model#agy/}" --effort "$effort" --mode auto -i)
-            ;;
-        *)
+    case $harness in
+        pi)
             agent_cmd=(pi --append-system-prompt "$role" --model "$model" --thinking "$effort" --)
+            ;;
+        agy)
+            agent_cmd=(agy --model "$model" --effort "$effort" --mode auto -i)
+            ;;
+        claude)
+            agent_cmd=(claude --append-system-prompt "$role" --model "$model" --effort "$effort" --permission-mode auto --)
+            ;;
+        opencode)
+            agent_cmd=(opencode mini --model "$model" --prompt)
             ;;
     esac
 
-    printf '[subagent] %s model %s effort %s\n' "$name" "$model" "$effort" >&2
+    printf '[subagent] %s harness %s model %s effort %s\n' "$name" "$harness" "$model" "$effort" >&2
     created=$(
         "$rex_cmd" --autostart=false window new \
             -s "$REX_SESSION" "$name" -c "$cwd" \

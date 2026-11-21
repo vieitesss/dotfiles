@@ -51,3 +51,10 @@ keeps its routing rule; its update note says how launching now works.
 > (e.g. `agy/gemini-4-neon-high`) in addition to a role (`builder`, `writer`,
 > `critic`), and the read-only `retro` Stage was added to the Stage table for
 > session retrospectives.
+
+> Update (2026-11-21): Harness selection moved out of the model string into an
+> explicit `--harness` flag (`pi`, `agy`, `claude`, `opencode`), `--effort`
+> overrides the thinking effort (`off|minimal|low|medium|high|xhigh|max`), and
+> `load_profile` stores `(harness, model, effort)` per role. `--stage` is now
+> optional so callers outside `/manager` can launch ad-hoc Subagents on any
+> supported harness, model, and effort without injecting Stage skills.

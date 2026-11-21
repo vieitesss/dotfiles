@@ -43,7 +43,7 @@ The agent the user has put in charge of a session with `/manager`; it owns every
 _Avoid_: Supervisor, parent, orchestrator
 
 **Subagent**:
-An agent the Manager launches in its own session to run one Stage of one Work Item and report back; it never delegates.
+An agent launched in its own session to run one Stage of a Work Item (under a Manager) or an ad-hoc task and report back; it never delegates.
 _Avoid_: Child, worker, delegate
 
 **Work Item**:
@@ -62,8 +62,12 @@ _Avoid_: Step, phase, kind
 The Manager's record of a session's Work Items and the Stage each one is at.
 _Avoid_: Tracker, todo list
 
+**Harness**:
+The agent CLI runtime that executes a session, such as `pi`, `agy`, `claude`, or `opencode`.
+_Avoid_: Engine, runner, backend
+
 **Model profile**:
-A model and the one thinking-effort level it always runs with, named by a role such as builder, writer, or critic.
+A named role's default Harness, model, and thinking effort — such as builder, writer, or critic — which launch flags can override.
 _Avoid_: Model, effort setting
 
 **Question**:

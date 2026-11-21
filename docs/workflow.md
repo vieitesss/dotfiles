@@ -77,8 +77,11 @@ Defaults the flow leaves implicit:
   merges each finished branch.
 - At most one Subagent edits a worktree at a time. Read-only Stages (Research,
   Review, Retro) share it.
-- Each Stage's model profile (builder, writer, or critic) is fixed in the Stage
-  table of `agents/skills/subagents/scripts/subagent`.
+- Each Stage's default Model profile (harness, model, and thinking effort for
+  builder, writer, or critic) is fixed in the Stage and profile tables of
+  `agents/skills/subagents/scripts/subagent`. The Manager keeps those defaults
+  unless the user explicitly asks to override `--harness`, `--model`, or
+  `--effort`.
 - The Manager closes a Subagent's window when its report is accepted.
 - The Manager asks the user instead of looping when a decision belongs to the
   user, when a remaining finding blocks merge after verification, or when

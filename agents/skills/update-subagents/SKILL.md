@@ -1,22 +1,21 @@
 ---
 name: update-subagents
-description: Swap the model behind a Subagent model role (builder, writer, critic).
+description: Swap the harness, model, or thinking effort behind a Subagent model role (builder, writer, critic).
 disable-model-invocation: true
 ---
 
-1. Check the new model
+1. Check the new profile
 
-You receive a message like: "use <model> [instead of <model>]"
-- `<model>` ~= `<provider>/<actual_model>`. If `model` is not provided like `provider/actual_model`, ask the user to specify both elements.
-- Use `agy/<model>` for models that should launch in the `agy` harness (`agy --mode auto`); any other `<provider>/<actual_model>` launches in `pi`.
-- Ask the user for the thinking effort too, even if the message gives none.
-- the text in `[]` is optional by the user.
+You receive a message like: "use <model> [on <harness>] [instead of <model>]"
+- Confirm the **harness** (`pi`, `agy`, `claude`, or `opencode`). For `pi` and `opencode`, `<model>` should be `<provider>/<actual_model>`; if either part is missing, ask the user.
+- Ask the user for the thinking effort too (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`), even if the message gives none.
+- The text in `[]` is optional by the user.
 
-2. Show current models
+2. Show current profiles
 
-Show the roles, models and efforts in the model table near the top of ../subagents/scripts/subagent.
-The user decides which role's model is replaced with the model they indicated at the beginning.
+Show the roles, harnesses, models, and efforts in `load_profile` near the top of `../subagents/scripts/subagent`.
+The user decides which role's profile is replaced with the harness, model, and effort they indicated at the beginning.
 
 3. Update script
 
-Update the script, replacing that role's model and effort with the new ones. Stages pin roles, never model ids, so the model table is the only place to change.
+Update `load_profile` in `../subagents/scripts/subagent`, replacing that role's `profile_harness`, `profile_model`, and `profile_effort` with the new ones. Stages pin roles, never model ids, so `load_profile` is the only place to change.

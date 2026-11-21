@@ -47,9 +47,12 @@ trigger holds; skip it otherwise.
 | Review   | after Build or Refine; see Review                                                          |
 | Retro    | conducting a read-only retrospective of a session, writing one report                      |
 
-`subagent stages` prints each Stage's skills and model. Name the Stage in a
-brief, never its skills. Keep every Stage on its configured `subagent stages`
-model; stagger launches instead of swapping models for rate limits.
+`subagent stages` prints each Stage's default harness, model, effort and skills.
+Name the Stage in a brief, never its skills. Keep every Stage on its configured
+`subagent stages` profile unless the user explicitly specifies a harness, model,
+or effort — pass those through with `--harness`, `--model`, and `--effort`, and
+record session-wide overrides in the Ledger's Decisions. Never swap models on
+your own for rate limits; stagger launches instead.
 
 Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
 diff (`diff base != HEAD`), never a clean branch and never a fix round for
@@ -98,7 +101,8 @@ a scratch file with your file-write tool (`write` / `write_file`, not a shell
 heredoc), then launch:
 
 ```bash
-subagent launch --stage S [--axis A] --item I --cwd WORKTREE < BRIEF_FILE
+subagent launch --stage S [--axis A] --item I --cwd WORKTREE \
+  [--harness H] [--model M] [--effort E] < BRIEF_FILE
 ```
 
 It prints the name, window, block, and report path. Record the name and window
