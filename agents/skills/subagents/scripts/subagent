@@ -18,6 +18,8 @@ set -eu
 
 POLL_INTERVAL=0.25
 STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
+REAP_GRACE=3    # seconds a leftover process gets between SIGINT and SIGTERM
+REAP_POLL=0.2
 
 # The prompt travels through a temp file because Rex rejects over-long
 # commands. The child reads it, deletes it, then execs the agent with the
@@ -61,7 +63,9 @@ Usage:
           off, minimal, low, medium, high, xhigh, or max.
 
   subagent close WINDOW
-      Close the Subagent's Rex window.
+      Close the Subagent's Rex window, then stop each process still running in
+      the worktree it was launched in (SIGINT, then SIGTERM after 3 seconds),
+      printing every pid and command it stopped.
 
 REX_SESSION names the Rex session, and recado whoami the caller's address.
 EOF
@@ -237,6 +241,18 @@ skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
         fi
     done
     return 1
+}
+
+# close needs the worktree a window was launched in, so launch records it once
+# per window, in a file of its own to keep concurrent launches off each other.
+window_cwd_file() { # window_cwd_file MAIN WINDOW
+    printf '%s/.agents/subagent-windows/%s\n' "$1" "$(printf '%s' "$2" | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+record_window_cwd() { # record_window_cwd MAIN WINDOW CWD
+    rw_file=$(window_cwd_file "$1" "$2")
+    mkdir -p "${rw_file%/*}" || return 0
+    printf '%s\n' "$3" >"$rw_file.$$" && mv "$rw_file.$$" "$rw_file"
 }
 
 still_alive() { # still_alive BLOCK: the agent started and is still running
@@ -454,6 +470,8 @@ print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new ou
     block=$(printf '%s' "$created" | python3 -c 'import json, sys
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
+    record_window_cwd "$main" "$window" "$cwd" ||
+        printf '[subagent] cannot record the worktree of %s; close cannot reap it\n' "$window" >&2
 
     alive=1
     for ((poll = 0; poll < STARTUP_POLLS; poll++)); do
@@ -480,10 +498,117 @@ print(json.dumps(dict(zip(("name", "window", "block", "report"), sys.argv[1:])),
 
 # ------------------------------------------------------------------- close
 
+# A process that outlives its Rex window still keeps its cwd in the worktree,
+# so that is the handle close sweeps on. Processes outside the worktree, and
+# this shell's own parents, are left alone.
+self_and_parents() { # self_and_parents: pids close must never signal
+    sp_pid=$$
+    while [ "$sp_pid" -gt 1 ]; do
+        printf '%s\n' "$sp_pid"
+        sp_pid=$(ps -o ppid= -p "$sp_pid" 2>/dev/null | tr -d ' ')
+        [ -n "$sp_pid" ] || break
+    done
+}
+
+cwd_pids() { # cwd_pids DIR: pids whose cwd is DIR or below it
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -a -d cwd -Fpn 2>/dev/null | awk -v dir="$1" '
+            /^p/ { pid = substr($0, 2); next }
+            /^n/ {
+                path = substr($0, 2)
+                if (path == dir || index(path, dir "/") == 1) print pid
+            }'
+        return 0
+    fi
+    for cp_entry in /proc/[0-9]*/cwd; do
+        cp_path=$(readlink "$cp_entry" 2>/dev/null) || continue
+        cp_path=${cp_path% (deleted)}
+        case $cp_path in
+            "$1" | "$1"/*) printf '%s\n' "${cp_entry#/proc/}" | sed 's|/cwd$||' ;;
+        esac
+    done
+}
+
+reap_wait() { # reap_wait "PIDS" SECONDS: the pids still alive when it ends
+    rw_deadline=$(($(date +%s) + $2))
+    while [ "$(date +%s)" -lt "$rw_deadline" ]; do
+        rw_live=
+        for rw_pid in $1; do
+            if kill -0 "$rw_pid" 2>/dev/null; then
+                rw_live="$rw_live $rw_pid"
+            fi
+        done
+        [ -n "$rw_live" ] || return 0
+        sleep "$REAP_POLL"
+    done
+    printf '%s\n' "$rw_live"
+}
+
+reap_worktree() { # reap_worktree DIR: stop processes whose cwd is inside DIR
+    reap_root=$1
+    reap_keep=$(self_and_parents)
+    reap_list=$(mktemp "${TMPDIR:-/tmp}/subagent-reap.XXXXXX")
+    reap_pids=
+    for reap_pid in $(cwd_pids "$reap_root"); do
+        case "
+$reap_keep
+" in *"
+$reap_pid
+"*) continue ;; esac
+        reap_cmd=$(ps -o command= -p "$reap_pid" 2>/dev/null | cut -c1-70) || reap_cmd=
+        printf '%s\t%s\n' "$reap_pid" "$reap_cmd" >>"$reap_list"
+        reap_pids="$reap_pids $reap_pid"
+    done
+    if [ -z "$reap_pids" ]; then
+        rm -f "$reap_list"
+        printf '[subagent] no processes left in %s\n' "$reap_root" >&2
+        return 0
+    fi
+    for reap_pid in $reap_pids; do
+        kill -INT "$reap_pid" 2>/dev/null || true
+    done
+    reap_live=$(reap_wait "$reap_pids" "$REAP_GRACE")
+    for reap_pid in $reap_live; do
+        kill -TERM "$reap_pid" 2>/dev/null || true
+    done
+    [ -z "$reap_live" ] || reap_wait "$reap_live" "$REAP_GRACE" >/dev/null
+    while IFS="$(printf '\t')" read -r reap_pid reap_cmd; do
+        if kill -0 "$reap_pid" 2>/dev/null; then
+            printf '[subagent] pid %s survived SIGTERM (%s)\n' "$reap_pid" "$reap_cmd" >&2
+        else
+            printf '[subagent] stopped pid %s (%s)\n' "$reap_pid" "$reap_cmd" >&2
+        fi
+    done <"$reap_list"
+    rm -f "$reap_list"
+}
+
 cmd_close() {
     [ $# -eq 1 ] || die "close needs exactly one WINDOW"
+    window=$1
     rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
-    "$rex_cmd" --autostart=false window close "$1" >/dev/null
+    main=$(main_checkout "$PWD")
+    [ -n "$main" ] || main=$PWD
+    if "$rex_cmd" --autostart=false window close "$window" >/dev/null 2>&1; then
+        printf '[subagent] closed window %s\n' "$window" >&2
+    else
+        printf '[subagent] window %s is already gone\n' "$window" >&2
+    fi
+    cwd_file=$(window_cwd_file "$main" "$window")
+    if [ ! -f "$cwd_file" ]; then
+        printf '[subagent] no worktree recorded for %s; nothing to reap\n' "$window" >&2
+        return 0
+    fi
+    worktree=$(head -n 1 "$cwd_file")
+    rm -f "$cwd_file"
+    [ -d "$worktree" ] || return 0
+    # lsof and /proc report physical paths, so compare in the same terms.
+    worktree=$(cd "$worktree" && pwd -P)
+    if [ "$worktree" = "$main" ]; then
+        printf '[subagent] %s ran in the main checkout %s; not reaping its processes\n' \
+            "$window" "$worktree" >&2
+    else
+        reap_worktree "$worktree"
+    fi
 }
 
 # -------------------------------------------------------------------- main

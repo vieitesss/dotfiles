@@ -42,6 +42,7 @@ new_fixture() {
     fixture_opencode_prompt="$fixture_tmp/opencode-prompt.md"
     fixture_stderr="$fixture_tmp/stderr"
     fixture_process=
+    fixture_close_fail=
 
     mkdir -p "$fixture_repo" "$fixture_home" "$fixture_bin" "$fixture_tmp/tmp"
 
@@ -80,6 +81,12 @@ case "$1 ${2:-}" in
         ;;
     'capture '*)
         printf 'simulated agent crash on startup\n'
+        ;;
+    'window close')
+        if [ "${REX_STUB_CLOSE_FAIL:-}" = 1 ]; then
+            printf 'no such window\n' >&2
+            exit 1
+        fi
         ;;
     *) exit 1 ;;
 esac
@@ -242,6 +249,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             OPENCODE_STUB_LOG="$fixture_opencode_log" \
             OPENCODE_STUB_PROMPT="$fixture_opencode_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
+            REX_STUB_CLOSE_FAIL="$fixture_close_fail" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
     status=$?
@@ -358,6 +366,27 @@ expect_no_rex_command() {
         fail "expected no window to be opened; rex got:
 $(cat "$fixture_log")"
     fi
+}
+
+# Start a process with cwd DIR and echo its pid.
+leak_sleep() { # leak_sleep DIR PIDFILE [COMMAND...]
+    # The wrapper subshell exits at once, so init reaps the sleeper and
+    # `kill -0` tells the truth. `cd` stays outside the backgrounded command:
+    # backgrounding an `cd && sleep` list leaves a shell holding the caller's
+    # pipe. The sleeper's own stdio is redirected for the same reason.
+    ls_dir=$1
+    ls_pidfile=$2
+    shift 2
+    [ $# -gt 0 ] || set -- sleep 300
+    (cd "$ls_dir" || exit 1
+        "$@" </dev/null >/dev/null 2>&1 &
+        printf '%s\n' $! >"$ls_pidfile")
+    ls_tries=0
+    while [ ! -s "$ls_pidfile" ] && [ "$ls_tries" -lt 50 ]; do
+        sleep 0.1
+        ls_tries=$((ls_tries + 1))
+    done
+    cat "$ls_pidfile"
 }
 
 # --- stages lists harness, model, effort and skills -------------------------
@@ -521,7 +550,7 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     # every Stage report must open with it.
     expect_prompt_contains 'Open the report with a summary block of at most 10 lines'
     expect_prompt_contains 'verdict (or outcome), what changed, must-fix count, decisions needed'
-    expect_prompt_contains 'then `## ` sections'
+    expect_prompt_contains "then \`## \` sections"
 done
 
 rm -rf "$fixture_tmp"
@@ -753,6 +782,89 @@ BRIEF
 expect_nonzero
 expect_stderr_contains 'agent start failed'
 expect_stderr_contains 'simulated agent crash on startup'
+
+rm -rf "$fixture_tmp"
+
+# --- close stops what the Subagent left running in its worktree ------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+expect_contains '"window":"win-1"'
+leaked=$(leak_sleep "$worktree" "$fixture_tmp/leaked")
+bystander=$(leak_sleep "$fixture_tmp" "$fixture_tmp/bystander")
+checks=$((checks + 1))
+kill -0 "$leaked" 2>/dev/null || fail "the leaked process $leaked did not start"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $leaked"
+expect_stderr_contains 'sleep 300'
+checks=$((checks + 1))
+if kill -0 "$leaked" 2>/dev/null; then
+    fail "close left pid $leaked (cwd inside the worktree) running"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$bystander" 2>/dev/null; then
+    fail "close killed pid $bystander, whose cwd is outside the worktree"
+fi
+kill -TERM "$bystander" 2>/dev/null || true
+expect_rex_arg win-1
+
+rm -rf "$fixture_tmp"
+
+# --- a process that ignores SIGINT is terminated after the grace period ----
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+stubborn=$(leak_sleep "$worktree" "$fixture_tmp/stubborn" bash -c 'trap "" INT; exec sleep 300')
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $stubborn"
+checks=$((checks + 1))
+if kill -0 "$stubborn" 2>/dev/null; then
+    fail "close left pid $stubborn running; it ignored SIGINT and got no SIGTERM"
+fi
+
+rm -rf "$fixture_tmp"
+
+# --- close leaves the main checkout's processes alone ----------------------
+
+new_fixture
+run_subagent launch --stage build --item widget --cwd "$fixture_repo" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+kept=$(leak_sleep "$fixture_repo" "$fixture_tmp/kept")
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'not reaping'
+checks=$((checks + 1))
+if ! kill -0 "$kept" 2>/dev/null; then
+    fail "close killed pid $kept, which shares the main checkout's cwd"
+fi
+kill -TERM "$kept" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close succeeds when the window is already gone -----------------------
+
+new_fixture
+fixture_close_fail=1
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'already gone'
 
 rm -rf "$fixture_tmp"
 
