@@ -77,10 +77,16 @@ and shell or Python scripts are never needed.
   Subagent is open. Write `-` once you close it.
 - **Status**: `running` when launched; `question` when a Subagent sends a
   Question; `blocked on user` when a decision waits on the user; `done` when
-  the last Stage is accepted.
+  the last Stage is accepted. Cap the cell at 200 characters; put detail in
+  the report and point to it from the cell.
 - **Stage**: on acceptance, move the row to its next Stage and set `running`
   when you launch that Stage.
-- **Decisions**: one line each, with the answer and its date.
+- **`## Decisions`**: one line each, with the answer and its date. Check this
+  section before asking the user anything.
+- **`## Open questions to user`**: write a pending question here before asking
+  the user. Remove the line once answered and move the answer to
+  `## Decisions`.
+- **`## Operations`**: date each line and prune it when the fact stops holding.
 
 Update the Ledger at every change: a launch, a Question, an acceptance, a user
 decision.
@@ -195,9 +201,13 @@ itself.
   (`recado reply`, see `subagents`), or ask the user and record their answer
   under Decisions. Reversible implementation choices belong in the report's
   "Choices made" section for review, not as Questions.
-- On TASK COMPLETE, read the report and the diff. Rerun the command behind the
-  Build `Verdict` and the tests the report names. Never accept `INCONCLUSIVE`
-  or a wrong-surface check as done. Run anything over a minute in its own
+- On TASK COMPLETE, read only the report's opening summary block with
+  `sed -n '1,/^## /p' REPORT`. Every Stage report opens with a summary block
+  of at most 10 lines: `Verdict`, what changed, must-fix count, and decisions
+  needed. Open the rest of the report only when the summary block points
+  there. Inspect the diff, and rerun the command behind the Build `Verdict`
+  and the tests the report names. Never accept `INCONCLUSIVE` or a
+  wrong-surface check as done. Run anything over a minute in its own
   background call, then end your turn.
 - Turn each line in a report's "Pre-existing" section into a follow-up Work
   Item or issue instead of launching a fix round.
