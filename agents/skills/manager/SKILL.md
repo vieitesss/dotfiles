@@ -150,6 +150,8 @@ Work Items on disjoint code run in parallel, one worktree each. Work Items that
 overlap run in series in one worktree. At most one Subagent edits a worktree at
 a time; read-only Stages (Research, Review, Retro) may share one. Run at most
 two concurrent builds per provider, or stagger launches, to avoid rate limits.
+A cap on open Subagents across Managers is `subagent cap`, enforced at launch
+(see `subagents`); never keep that count by hand or by chat.
 Create each worktree before you launch into it, and pass its path as `--cwd`.
 
 Merge a branch into main yourself once its Work Item's Review loop is clean.

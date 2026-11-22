@@ -129,3 +129,25 @@ and stops nothing.
 A window that is already gone still closes cleanly. The tree is what Rex
 reports, so a process reparented to init before `close` runs is not in it and
 survives: that leftover is a known limit, not a reaping bug.
+
+## Open Subagents and the cap
+
+```bash
+subagent ls              # every open Subagent on this machine, and who launched it
+subagent cap [N|off]     # print, set, or clear the cap on open Stage Subagents
+```
+
+`ls` reads what each launch recorded, so it answers "how many are open, and
+whose" across every Manager. Never count `recado agents` output: it lists
+agents from other projects too. A Subagent whose agent exited drops off.
+
+Under a cap, a Stage launch past it exits non-zero and lists the open Stage
+Subagents; no window opens. Ad-hoc launches, such as Managers, are not
+counted. Treat the refusal like a Subagent still running: end your turn, and
+launch again once one of yours reports and you close it. When none of the open
+ones is yours, nothing of yours will wake you, so start one background command
+that exits when a place frees, then end your turn:
+
+```bash
+until [ "$(subagent ls | awk '$2 != "-"' | wc -l)" -lt "$(subagent cap)" ]; do sleep 30; done
+```
