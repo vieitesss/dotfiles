@@ -44,7 +44,8 @@ subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR] \
   (`subagent stages` lists all Stages, including `retro`). Omit `--stage` for
   an ad-hoc Subagent with no Stage skills injected (defaults to the `builder`
   profile unless overridden).
-- `--axis` applies to `--stage review` only: `spec`, `standards` or `debt`.
+- `--axis` applies to `--stage review` only: `spec`, `standards`, `debt`, or
+  `break`. The `break` axis loads `interrogate` instead of `review`.
 - `--item` names the Work Item or ad-hoc task. Leave the Stage name out:
   `batch`, not `batch-review`.
 - `--cwd` defaults to the current directory. Create the worktree first and pass
@@ -59,9 +60,9 @@ subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR] \
 - The brief goes on stdin. The launcher adds the tag, report path and recado
   commands.
 
-To run multiple Subagents in parallel (for example, comparing approaches across
-harnesses or models), call `subagent launch` once per Subagent with a distinct
-`--item` and keep each returned `name` and `window`.
+To run multiple Subagents in parallel, call `subagent launch` once per Subagent
+with a distinct `--item` and keep each returned `name` and `window`. For judged
+multi-harness comparisons on one Work Item, use the `arena` skill.
 
 Example ad-hoc launches:
 
@@ -75,7 +76,10 @@ subagent launch --item cmp-oc --harness opencode --model anthropic/claude-sonnet
 Launch prints JSON `{name, window, block, report}`. Keep `name` and `window`.
 `report` is `.agents/reports/<item>-<stage>[-<axis>].md` (or
 `.agents/reports/<item>.md` for ad-hoc launches) in the main checkout, suffixed
-`-r2`, `-r3`, ... automatically if a prior report already exists.
+`-r2`, `-r3`, ... automatically if a prior report already exists. Stage reports
+include "Choices made" and "Pre-existing" sections; Build reports end with a
+`Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE` line and the command and
+output behind it.
 
 Launch exits non-zero before anything runs when a Stage's skill is not
 installed for `--cwd`, or when `--harness`, `--model`, or `--effort` is invalid.

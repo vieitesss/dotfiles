@@ -1,6 +1,6 @@
 # Ledger
 
-Goal: Add session expiry to the login flow.
+Goal: Add session expiry to the login flow. Smallest change: store an expiry timestamp on the server session record and reject expired tokens in auth middleware.
 
 | Item       | Stage  | Status          | Subagent                                                                 | Worktree               |
 | ---------- | ------ | --------------- | ------------------------------------------------------------------------ | ---------------------- |
