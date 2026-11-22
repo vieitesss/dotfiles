@@ -50,7 +50,8 @@ new_fixture() {
         commit -q --allow-empty -m fixture
 
     # Every skill the Stage table names, installed in the throwaway HOME.
-    for skill in research tdd coding writing-for-agents zero-tech-debt retro review; do
+    for skill in research why tdd coding principles writing-for-agents unslop \
+        zero-tech-debt retro review interrogate; do
         mkdir -p "$fixture_home/.agents/skills/$skill"
         printf -- '---\nname: %s\n---\n' "$skill" > "$fixture_home/.agents/skills/$skill/SKILL.md"
     done
@@ -330,6 +331,16 @@ expect_log_line() { # expect_log_line FILE LABEL LINE
 $(cat "$1" 2>/dev/null)"
 }
 
+expect_row_contains() { # expect_row_contains LABEL NEEDLE: a `stages` row carries NEEDLE
+    checks=$((checks + 1))
+    row=$(printf '%s\n' "$output" | grep "^$1 " || true)
+    case "$row" in
+        *"$2"*) ;;
+        *) fail "expected the \`stages\` row '$1' to contain '$2'; got:
+$row" ;;
+    esac
+}
+
 expect_pi_option() { expect_log_line "$fixture_pi_log" "pi" "$1=$2"; }
 expect_agy_option() { expect_log_line "$fixture_agy_log" "agy" "$1=$2"; }
 expect_agy_flag() { expect_log_line "$fixture_agy_log" "agy" "$1"; }
@@ -361,6 +372,18 @@ expect_contains 'model gemini-4-neon-medium'
 expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
+expect_contains 'model github-copilot/gpt-6.2-sol'
+# Each row owns its skills: a list missing from one row must not pass because
+# another row still prints it.
+expect_row_contains research 'skills research, why'
+expect_row_contains build 'skills tdd, coding, principles'
+expect_row_contains write 'skills writing-for-agents, unslop'
+expect_row_contains refine 'skills zero-tech-debt, principles'
+# The break axis runs on the critic profile, asserted on its own row.
+expect_row_contains 'review --axis break' 'skills interrogate'
+expect_row_contains 'review --axis break' 'harness pi'
+expect_row_contains 'review --axis break' 'model github-copilot/gpt-6.2-sol'
+expect_row_contains 'review --axis break' 'effort high'
 
 rm -rf "$fixture_tmp"
 
@@ -403,6 +426,123 @@ BRIEF
 expect_nonzero
 expect_stderr_contains 'skills not installed'
 expect_stderr_contains 'tdd'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+# --- the break axis loads interrogate; the other axes keep review ----------
+
+new_fixture
+run_subagent launch --stage review --axis break --item widget <<'BRIEF'
+Find what this change breaks.
+BRIEF
+expect_status 0
+expect_prompt_contains 'interrogate/SKILL.md'
+expect_file_not_contains "$fixture_prompt" "prompt file" 'review/SKILL.md'
+expect_prompt_contains 'break-axis adversary the interrogate skill describes'
+expect_contains '"name":"subagent-review-'
+
+for axis in spec standards debt; do
+    rm -f "$fixture_prompt"
+    run_subagent launch --stage review --axis "$axis" --item widget <<'BRIEF'
+Check the change.
+BRIEF
+    expect_status 0
+    expect_prompt_contains 'review/SKILL.md'
+    expect_file_not_contains "$fixture_prompt" "prompt file" 'interrogate/SKILL.md'
+    expect_prompt_contains "Review stage, $axis axis"
+done
+
+rm -rf "$fixture_tmp"
+
+# --- each Stage names the skills its work needs ----------------------------
+
+new_fixture
+run_subagent launch --stage build --item widget <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+expect_prompt_contains 'tdd/SKILL.md'
+expect_prompt_contains 'coding/SKILL.md'
+expect_prompt_contains 'principles/SKILL.md'
+expect_prompt_contains 'prove it on the surface a user touches'
+expect_prompt_contains 'verify-*` skill when one exists'
+expect_prompt_contains 'commit the failing repro before the fix'
+expect_prompt_contains 'Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE'
+expect_prompt_contains 'and the command and output behind it'
+expect_prompt_contains 'an INCONCLUSIVE verdict or a check on the wrong surface is not a pass'
+
+rm -f "$fixture_prompt"
+run_subagent launch --stage refine --item widget <<'BRIEF'
+Reshape the widget.
+BRIEF
+expect_status 0
+expect_prompt_contains 'principles/SKILL.md'
+
+rm -f "$fixture_agy_prompt"
+run_subagent launch --stage write --item widget <<'BRIEF'
+Write the changelog.
+BRIEF
+expect_status 0
+expect_agy_prompt_contains 'unslop/SKILL.md'
+
+rm -f "$fixture_prompt"
+run_subagent launch --stage research --item widget <<'BRIEF'
+Find out how the widget is built.
+BRIEF
+expect_status 0
+expect_prompt_contains 'why/SKILL.md'
+
+rm -rf "$fixture_tmp"
+
+# --- every Stage prompt carries the shared Stage rules ---------------------
+
+new_fixture
+brief_text='Do the stage.'
+for stage_pair in research: build: write: refine: review:spec review:break retro:; do
+    stage=${stage_pair%%:*}
+    axis=${stage_pair#*:}
+    rm -f "$fixture_prompt"
+    if [ -n "$axis" ]; then
+        printf '%s\n' "$brief_text" |
+            run_subagent launch --stage "$stage" --axis "$axis" --item rules --harness pi
+    else
+        printf '%s\n' "$brief_text" |
+            run_subagent launch --stage "$stage" --item rules --harness pi
+    fi
+    expect_status 0
+    expect_prompt_contains "The brief's done criterion is the whole bar"
+    expect_prompt_contains 'add no gate, check, or scope above it'
+    expect_prompt_contains 'Pre-existing'
+    expect_prompt_contains 'one line each, never as a finding or a fix'
+    expect_prompt_contains 'make it and list it under "Choices made" with its reason'
+    expect_prompt_contains 'Product and irreversible choices stay questions: ask, end your turn, and wait for the answer'
+done
+
+rm -rf "$fixture_tmp"
+
+# --- a missing break-axis or build skill fails before a window opens ------
+
+new_fixture
+rm -rf "$fixture_home/.agents/skills/interrogate"
+run_subagent launch --stage review --axis break --item widget <<'BRIEF'
+Find what this change breaks.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'skills not installed'
+expect_stderr_contains 'interrogate'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+new_fixture
+rm -rf "$fixture_home/.agents/skills/principles"
+run_subagent launch --stage build --item widget <<'BRIEF'
+Add the widget.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'skills not installed'
+expect_stderr_contains 'principles'
 expect_no_rex_command
 
 rm -rf "$fixture_tmp"

@@ -27,7 +27,7 @@ STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
 CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
 
 # What every Stage Subagent is told, whichever Stage it runs.
-SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. A decision the brief leaves open (a proposal, a choice between approaches) is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. The brief's done criterion is the whole bar: add no gate, check, or scope above it. A problem that behaves the same on the diff base goes in the report under \"Pre-existing\", one line each, never as a finding or a fix. A reversible implementation choice is yours to make: make it and list it under \"Choices made\" with its reason. Product and irreversible choices stay questions: ask, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
 
 # What an ad-hoc Subagent (launched without --stage) is told.
 ADHOC_RULES="The calling agent coordinates the work; you run this task and report. Send it two kinds of message only: the completion report, and questions. A decision the brief leaves open is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt is a follow-up: apply it, update your report file, and report again. Do every part of this task yourself. Reporting is part of every task, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
@@ -73,22 +73,22 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
     stage_axes=("")
     case $1 in
         research)
-            skill_names=research
+            skill_names='research why'
             model_role=builder
             role="You run the Research stage: you are the background agent the research skill describes, so do its job yourself. Change no files except the findings file."
             ;;
         build)
-            skill_names='tdd coding'
+            skill_names='tdd coding principles'
             model_role=builder
-            role="You run the Build stage: implement the brief and prove it with lint and tests scoped to what you touched. Refine and Review are later Stages run by other Subagents, so finish at your own report. The brief is your approved plan; commit your work on the branch. Use \`recado ask\` when the brief leaves a product choice open instead of guessing."
+            role="You run the Build stage: implement the brief and prove it on the surface a user touches (a CLI run, an HTTP call, a UI drive), using the repo's \`verify-*\` skill when one exists, plus lint and tests scoped to what you touched; for a bug, commit the failing repro before the fix. Refine and Review are later Stages run by other Subagents, so finish at your own report. The brief is your approved plan; commit your work on the branch. End the report with \`Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE\` and the command and output behind it; an INCONCLUSIVE verdict or a check on the wrong surface is not a pass."
             ;;
         write)
-            skill_names=writing-for-agents
+            skill_names='writing-for-agents unslop'
             model_role=writer
             role="You run the Write stage: write the prose the brief asks for."
             ;;
         refine)
-            skill_names=zero-tech-debt
+            skill_names='zero-tech-debt principles'
             model_role=critic
             role="You run the Refine stage: reshape the code this Work Item touched toward its intended design, keeping behaviour and tests green. Your scope is the diff since the brief's base, and the code it touches."
             ;;
@@ -100,8 +100,13 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
         review)
             skill_names=review
             model_role=critic
-            stage_axes=(spec standards debt)
-            role="You run the Review stage, ${2:-} axis: you are the ${2:-} sub-agent the review skill describes, so apply its brief yourself. Change no files."
+            stage_axes=(spec standards debt break)
+            if [ "${2:-}" = break ]; then
+                skill_names=interrogate
+                role="You run the Review stage, break axis: you are the break-axis adversary the interrogate skill describes, so apply its brief yourself. Change no files."
+            else
+                role="You run the Review stage, ${2:-} axis: you are the ${2:-} sub-agent the review skill describes, so apply its brief yourself. Change no files."
+            fi
             ;;
         *) return 1 ;;
     esac
@@ -161,6 +166,7 @@ print_stages() {
         load_stage "$stage"
         load_profile "$model_role"
         for axis in "${stage_axes[@]}"; do
+            [ -z "$axis" ] || load_stage "$stage" "$axis"
             label=$stage
             [ -z "$axis" ] || label="$stage --axis $axis"
             printf '%-24s harness %-10s model %-36s effort %-8s skills %s\n' \
@@ -174,9 +180,9 @@ check_axis() { # check_axis STAGE AXIS
     case $1 in
         review)
             case $2 in
-                spec | standards | debt) ;;
-                '') die "--stage review needs --axis spec|standards|debt" ;;
-                *) die "--stage review takes --axis spec|standards|debt, not $2" ;;
+                spec | standards | debt | break) ;;
+                '') die "--stage review needs --axis spec|standards|debt|break" ;;
+                *) die "--stage review takes --axis spec|standards|debt|break, not $2" ;;
             esac
             ;;
         '')
