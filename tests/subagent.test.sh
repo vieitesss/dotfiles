@@ -50,7 +50,8 @@ new_fixture() {
         commit -q --allow-empty -m fixture
 
     # Every skill the Stage table names, installed in the throwaway HOME.
-    for skill in research tdd coding writing-for-agents zero-tech-debt retro review; do
+    for skill in research why tdd coding principles writing-for-agents unslop \
+        zero-tech-debt retro review interrogate; do
         mkdir -p "$fixture_home/.agents/skills/$skill"
         printf -- '---\nname: %s\n---\n' "$skill" > "$fixture_home/.agents/skills/$skill/SKILL.md"
     done
@@ -361,6 +362,14 @@ expect_contains 'model gemini-4-neon-medium'
 expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
+expect_contains 'model github-copilot/gpt-6.2-sol'
+break_row=$(printf '%s\n' "$output" | grep '^review --axis break ' || true)
+checks=$((checks + 1))
+case "$break_row" in
+    *'skills interrogate'*) ;;
+    *) fail "expected \`stages\` to list review --axis break with interrogate; got:
+$break_row" ;;
+esac
 
 rm -rf "$fixture_tmp"
 
@@ -403,6 +412,112 @@ BRIEF
 expect_nonzero
 expect_stderr_contains 'skills not installed'
 expect_stderr_contains 'tdd'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+# --- the break axis loads interrogate; the other axes keep review ----------
+
+new_fixture
+run_subagent launch --stage review --axis break --item widget <<'BRIEF'
+Find what this change breaks.
+BRIEF
+expect_status 0
+expect_prompt_contains 'interrogate/SKILL.md'
+expect_file_not_contains "$fixture_prompt" "prompt file" 'review/SKILL.md'
+expect_prompt_contains 'break-axis adversary the interrogate skill describes'
+expect_contains '"name":"subagent-review-'
+
+rm -f "$fixture_prompt"
+run_subagent launch --stage review --axis spec --item widget <<'BRIEF'
+Check the spec.
+BRIEF
+expect_status 0
+expect_prompt_contains 'review/SKILL.md'
+expect_file_not_contains "$fixture_prompt" "prompt file" 'interrogate/SKILL.md'
+
+rm -rf "$fixture_tmp"
+
+# --- each Stage names the skills its work needs ----------------------------
+
+new_fixture
+run_subagent launch --stage build --item widget <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+expect_prompt_contains 'tdd/SKILL.md'
+expect_prompt_contains 'coding/SKILL.md'
+expect_prompt_contains 'principles/SKILL.md'
+expect_prompt_contains 'Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE'
+
+rm -f "$fixture_prompt"
+run_subagent launch --stage refine --item widget <<'BRIEF'
+Reshape the widget.
+BRIEF
+expect_status 0
+expect_prompt_contains 'principles/SKILL.md'
+
+rm -f "$fixture_agy_prompt"
+run_subagent launch --stage write --item widget <<'BRIEF'
+Write the changelog.
+BRIEF
+expect_status 0
+expect_agy_prompt_contains 'unslop/SKILL.md'
+
+rm -f "$fixture_prompt"
+run_subagent launch --stage research --item widget <<'BRIEF'
+Find out how the widget is built.
+BRIEF
+expect_status 0
+expect_prompt_contains 'why/SKILL.md'
+
+rm -rf "$fixture_tmp"
+
+# --- every Stage prompt carries the shared Stage rules ---------------------
+
+new_fixture
+brief_text='Do the stage.'
+for stage_pair in research: build: write: refine: review:spec review:break retro:; do
+    stage=${stage_pair%%:*}
+    axis=${stage_pair#*:}
+    rm -f "$fixture_prompt"
+    if [ -n "$axis" ]; then
+        printf '%s\n' "$brief_text" |
+            run_subagent launch --stage "$stage" --axis "$axis" --item rules --harness pi
+    else
+        printf '%s\n' "$brief_text" |
+            run_subagent launch --stage "$stage" --item rules --harness pi
+    fi
+    expect_status 0
+    expect_prompt_contains "The brief's done criterion is the whole bar"
+    expect_prompt_contains 'Pre-existing'
+    expect_prompt_contains 'Choices made'
+done
+
+rm -rf "$fixture_tmp"
+
+# --- a missing break-axis or build skill fails before a window opens ------
+
+new_fixture
+rm -rf "$fixture_home/.agents/skills/interrogate"
+run_subagent launch --stage review --axis break --item widget <<'BRIEF'
+Find what this change breaks.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'skills not installed'
+expect_stderr_contains 'interrogate'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+new_fixture
+rm -rf "$fixture_home/.agents/skills/principles"
+run_subagent launch --stage build --item widget <<'BRIEF'
+Add the widget.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'skills not installed'
+expect_stderr_contains 'principles'
 expect_no_rex_command
 
 rm -rf "$fixture_tmp"
