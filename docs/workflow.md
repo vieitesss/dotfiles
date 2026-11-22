@@ -158,7 +158,7 @@ sequenceDiagram
     V-->>M: TASK COMPLETE
     M->>V: subagent close WINDOW
     Note over M: Manager reruns each break command, sends verified findings to a fresh Build, then at most one verification Review
-    Note over M: Pre-existing lines become follow-up Work Items; Manager marks the Work Item done
+    Note over M: Pre-existing lines become follow-up Work Items, and Manager marks the Work Item done
     M->>U: decision-first report: what waits on user, Work Item Verdicts, calls with pick, evidence, and risk
     Note over U: Outside /manager: run babysit to drive the PR through conflicts, threads, and CI
 ```
