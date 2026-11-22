@@ -358,7 +358,9 @@ expect_contains 'build'
 expect_contains 'harness pi'
 expect_contains 'harness agy'
 expect_contains 'model gemini-4-neon-medium'
-expect_contains 'effort high'
+expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
+expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
+expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
 
 rm -rf "$fixture_tmp"
 
@@ -432,7 +434,7 @@ Write the changelog.
 BRIEF
 expect_status 0
 expect_agy_option --model gemini-4-neon-medium
-expect_agy_option --effort high
+expect_agy_option --effort medium
 expect_agy_option --mode auto
 expect_agy_flag -i
 expect_agy_env GIT_EDITOR true
