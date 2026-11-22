@@ -331,6 +331,16 @@ expect_log_line() { # expect_log_line FILE LABEL LINE
 $(cat "$1" 2>/dev/null)"
 }
 
+expect_row_contains() { # expect_row_contains LABEL NEEDLE: a `stages` row carries NEEDLE
+    checks=$((checks + 1))
+    row=$(printf '%s\n' "$output" | grep "^$1 " || true)
+    case "$row" in
+        *"$2"*) ;;
+        *) fail "expected the \`stages\` row '$1' to contain '$2'; got:
+$row" ;;
+    esac
+}
+
 expect_pi_option() { expect_log_line "$fixture_pi_log" "pi" "$1=$2"; }
 expect_agy_option() { expect_log_line "$fixture_agy_log" "agy" "$1=$2"; }
 expect_agy_flag() { expect_log_line "$fixture_agy_log" "agy" "$1"; }
@@ -363,13 +373,17 @@ expect_contains 'build                    harness pi         model opencode-go/d
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'model github-copilot/gpt-6.2-sol'
-break_row=$(printf '%s\n' "$output" | grep '^review --axis break ' || true)
-checks=$((checks + 1))
-case "$break_row" in
-    *'skills interrogate'*) ;;
-    *) fail "expected \`stages\` to list review --axis break with interrogate; got:
-$break_row" ;;
-esac
+# Each row owns its skills: a list missing from one row must not pass because
+# another row still prints it.
+expect_row_contains research 'skills research, why'
+expect_row_contains build 'skills tdd, coding, principles'
+expect_row_contains write 'skills writing-for-agents, unslop'
+expect_row_contains refine 'skills zero-tech-debt, principles'
+# The break axis runs on the critic profile, asserted on its own row.
+expect_row_contains 'review --axis break' 'skills interrogate'
+expect_row_contains 'review --axis break' 'harness pi'
+expect_row_contains 'review --axis break' 'model github-copilot/gpt-6.2-sol'
+expect_row_contains 'review --axis break' 'effort high'
 
 rm -rf "$fixture_tmp"
 
@@ -428,13 +442,16 @@ expect_file_not_contains "$fixture_prompt" "prompt file" 'review/SKILL.md'
 expect_prompt_contains 'break-axis adversary the interrogate skill describes'
 expect_contains '"name":"subagent-review-'
 
-rm -f "$fixture_prompt"
-run_subagent launch --stage review --axis spec --item widget <<'BRIEF'
-Check the spec.
+for axis in spec standards debt; do
+    rm -f "$fixture_prompt"
+    run_subagent launch --stage review --axis "$axis" --item widget <<'BRIEF'
+Check the change.
 BRIEF
-expect_status 0
-expect_prompt_contains 'review/SKILL.md'
-expect_file_not_contains "$fixture_prompt" "prompt file" 'interrogate/SKILL.md'
+    expect_status 0
+    expect_prompt_contains 'review/SKILL.md'
+    expect_file_not_contains "$fixture_prompt" "prompt file" 'interrogate/SKILL.md'
+    expect_prompt_contains "Review stage, $axis axis"
+done
 
 rm -rf "$fixture_tmp"
 
@@ -448,7 +465,12 @@ expect_status 0
 expect_prompt_contains 'tdd/SKILL.md'
 expect_prompt_contains 'coding/SKILL.md'
 expect_prompt_contains 'principles/SKILL.md'
+expect_prompt_contains 'prove it on the surface a user touches'
+expect_prompt_contains 'verify-*` skill when one exists'
+expect_prompt_contains 'commit the failing repro before the fix'
 expect_prompt_contains 'Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE'
+expect_prompt_contains 'and the command and output behind it'
+expect_prompt_contains 'an INCONCLUSIVE verdict or a check on the wrong surface is not a pass'
 
 rm -f "$fixture_prompt"
 run_subagent launch --stage refine --item widget <<'BRIEF'
@@ -490,8 +512,11 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     fi
     expect_status 0
     expect_prompt_contains "The brief's done criterion is the whole bar"
+    expect_prompt_contains 'add no gate, check, or scope above it'
     expect_prompt_contains 'Pre-existing'
-    expect_prompt_contains 'Choices made'
+    expect_prompt_contains 'one line each, never as a finding or a fix'
+    expect_prompt_contains 'make it and list it under "Choices made" with its reason'
+    expect_prompt_contains 'Product and irreversible choices stay questions: ask, end your turn, and wait for the answer'
 done
 
 rm -rf "$fixture_tmp"
