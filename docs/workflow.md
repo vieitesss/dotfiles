@@ -3,8 +3,9 @@
 How a goal moves from the user's request to a changed, reviewed branch. Terms
 are defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape
 are [ADR 0003](adr/0003-subagent-is-a-stage-instance.md),
-[ADR 0006](adr/0006-manager-always-delegates.md), and
-[ADR 0007](adr/0007-bash-launcher-rex-only.md).
+[ADR 0006](adr/0006-manager-always-delegates.md),
+[ADR 0007](adr/0007-bash-launcher-rex-only.md), and
+[ADR 0008](adr/0008-arena-reuses-build-stage.md).
 
 ## Flow
 
@@ -15,8 +16,8 @@ is a fresh session for one Stage of one Work Item, started by
 ```mermaid
 flowchart TD
     req([User ready to implement]) --> mgr(["/manager invoked"])
-    mgr --> split(["Split the goal into Work Items<br/>write .agents/ledger.md"])
-    split --> next(["Take the next Work Item"])
+    mgr --> restate(["Restate goal and smallest change<br/>write Goal line and Work Items to .agents/ledger.md"])
+    restate --> next(["Take the next Work Item"])
     next --> facts{"Needs outside facts?"}
     facts -- yes --> research{{"Research (builder)"}}
     facts -- no --> kind{"Code, prose, or retro?"}
@@ -25,8 +26,13 @@ flowchart TD
     write --> done
     kind -- retro --> retro{{"Retro (read-only)"}}
     retro --> done
-    kind -- code --> build{{"Build (builder)"}}
-    build --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
+    kind -- code --> arenap{"Several valid shapes<br/>or one-way door?"}
+    arenap -- yes --> arena(["Arena: competing Builds,<br/>cross-vendor judge, graft Build"])
+    arenap -- no --> build{{"Build (builder)<br/>ends with Verdict"}}
+    arena --> verdict
+    build --> verdict{"Manager reruns Verdict command<br/>VERIFIED?"}
+    verdict -- "NOT VERIFIED / INCONCLUSIVE" --> build
+    verdict -- VERIFIED --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
     refinep -- yes --> refine{{"Refine (critic)"}}
     refinep -- no --> review
     refine --> review
@@ -35,42 +41,62 @@ flowchart TD
         spec{{"Spec: always"}}
         standards{{"Standards: several modules or reshaped"}}
         debt{{"Debt: several modules or reshaped"}}
+        breakax{{"Break: runtime-behaviour diffs, proof-only"}}
     end
 
-    review --> findings{"Findings?"}
+    review --> findings{"Findings?<br/>Manager reruns break commands"}
     findings -- none --> prove(["Manager may run tests and lint"])
     prove --> done
     findings -- "needs the user" --> ask(["Ask the user"])
     ask --> findings
-    findings -- "Spec / Standards / Debt" --> fixbuild{{"Build: fresh fix round"}}
+    findings -- "Spec / Standards / Debt / Break" --> fixbuild{{"Build: fresh fix round"}}
     fixbuild --> verify{{"Review: at most one<br/>verification round"}}
     verify -- clean --> prove
     verify -- "findings remain" --> followup(["Create one follow-up issue;<br/>block on user if merge-blocking"])
 
     done(["Mark the Work Item done in the Ledger"]) --> more{"More Work Items?"}
     more -- yes --> next
-    more -- no --> report(["Report to the user:<br/>changes, tests, open decisions"])
+    more -- no --> report(["Decision-first report:<br/>waits, Verdicts, open calls"])
+    report --> ship(["Outside /manager: babysit drives PR to merge-ready"])
 ```
 
 Defaults the flow leaves implicit:
 
 - The Manager is invoked only when the user is ready to implement. Shaping,
-  design, diagnosis, planning, and shipping happen outside it.
+  design, diagnosis, planning, and shipping happen outside it. After the
+  Manager reports, `babysit` owns shipping the PR through conflicts, review
+  threads, and CI.
+- For a Work Item that admits several valid shapes or is a one-way door, the
+  Manager can run an Arena before normal Build. Competing Build Subagents solve
+  the same brief on distinct Harnesses in separate worktrees, a read-only judge
+  on another vendor scores them against a rubric, and a fresh Build Subagent
+  grafts the strongest parts onto the picked base.
+- Every Build report ends with a Verdict (`VERIFIED`, `NOT VERIFIED`, or
+  `INCONCLUSIVE`) backed by a command and its observed output on the real code
+  or interface. The Manager reruns that command before accepting the report.
+  `INCONCLUSIVE` is not done.
 - Review follows Build (and Refine when Refine ran), never Write or Retro. Spec
   always runs. Standards and Debt run in parallel with Spec when the change
-  spans several modules or reshapes one.
+  spans several modules or reshapes one. Break runs in parallel for diffs that
+  change runtime behaviour; it loads `interrogate`, keeps only findings proven
+  by a rerunnable command, and the Manager reruns each finding's command before
+  accepting it.
 - Retro runs a read-only retrospective of a session and writes one report; it
   never edits code and skips Review.
 - Refine is a standalone `zero-tech-debt` cleanup pass on an existing Work Item
   diff, never a fix round for Review findings. All Review findings (Spec,
-  Standards, and Debt) go to a fresh Build Subagent.
+  Standards, Debt, and Break) go to a fresh Build Subagent.
 - Verification after a fix round runs one Review scoped to the original
   findings (never `r3`/`r4` Review rounds); if findings remain, non-blocking
   ones become one follow-up issue before merge, while merge-blocking ones get
   at most one targeted final Build round verified by the Manager (or a
   follow-up issue and `blocked on user` if any repro still fails).
-- Pre-existing bugs that already behaved the same on `main` become separate
-  follow-up Work Items instead of blocking the merge.
+- Subagent reports include "Choices made" (reversible implementation choices
+  the Subagent made with its reason) and "Pre-existing" (one line per problem
+  that already behaved the same on the diff base, never reported as a finding
+  or fixed in place). The Manager turns "Pre-existing" lines into separate
+  follow-up Work Items instead of blocking the merge. Product and irreversible
+  choices remain Questions.
 - Every round uses fresh Subagents. A follow-up before the Manager accepts a
   report goes to the same Subagent.
 - Work Items on disjoint code run in parallel, each in its own worktree.
@@ -112,24 +138,27 @@ sequenceDiagram
     participant V as Subagents: Review
 
     U->>M: /manager + goal
-    M->>L: write Work Items to .agents/ledger.md
+    M->>U: restate goal and smallest change
+    M->>L: write Goal line and Work Items to .agents/ledger.md
+    Note over M,B: Optional Arena: competing Builds on distinct Harnesses, cross-vendor judge, graft Build
     M->>B: subagent launch --stage build --item I
-    B-->>M: QUESTION
+    B-->>M: QUESTION (product or irreversible choice)
     M-->>B: answer (or ask the User first)
-    B->>L: write build report
+    B->>L: write build report (Verdict, Choices made, Pre-existing)
     B-->>M: TASK COMPLETE
-    M-->>B: follow-up if the spot-check fails
+    M-->>B: follow-up if Verdict rerun fails or INCONCLUSIVE
     B-->>M: TASK COMPLETE
     M->>B: subagent close WINDOW
     M->>R: subagent launch --stage refine (only if Build reshaped an existing module)
     R->>L: write refine report
     R-->>M: TASK COMPLETE
     M->>R: subagent close WINDOW
-    M->>V: subagent launch --stage review, one per axis
-    V->>L: write findings
+    M->>V: subagent launch --stage review, one per axis (spec, standards, debt, break)
+    V->>L: write findings (break keeps only proven failures)
     V-->>M: TASK COMPLETE
     M->>V: subagent close WINDOW
-    Note over M: review findings go to a fresh Build, then at most one verification Review (remaining findings become one follow-up issue)
-    Note over M: Manager may run tests and lint, then marks the Work Item done
-    M->>U: report: changes, tests, open decisions
+    Note over M: Manager reruns each break command, sends verified findings to a fresh Build, then at most one verification Review
+    Note over M: Pre-existing lines become follow-up Work Items; Manager marks the Work Item done
+    M->>U: decision-first report: what waits on user, Work Item Verdicts, calls with pick, evidence, and risk
+    Note over U: Outside /manager: run babysit to drive the PR through conflicts, threads, and CI
 ```

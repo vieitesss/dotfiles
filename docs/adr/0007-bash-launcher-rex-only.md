@@ -58,3 +58,9 @@ keeps its routing rule; its update note says how launching now works.
 > `load_profile` stores `(harness, model, effort)` per role. `--stage` is now
 > optional so callers outside `/manager` can launch ad-hoc Subagents on any
 > supported harness, model, and effort without injecting Stage skills.
+
+> Update (2026-11-22): The Stage table now loads `tdd coding principles` for
+> Build, `zero-tech-debt principles` for Refine, `research why` for Research,
+> `writing-for-agents unslop` for Write, and `interrogate` for Review's `break`
+> axis (other Review axes keep `review`). Model profiles are unchanged except
+> the writer profile now uses `medium` effort.
