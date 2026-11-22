@@ -517,6 +517,11 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     expect_prompt_contains 'one line each, never as a finding or a fix'
     expect_prompt_contains 'make it and list it under "Choices made" with its reason'
     expect_prompt_contains 'Product and irreversible choices stay questions: ask, end your turn, and wait for the answer'
+    # The Manager reads only this block unless it points at the detail, so
+    # every Stage report must open with it.
+    expect_prompt_contains 'Open the report with a summary block of at most 10 lines'
+    expect_prompt_contains 'verdict (or outcome), what changed, must-fix count, decisions needed'
+    expect_prompt_contains 'then `## ` sections'
 done
 
 rm -rf "$fixture_tmp"
@@ -633,6 +638,7 @@ expect_claude_env CLAUDECODE '<unset>'
 expect_claude_prompt_contains '· cmp-claude]'
 expect_claude_prompt_contains 'Compare approach A.'
 expect_file_not_contains "$fixture_claude_prompt" "claude prompt" "Read and follow these skills:"
+expect_file_not_contains "$fixture_claude_prompt" "claude prompt" 'summary block of at most 10 lines'
 expect_contains '"name":"subagent-adhoc-'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/cmp-claude.md\""
 
