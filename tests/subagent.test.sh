@@ -576,6 +576,10 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     expect_prompt_contains 'Open the report with a summary block of at most 10 lines'
     expect_prompt_contains 'verdict (or outcome), what changed, must-fix count, decisions needed'
     expect_prompt_contains "then \`## \` sections"
+    expect_prompt_contains 'Start a server only on a port the OS picks (port 0)'
+    expect_prompt_contains 'never stop a process you did not start'
+    # shellcheck disable=SC2016 # the backticks are the rule's own text.
+    expect_prompt_contains 'never print `.env` or another secrets file'
 done
 
 rm -rf "$fixture_tmp"
@@ -691,6 +695,8 @@ expect_claude_option --permission-mode auto
 expect_claude_env CLAUDECODE '<unset>'
 expect_claude_prompt_contains '· cmp-claude]'
 expect_claude_prompt_contains 'Compare approach A.'
+expect_claude_prompt_contains 'Start a server only on a port the OS picks (port 0)'
+expect_claude_prompt_contains 'never stop a process you did not start'
 expect_file_not_contains "$fixture_claude_prompt" "claude prompt" "Read and follow these skills:"
 expect_file_not_contains "$fixture_claude_prompt" "claude prompt" 'summary block of at most 10 lines'
 expect_contains '"name":"subagent-adhoc-'

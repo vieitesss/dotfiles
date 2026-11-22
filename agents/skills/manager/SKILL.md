@@ -133,6 +133,11 @@ in the Ledger. The brief carries:
   fix brief states a checkable repro for each must-fix finding;
 - the decisions it brings back as a Question instead of making.
 
+Leave out what `subagent launch` already tells every Subagent: tool use, free
+ports, processes and secrets it must not touch, and the non-interactive git
+environment (`GIT_EDITOR=true` and the rest). A rule copied into each brief by
+hand drifts between copies; one the repo enforces needs no brief line at all.
+
 Never put the new report path in the brief; launch adds it. Point Write briefs
 for human-facing docs, such as READMEs and PR bodies, at the `technical-writing`
 skill. Stages hand over through files: point the next brief at earlier reports
