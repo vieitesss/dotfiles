@@ -64,8 +64,9 @@ fixes. Rot beyond the touched code becomes a new Work Item.
 ## Ledger
 
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
-outlives `/clear`, compaction, a handoff, and resuming on another device. The
-`git/ignore` manifest keeps it and `.agents/reports/` out of git. Edit it with
+outlives `/clear`, compaction, a handoff, a restart, and resuming on another
+device. The `git/ignore` manifest keeps it, `.agents/handoff.md`,
+`.agents/briefs/`, and `.agents/reports/` out of git. Edit it with
 your file-edit tools (`edit` / `write` / `edit_file` / `write_file`, not shell
 scripts) from the template in `LEDGER_EXAMPLE.md`. When starting a new goal,
 archive or clear completed rows and stale decisions from earlier goals so the
@@ -91,8 +92,10 @@ and shell or Python scripts are never needed.
 Update the Ledger at every change: a launch, a Question, an acceptance, a user
 decision.
 
-Handing the session to another Manager goes through the `handoff` skill. Its
-document and the Ledger are the whole handover.
+Handing the session to another Manager goes through the `handoff` skill. Save
+its document as `.agents/handoff.md` beside the Ledger, not in `$TMPDIR`: a
+restart empties the temporary directory. That document and the Ledger are the
+whole handover.
 
 ## Sizing a Work Item
 
@@ -105,8 +108,10 @@ series.
 ## Briefs
 
 A Subagent starts cold: its brief is everything it knows. Write each brief to
-a scratch file with your file-write tool (`write` / `write_file`, not a shell
-heredoc), then launch:
+`.agents/briefs/ITEM-STAGE.md` at the main checkout's root with your
+file-write tool (`write` / `write_file`, not a shell heredoc), then launch.
+Never write it under `/tmp` or `$TMPDIR`: a restart empties them, and the
+Ledger's pointers then lead nowhere.
 
 ```bash
 subagent launch --stage S [--axis A] --item I --cwd WORKTREE \
