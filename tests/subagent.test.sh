@@ -41,8 +41,10 @@ new_fixture() {
     fixture_opencode_log="$fixture_tmp/opencode.log"
     fixture_opencode_prompt="$fixture_tmp/opencode-prompt.md"
     fixture_stderr="$fixture_tmp/stderr"
+    fixture_state="$fixture_tmp/state"
     fixture_process=
     fixture_close_fail=
+    SG_CWD=
 
     mkdir -p "$fixture_repo" "$fixture_home" "$fixture_bin" "$fixture_tmp/tmp"
 
@@ -77,7 +79,11 @@ case "$1 ${2:-}" in
         printf '{"window_id":"win-1","block_ids":["blk-1"]}\n'
         ;;
     'block call')
-        printf '%s\n' "${REX_STUB_PROCESS:-{\"last_exit\":null}}"
+        if [ -n "${REX_STUB_PROCESS:-}" ]; then
+            printf '%s\n' "$REX_STUB_PROCESS"
+        else
+            printf '{"last_exit":null}\n'
+        fi
         ;;
     'capture '*)
         printf 'simulated agent crash on startup\n'
@@ -225,13 +231,14 @@ STUB
 run_subagent() { # run_subagent ARGS... < BRIEF
     set +e
     output=$(
-        cd "$fixture_repo" || exit 1
+        cd "${SG_CWD:-$fixture_repo}" || exit 1
         # Drop the variables the child must set itself, so a value inherited
         # from the caller cannot make the assertion pass.
         env -u CI -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
             -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED \
             CLAUDECODE=1 \
             HOME="$fixture_home" \
+            XDG_STATE_HOME="$fixture_state" \
             PATH="$fixture_bin:$PATH" \
             STUB_BIN="$fixture_bin" \
             SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
@@ -369,24 +376,28 @@ $(cat "$fixture_log")"
 }
 
 # Start a process with cwd DIR and echo its pid.
-leak_sleep() { # leak_sleep DIR PIDFILE [COMMAND...]
-    # The wrapper subshell exits at once, so init reaps the sleeper and
+leak_proc() { # leak_proc DIR PIDFILE [COMMAND...]
+    # The wrapper subshell exits at once, so init reaps the process and
     # `kill -0` tells the truth. `cd` stays outside the backgrounded command:
     # backgrounding an `cd && sleep` list leaves a shell holding the caller's
-    # pipe. The sleeper's own stdio is redirected for the same reason.
-    ls_dir=$1
-    ls_pidfile=$2
+    # pipe. The process's own stdio is redirected for the same reason.
+    lp_dir=$1
+    lp_pidfile=$2
     shift 2
     [ $# -gt 0 ] || set -- sleep 300
-    (cd "$ls_dir" || exit 1
+    (cd "$lp_dir" || exit 1
         "$@" </dev/null >/dev/null 2>&1 &
-        printf '%s\n' $! >"$ls_pidfile")
-    ls_tries=0
-    while [ ! -s "$ls_pidfile" ] && [ "$ls_tries" -lt 50 ]; do
+        printf '%s\n' $! >"$lp_pidfile")
+    lp_tries=0
+    while [ ! -s "$lp_pidfile" ] && [ "$lp_tries" -lt 50 ]; do
         sleep 0.1
-        ls_tries=$((ls_tries + 1))
+        lp_tries=$((lp_tries + 1))
     done
-    cat "$ls_pidfile"
+    cat "$lp_pidfile"
+}
+
+use_window_pids() { # use_window_pids PID: the rex stub reports PID as the block's child
+    fixture_process="{\"last_exit\":null,\"child\":{\"pid\":$1}}"
 }
 
 # --- stages lists harness, model, effort and skills -------------------------
@@ -795,24 +806,49 @@ Add the widget.
 BRIEF
 expect_status 0
 expect_contains '"window":"win-1"'
-leaked=$(leak_sleep "$worktree" "$fixture_tmp/leaked")
-bystander=$(leak_sleep "$fixture_tmp" "$fixture_tmp/bystander")
-checks=$((checks + 1))
-kill -0 "$leaked" 2>/dev/null || fail "the leaked process $leaked did not start"
+# The window's own tree: a shell that keeps a child asleep in the worktree.
+# shellcheck disable=SC2016 # the inner bash expands $!, not this one.
+tree=$(leak_proc "$worktree" "$fixture_tmp/tree" \
+    bash -c 'sleep 300 & echo $! >"$1"; wait' _ "$fixture_tmp/tree-child")
+child=
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -s "$fixture_tmp/tree-child" ]; then
+        child=$(cat "$fixture_tmp/tree-child")
+        break
+    fi
+    sleep 0.1
+done
+use_window_pids "$tree"
+# Same worktree, not in this window's tree: another Subagent or a Manager check.
+neighbour=$(leak_proc "$worktree" "$fixture_tmp/neighbour")
+# Outside the worktree and not in the tree: never close's business.
+bystander=$(leak_proc "$fixture_tmp" "$fixture_tmp/bystander")
+for pid in "$tree" "$child" "$neighbour" "$bystander"; do
+    checks=$((checks + 1))
+    kill -0 "$pid" 2>/dev/null || fail "pid $pid did not start"
+done
 
 run_subagent close win-1 </dev/null
 expect_status 0
-expect_stderr_contains "stopped pid $leaked"
+expect_stderr_contains "stopped pid $tree"
 expect_stderr_contains 'sleep 300'
 checks=$((checks + 1))
-if kill -0 "$leaked" 2>/dev/null; then
-    fail "close left pid $leaked (cwd inside the worktree) running"
+if kill -0 "$tree" 2>/dev/null; then
+    fail "close left pid $tree (the window's tree, in the worktree) running"
+fi
+checks=$((checks + 1))
+if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
+    fail "close left pid $child, a child of the window's tree, running"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$neighbour" 2>/dev/null; then
+    fail "close killed pid $neighbour, which shares the worktree but is not in the window's tree"
 fi
 checks=$((checks + 1))
 if ! kill -0 "$bystander" 2>/dev/null; then
     fail "close killed pid $bystander, whose cwd is outside the worktree"
 fi
-kill -TERM "$bystander" 2>/dev/null || true
+kill -TERM "$neighbour" "$bystander" 2>/dev/null || true
 expect_rex_arg win-1
 
 rm -rf "$fixture_tmp"
@@ -826,7 +862,9 @@ run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
 Add the widget.
 BRIEF
 expect_status 0
-stubborn=$(leak_sleep "$worktree" "$fixture_tmp/stubborn" bash -c 'trap "" INT; exec sleep 300')
+stubborn=$(leak_proc "$worktree" "$fixture_tmp/stubborn" \
+    bash -c 'trap "" INT; exec sleep 300')
+use_window_pids "$stubborn"
 
 run_subagent close win-1 </dev/null
 expect_status 0
@@ -838,6 +876,34 @@ fi
 
 rm -rf "$fixture_tmp"
 
+# --- close finds the record from any repo ---------------------------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+other_repo="$fixture_tmp/other"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+mkdir -p "$other_repo"
+git -C "$other_repo" init -q
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+leaked=$(leak_proc "$worktree" "$fixture_tmp/leaked")
+use_window_pids "$leaked"
+
+# The Manager closes from its own repo, not from the launching one.
+SG_CWD=$other_repo
+run_subagent close win-1 </dev/null
+SG_CWD=
+expect_status 0
+expect_stderr_contains "stopped pid $leaked"
+checks=$((checks + 1))
+if kill -0 "$leaked" 2>/dev/null; then
+    fail "close from another repo left pid $leaked running"
+fi
+
+rm -rf "$fixture_tmp"
+
 # --- close leaves the main checkout's processes alone ----------------------
 
 new_fixture
@@ -845,7 +911,8 @@ run_subagent launch --stage build --item widget --cwd "$fixture_repo" <<'BRIEF'
 Add the widget.
 BRIEF
 expect_status 0
-kept=$(leak_sleep "$fixture_repo" "$fixture_tmp/kept")
+kept=$(leak_proc "$fixture_repo" "$fixture_tmp/kept")
+use_window_pids "$kept"
 
 run_subagent close win-1 </dev/null
 expect_status 0
@@ -853,6 +920,29 @@ expect_stderr_contains 'not reaping'
 checks=$((checks + 1))
 if ! kill -0 "$kept" 2>/dev/null; then
     fail "close killed pid $kept, which shares the main checkout's cwd"
+fi
+kill -TERM "$kept" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close says so when it cannot read the window's process tree ----------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+kept=$(leak_proc "$worktree" "$fixture_tmp/kept")
+fixture_process='not json'
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'cannot read the process tree'
+checks=$((checks + 1))
+if ! kill -0 "$kept" 2>/dev/null; then
+    fail "close guessed at a tree it could not read and killed pid $kept"
 fi
 kill -TERM "$kept" 2>/dev/null || true
 
