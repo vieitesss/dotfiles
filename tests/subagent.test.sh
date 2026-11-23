@@ -1015,6 +1015,53 @@ fi
 
 rm -rf "$fixture_tmp"
 
+# --- close rejects a PID field that is not a process id --------------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+other=$(leak_proc "$worktree" "$fixture_tmp/other")
+# Word splitting would turn the pid inside this string into a signal target.
+fixture_process="{\"child\":{\"pid\":\"garbage $other\"}}"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'cannot read the process tree'
+checks=$((checks + 1))
+if ! kill -0 "$other" 2>/dev/null; then
+    fail "close signalled pid $other because its pid appeared inside a malformed PID field"
+fi
+kill -TERM "$other" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close treats a null PID field as an unknown tree ----------------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+kept=$(leak_proc "$worktree" "$fixture_tmp/kept")
+fixture_process='{"child":{"pid":null}}'
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'cannot read the process tree'
+checks=$((checks + 1))
+if ! kill -0 "$kept" 2>/dev/null; then
+    fail "close reaped pid $kept from a null PID field"
+fi
+kill -TERM "$kept" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
 # --- close says so when it cannot read the window's process tree ----------
 
 new_fixture

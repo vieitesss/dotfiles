@@ -554,7 +554,8 @@ cwd_pids() { # cwd_pids DIR: pids whose cwd is DIR or below it
 }
 
 descendants() { # descendants PID: PID and every process below it, as ps sees now
-    ps -axo pid=,ppid= | awk -v root="$1" '
+    case $1 in '' | *[!0-9]*) return 1 ;; esac
+    dc_out=$(ps -axo pid=,ppid= 2>/dev/null | awk -v root="$1" '
         { kids[$2] = kids[$2] " " $1 }
         END {
             seen[root] = 1
@@ -572,7 +573,13 @@ descendants() { # descendants PID: PID and every process below it, as ps sees no
                     stack[++top] = child[i]
                 }
             }
-        }'
+        }') || return 1
+    # Every pid has to be a positive integer: anything else is not a process
+    # this close may signal.
+    for dc_pid in $dc_out; do
+        case $dc_pid in '' | *[!0-9]*) return 1 ;; esac
+    done
+    printf '%s\n' "$dc_out"
 }
 
 window_pids() { # window_pids BLOCK: the pids in that window's process tree
@@ -582,7 +589,9 @@ try:
     print(json.load(sys.stdin)["child"]["pid"])
 except (ValueError, KeyError, TypeError):
     sys.exit(1)' 2>/dev/null) || return 1
-    [ -n "$wp_pid" ] || return 1
+    # JSON null arrives as None; a string arrives as itself. Reject both here
+    # rather than let word splitting turn a pid inside them into a target.
+    case $wp_pid in '' | *[!0-9]* | 0) return 1 ;; esac
     descendants "$wp_pid"
 }
 
