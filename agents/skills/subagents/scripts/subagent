@@ -18,6 +18,8 @@ set -eu
 
 POLL_INTERVAL=0.25
 STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
+REAP_GRACE=3    # seconds a leftover process gets between SIGINT and SIGTERM
+REAP_POLL=0.2
 
 # The prompt travels through a temp file because Rex rejects over-long
 # commands. The child reads it, deletes it, then execs the agent with the
@@ -27,7 +29,7 @@ STARTUP_POLLS=12 # three seconds the Rex child must survive to count as launched
 CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
 
 # What every Stage Subagent is told, whichever Stage it runs.
-SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Send the Manager two kinds of message only: the completion report, and questions. The brief's done criterion is the whole bar: add no gate, check, or scope above it. A problem that behaves the same on the diff base goes in the report under \"Pre-existing\", one line each, never as a finding or a fix. A reversible implementation choice is yours to make: make it and list it under \"Choices made\" with its reason. Product and irreversible choices stay questions: ask, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Open the report with a summary block of at most 10 lines: verdict (or outcome), what changed, must-fix count, decisions needed; then \`## \` sections carrying the detail. Send the Manager two kinds of message only: the completion report, and questions. The brief's done criterion is the whole bar: add no gate, check, or scope above it. A problem that behaves the same on the diff base goes in the report under \"Pre-existing\", one line each, never as a finding or a fix. A reversible implementation choice is yours to make: make it and list it under \"Choices made\" with its reason. Product and irreversible choices stay questions: ask, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
 
 # What an ad-hoc Subagent (launched without --stage) is told.
 ADHOC_RULES="The calling agent coordinates the work; you run this task and report. Send it two kinds of message only: the completion report, and questions. A decision the brief leaves open is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt is a follow-up: apply it, update your report file, and report again. Do every part of this task yourself. Reporting is part of every task, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
@@ -61,7 +63,10 @@ Usage:
           off, minimal, low, medium, high, xhigh, or max.
 
   subagent close WINDOW
-      Close the Subagent's Rex window.
+      Close the Subagent's Rex window, then stop the processes the window
+      left running in its worktree (SIGINT, then SIGTERM after 3 seconds),
+      printing every pid and command it stopped. Only that window's own
+      process tree is stopped.
 
 REX_SESSION names the Rex session, and recado whoami the caller's address.
 EOF
@@ -228,6 +233,18 @@ main_checkout() { # main_checkout DIR: checkout sharing DIR's git dir, '' outsid
     esac
 }
 
+main_root() { # main_root DIR: the main checkout of DIR, physical; '' when DIR is it
+    mr_main=$(main_checkout "$1")
+    [ -n "$mr_main" ] || return 0
+    (cd "$mr_main" 2>/dev/null && pwd -P) || printf '%s\n' "$mr_main"
+}
+
+checkout_root() { # checkout_root DIR: DIR's git worktree top-level, physical
+    cr_top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || cr_top=
+    [ -n "$cr_top" ] || return 1
+    (cd "$cr_top" 2>/dev/null && pwd -P)
+}
+
 skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
     for root in "$2/.agents/skills" "$3/.agents/skills" \
         "$HOME/.agents/skills" "$HOME/.pi/agent/skills" "$HOME/.gemini/config/skills"; do
@@ -237,6 +254,29 @@ skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
         fi
     done
     return 1
+}
+
+# close needs the worktree and block of the window it closes, so launch records
+# them once per window, in a file of its own to keep concurrent launches off
+# each other. The record lives outside any checkout: the Manager often closes a
+# window from a different repo than the one that launched it.
+subagent_state_dir() {
+    case ${XDG_STATE_HOME:-} in
+        # XDG says a relative value is invalid, and honouring it would put the
+        # record under whichever directory the caller happens to run in.
+        /*) printf '%s/subagent/windows\n' "$XDG_STATE_HOME" ;;
+        *) printf '%s/.local/state/subagent/windows\n' "$HOME" ;;
+    esac
+}
+
+window_state_file() { # window_state_file WINDOW
+    printf '%s/%s\n' "$(subagent_state_dir)" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+record_window_state() { # record_window_state WINDOW CWD BLOCK
+    rs_file=$(window_state_file "$1")
+    mkdir -p "${rs_file%/*}" || return 0
+    printf '%s\n%s\n' "$2" "$3" >"$rs_file.$$" && mv "$rs_file.$$" "$rs_file"
 }
 
 still_alive() { # still_alive BLOCK: the agent started and is still running
@@ -454,6 +494,8 @@ print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new ou
     block=$(printf '%s' "$created" | python3 -c 'import json, sys
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
+    record_window_state "$window" "$cwd" "$block" ||
+        printf '[subagent] cannot record %s; close cannot reap it\n' "$window" >&2
 
     alive=1
     for ((poll = 0; poll < STARTUP_POLLS; poll++)); do
@@ -480,10 +522,227 @@ print(json.dumps(dict(zip(("name", "window", "block", "report"), sys.argv[1:])),
 
 # ------------------------------------------------------------------- close
 
+# A process that outlives its Rex window still belongs to the window's process
+# tree, and still has its cwd inside the worktree. Both are required, so closing
+# one window cannot disturb another Subagent sharing the worktree, the Manager's
+# own checks, or anything outside the worktree.
+self_and_parents() { # self_and_parents: pids close must never signal
+    sp_pid=$$
+    while [ "$sp_pid" -gt 1 ]; do
+        printf '%s\n' "$sp_pid"
+        sp_pid=$(ps -o ppid= -p "$sp_pid" 2>/dev/null | tr -d ' ')
+        [ -n "$sp_pid" ] || break
+    done
+}
+
+cwd_pids() { # cwd_pids DIR: pids whose cwd is DIR or below it
+    if command -v lsof >/dev/null 2>&1; then
+        # Through the environment, not awk -v: a path holding a backslash
+        # would be read as an escape sequence. lsof's -F output doubles a
+        # backslash, so compare in its terms.
+        cp_dir=$(printf '%s' "$1" | sed 's/\\/\\\\/g')
+        export cp_dir
+        lsof -a -d cwd -Fpn 2>/dev/null | awk '
+            BEGIN { dir = ENVIRON["cp_dir"] }
+            /^p/ { pid = substr($0, 2); next }
+            /^n/ {
+                path = substr($0, 2)
+                if (path == dir || index(path, dir "/") == 1) print pid
+            }'
+        return 0
+    fi
+    for cp_entry in /proc/[0-9]*/cwd; do
+        cp_path=$(readlink "$cp_entry" 2>/dev/null) || continue
+        cp_path=${cp_path% (deleted)}
+        case $cp_path in
+            "$1" | "$1"/*) printf '%s\n' "${cp_entry#/proc/}" | sed 's|/cwd$||' ;;
+        esac
+    done
+}
+
+descendants() { # descendants PID: PID and every process below it, as ps sees now
+    case $1 in '' | *[!0-9]*) return 1 ;; esac
+    dc_out=$(ps -axo pid=,ppid= 2>/dev/null | awk -v root="$1" '
+        { kids[$2] = kids[$2] " " $1 }
+        END {
+            seen[root] = 1
+            print root
+            stack[1] = root
+            top = 1
+            while (top > 0) {
+                pid = stack[top]
+                top--
+                n = split(kids[pid], child, " ")
+                for (i = 1; i <= n; i++) {
+                    if (child[i] == "" || (child[i] in seen)) continue
+                    seen[child[i]] = 1
+                    print child[i]
+                    stack[++top] = child[i]
+                }
+            }
+        }') || return 1
+    # Every pid has to be a positive integer: anything else is not a process
+    # this close may signal.
+    for dc_pid in $dc_out; do
+        case $dc_pid in '' | *[!0-9]*) return 1 ;; esac
+    done
+    printf '%s\n' "$dc_out"
+}
+
+window_pids() { # window_pids BLOCK: the pids in that window's process tree
+    wp_json=$("$rex_cmd" --autostart=false block call -b "$1" process 2>/dev/null) || return 1
+    # The field has to be a JSON integer above zero: null, true, and a string
+    # such as "123\n" are not process ids, and command substitution would strip
+    # the newline before the shell could tell the string from the number.
+    wp_pid=$(printf '%s' "$wp_json" | python3 -c 'import json, sys
+try:
+    pid = json.load(sys.stdin)["child"]["pid"]
+except (ValueError, KeyError, TypeError):
+    sys.exit(1)
+if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+    sys.exit(1)
+print(pid)' 2>/dev/null) || return 1
+    descendants "$wp_pid"
+}
+
+reap_wait() { # reap_wait "PIDS" SECONDS: the pids still alive when it ends
+    rw_deadline=$(($(date +%s) + $2))
+    while [ "$(date +%s)" -lt "$rw_deadline" ]; do
+        rw_live=
+        for rw_pid in $1; do
+            if kill -0 "$rw_pid" 2>/dev/null; then
+                rw_live="$rw_live $rw_pid"
+            fi
+        done
+        [ -n "$rw_live" ] || return 0
+        sleep "$REAP_POLL"
+    done
+    printf '%s\n' "$rw_live"
+}
+
+reap_worktree() { # reap_worktree DIR "PIDS": stop those alive in DIR
+    reap_root=$1
+    reap_tree=$2
+    reap_keep=$(self_and_parents)
+    reap_inside=$(cwd_pids "$reap_root")
+    reap_list=$(mktemp "${TMPDIR:-/tmp}/subagent-reap.XXXXXX")
+    reap_pids=
+    for reap_pid in $reap_tree; do
+        case "
+$reap_keep
+" in *"
+$reap_pid
+"*) continue ;; esac
+        case "
+$reap_inside
+" in *"
+$reap_pid
+"*) ;; *) continue ;; esac
+        reap_cmd=$(ps -o command= -p "$reap_pid" 2>/dev/null | cut -c1-70) || reap_cmd=
+        printf '%s\t%s\n' "$reap_pid" "$reap_cmd" >>"$reap_list"
+        reap_pids="$reap_pids $reap_pid"
+    done
+    if [ -z "$reap_pids" ]; then
+        rm -f "$reap_list"
+        printf '[subagent] no processes of this window left in %s\n' "$reap_root" >&2
+        return 0
+    fi
+    for reap_pid in $reap_pids; do
+        kill -INT "$reap_pid" 2>/dev/null || true
+    done
+    reap_live=$(reap_wait "$reap_pids" "$REAP_GRACE")
+    # A process that left the boundary while it had the grace period is no
+    # longer this worktree's business, so escalate only those still inside it.
+    reap_here=
+    reap_left=
+    if [ -n "$reap_live" ]; then
+        reap_still=$(cwd_pids "$reap_root")
+        for reap_pid in $reap_live; do
+            case "
+$reap_still
+" in *"
+$reap_pid
+"*) reap_here="$reap_here $reap_pid" ;; *) reap_left="$reap_left $reap_pid" ;; esac
+        done
+    fi
+    for reap_pid in $reap_left; do
+        printf '[subagent] pid %s left %s; not terminating it\n' "$reap_pid" "$reap_root" >&2
+    done
+    for reap_pid in $reap_here; do
+        kill -TERM "$reap_pid" 2>/dev/null || true
+    done
+    [ -z "$reap_here" ] || reap_wait "$reap_here" "$REAP_GRACE" >/dev/null
+    while IFS="$(printf '\t')" read -r reap_pid reap_cmd; do
+        case " $reap_left " in *" $reap_pid "*) continue ;; esac
+        if kill -0 "$reap_pid" 2>/dev/null; then
+            printf '[subagent] pid %s survived SIGTERM (%s)\n' "$reap_pid" "$reap_cmd" >&2
+        else
+            printf '[subagent] stopped pid %s (%s)\n' "$reap_pid" "$reap_cmd" >&2
+        fi
+    done <"$reap_list"
+    rm -f "$reap_list"
+}
+
 cmd_close() {
     [ $# -eq 1 ] || die "close needs exactly one WINDOW"
+    window=$1
     rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
-    "$rex_cmd" --autostart=false window close "$1" >/dev/null
+
+    # Snapshot the window's process tree before Rex tears the window down.
+    worktree=
+    boundary=
+    tree=
+    tree_known=1
+    state_file=$(window_state_file "$window")
+    if [ -f "$state_file" ]; then
+        worktree=$(sed -n 1p "$state_file")
+        block=$(sed -n 2p "$state_file")
+        if [ -n "$worktree" ] && [ -d "$worktree" ] && [ -n "$block" ]; then
+            # lsof and /proc report physical paths, so compare in the same terms.
+            worktree=$(cd "$worktree" && pwd -P)
+            # The boundary is the worktree the launch cwd belongs to, not the
+            # cwd itself: a launch from a subdirectory still owns the whole
+            # worktree, and a launch from the main checkout owns nothing.
+            boundary=$(checkout_root "$worktree") || boundary=$worktree
+            tree=$(window_pids "$block") || tree_known=0
+        else
+            worktree=
+        fi
+    fi
+
+    # A close Rex refuses is not an already-gone window: keep the record so it
+    # can be retried, and signal nothing while that window may still be alive.
+    # Only rex's own exit 3 with the window-target wording means the window was
+    # already gone; a "not found" inside any other error is a refusal too.
+    close_status=0
+    close_output=$("$rex_cmd" --autostart=false window close "$window" 2>&1) || close_status=$?
+    if [ "$close_status" -eq 0 ]; then
+        printf '[subagent] closed window %s\n' "$window" >&2
+    elif [ "$close_status" -eq 3 ] &&
+        printf '%s' "$close_output" | grep -Eqi 'window target .*not found'; then
+        printf '[subagent] window %s is already gone\n' "$window" >&2
+    else
+        printf '[subagent] rex could not close window %s: %s\n' "$window" "$close_output" >&2
+        printf '[subagent] kept record %s; stopped nothing\n' "$state_file" >&2
+        return 1
+    fi
+    rm -f "$state_file"
+
+    if [ -z "$worktree" ]; then
+        printf '[subagent] no worktree recorded for %s; nothing to reap\n' "$window" >&2
+        return 0
+    fi
+    if [ "$boundary" = "$(main_root "$boundary")" ]; then
+        printf '[subagent] %s ran in the main checkout %s; not reaping its processes\n' \
+            "$window" "$boundary" >&2
+        return 0
+    fi
+    if [ "$tree_known" -eq 0 ]; then
+        printf '[subagent] cannot read the process tree of %s (is REX_SESSION set?); not reaping\n' \
+            "$window" >&2
+        return 0
+    fi
+    reap_worktree "$boundary" "$tree"
 }
 
 # -------------------------------------------------------------------- main
