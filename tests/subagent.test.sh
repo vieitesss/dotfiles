@@ -593,6 +593,7 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     expect_prompt_contains 'never stop a process you did not start'
     # shellcheck disable=SC2016 # the backticks are the rule's own text.
     expect_prompt_contains 'never print `.env` or another secrets file'
+    expect_prompt_contains 'Never use `git stash`: the stash is shared by every worktree of the repo'
 done
 
 rm -rf "$fixture_tmp"
