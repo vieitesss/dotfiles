@@ -1,0 +1,56 @@
+{
+  "allowNonWorkspaceAccess": true,
+  "model": "Gemini 4 Neon (Medium)",
+  "permissions": {
+    "allow": [
+      "command(recado)",
+      "command(gh)",
+      "command(rm /Users/vieitesprefapp/.pi/agent/AGENTS.md /Users/vieitesprefapp/.pi/agent/APPEND_SYSTEM.md)",
+      "command(subagent)",
+      "command(git push origin main)",
+      "command(ls)",
+      "command(python3 /Users/vieitesprefapp/.gemini/antigravity-cli/brain/24882f79-be6b-4a4c-94cd-49ac785bebaf/scratch/build_prototypes.py)",
+      "command(git worktree)",
+      "command(python3 /Users/vieitesprefapp/.gemini/antigravity-cli/brain/24882f79-be6b-4a4c-94cd-49ac785bebaf/scratch/generate_prototype_html.py)",
+      "command(git status)",
+      "command(open)",
+      "command(git merge)",
+      "command(git branch)",
+      "command(subagent close window:01a1ff68-b656-7910-8199-282a422b1b01 \u0026\u0026 git merge --ff-only fix/standalone-svg-fallbacks \u0026\u0026 git push origin main \u0026\u0026 gh issue close 35 --comment \"Merged on main ($(git rev-parse --short HEAD)). Renderer now emits light-theme CSS var() fallbacks (#1b1a17, #fbf8f1, #878580, hand font) so standalone SVGs and \u003cimg\u003e renders paint paper, ink, muted, and words while inlined SVGs still inherit host themes.\" \u0026\u0026 git worktree remove /Users/vieitesprefapp/personal/esbozo-wt/t35 \u0026\u0026 git branch -d fix/standalone-svg-fallbacks)",
+      "command(git merge --ff-only feat/arrow-label-drag \u0026\u0026 git push origin main \u0026\u0026 gh issue close 25 --comment \"Merged on main ($(git rev-parse --short HEAD)). Arrow and line Labels can now be dragged along and off the shaft, saved via labelAt with paper knockout, and undone; picking uses drawn shaft/head ink and preserves multi-point bends on drag.\" \u0026\u0026 git worktree remove /Users/vieitesprefapp/personal/esbozo-wt/t25b \u0026\u0026 git branch -d feat/arrow-label-drag \u0026\u0026 git worktree add /Users/vieitesprefapp/personal/esbozo-wt/t34 -b fix/arrow-label-and-caret main \u0026\u0026 ([ ! -f .env ] || ln -s /Users/vieitesprefapp/personal/esbozo/.env /Users/vieitesprefapp/personal/esbozo-wt/t34/.env))",
+      "command(subagent close window:01a1ffa6-9572-72d2-9b4e-9d43fb81b29f \u0026\u0026 git merge --ff-only fix/arrow-label-and-caret \u0026\u0026 git push origin main \u0026\u0026 gh issue close 34 --comment \"Merged on main ($(git rev-parse --short HEAD)). Unlabeled arrows/lines no longer draw an empty paper-knockout box, shaft Labels honour textAlign (Align + Size + Tone in Style menu), and the typing caret is a hand-drawn ink-black vertical line.\" \u0026\u0026 git worktree remove /Users/vieitesprefapp/personal/esbozo-wt/t34 \u0026\u0026 git branch -d fix/arrow-label-and-caret \u0026\u0026 git worktree add /Users/vieitesprefapp/personal/esbozo-wt/t22 -b refactor/split-editor main \u0026\u0026 ([ ! -f .env ] || ln -s /Users/vieitesprefapp/personal/esbozo/.env /Users/vieitesprefapp/personal/esbozo-wt/t22/.env))",
+      "command(git merge --ff-only feat/esbozo-extension \u0026\u0026 git push origin main \u0026\u0026 gh issue close 33 --comment \"Merged on main ($(git rev-parse --short HEAD)). .esbozo is now the primary Scene file extension alongside .json across CLI, serve, browser folder picker, editor, and docs; non-esbozo/unreadable/oversized .json files are skipped cleanly in folder listings.\" \u0026\u0026 git worktree remove /Users/vieitesprefapp/personal/esbozo-wt/t33 \u0026\u0026 git branch -d feat/esbozo-extension \u0026\u0026 git -C /Users/vieitesprefapp/personal/esbozo-wt/t22 reset --hard main \u0026\u0026 git worktree add /Users/vieitesprefapp/personal/esbozo-wt/t36 -b fix/labelat-boundaries main \u0026\u0026 ([ ! -f .env ] || ln -s /Users/vieitesprefapp/personal/esbozo/.env /Users/vieitesprefapp/personal/esbozo-wt/t36/.env) \u0026\u0026 git archive main | tar -x -C /tmp/esbozo-try \u0026\u0026 cd /tmp/esbozo-try \u0026\u0026 node scripts/build.mjs)",
+      "command(pnpm check)",
+      "command(git add)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.gemini/antigravity-cli/statusline.sh"
+  },
+  "toolPermission": "always-proceed",
+  "trustedWorkspaces": [
+    "/Users/vieitesprefapp/dotfiles",
+    "/Users/vieitesprefapp/personal/esbozo",
+    "/Users/vieitesprefapp/personal/recado",
+    "/Users/vieitesprefapp/personal/esbozo-wt/t17",
+    "/Users/vieitesprefapp/work/prefapp/skills",
+    "/Users/vieitesprefapp/personal/esbozo-wt/t22",
+    "/Users/vieitesprefapp/personal/esbozo-wt/agents-line",
+    "/Users/vieitesprefapp/personal/esbozo-wt/label-gap",
+    "/Users/vieitesprefapp/dotfiles-wt/principles",
+    "/Users/vieitesprefapp/dotfiles-wt/interrogate",
+    "/Users/vieitesprefapp/dotfiles-wt/arena",
+    "/Users/vieitesprefapp/dotfiles-wt/why-sharpen",
+    "/Users/vieitesprefapp/dotfiles-wt/ketchup-recall",
+    "/Users/vieitesprefapp/dotfiles-wt/technical-writing",
+    "/Users/vieitesprefapp/personal/esbozo-wt/standards-22e1w",
+    "/Users/vieitesprefapp/dotfiles-wt/workflow-skills",
+    "/Users/vieitesprefapp/dotfiles-wt/workflow-docs",
+    "/Users/vieitesprefapp",
+    "/Users/vieitesprefapp/personal/esbozo-wt/r2-rules",
+    "/Users/vieitesprefapp/personal/esbozo-wt/verify-esbozo",
+    "/Users/vieitesprefapp/dotfiles-wt/34-docs",
+    "/Users/vieitesprefapp/work/prefapp/action-docs-publisher-wt-verify"
+  ]
+}

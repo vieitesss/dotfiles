@@ -31,6 +31,9 @@ claude/statusline.sh|~/.claude/statusline.sh
 claude/hooks/caveman-session-start|~/.claude/hooks/caveman-session-start
 
 antigravity/statusline.sh|~/.gemini/antigravity-cli/statusline.sh
+antigravity/settings.json|~/.gemini/antigravity-cli/settings.json
+antigravity/config.json|~/.gemini/config/config.json
+antigravity/hooks.json|~/.gemini/config/hooks.json
 
 pi/agent/settings.json|~/.pi/agent/settings.json
 pi/agent/extensions|~/.pi/agent/extensions

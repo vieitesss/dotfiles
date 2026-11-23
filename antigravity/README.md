@@ -28,34 +28,21 @@ to the light palette in `pi/agent/settings.json`. Set
 
 ### Install
 
-The script is a managed config. Link it with the repository installer:
+The status line script and Antigravity configuration files are managed configs.
+Link them with the repository installer:
 
 ```sh
 ./install.sh antigravity
 ```
 
-This creates `~/.gemini/antigravity-cli/statusline.sh -> <repo>/antigravity/statusline.sh`.
-If `~/.gemini/antigravity-cli/statusline.sh` already exists the installer skips it.
+This creates:
 
-Antigravity CLI's `settings.json` is intentionally not tracked here (it holds
-machine-local settings). Enable the status line from inside `agy`:
+- `~/.gemini/antigravity-cli/statusline.sh -> <repo>/antigravity/statusline.sh`
+- `~/.gemini/antigravity-cli/settings.json -> <repo>/antigravity/settings.json`
+- `~/.gemini/config/config.json -> <repo>/antigravity/config.json`
+- `~/.gemini/config/hooks.json -> <repo>/antigravity/hooks.json`
 
-```text
-/statusline ~/.gemini/antigravity-cli/statusline.sh
-```
+If any destination already exists, the installer skips it.
 
-Or add the `statusLine` block to `~/.gemini/antigravity-cli/settings.json` by hand:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "~/.gemini/antigravity-cli/statusline.sh",
-    "enabled": true,
-    "padding": 0,
-    "stack_with_default": false
-  }
-}
-```
-
+`settings.json` already enables the custom status line (`statusLine.command`).
 Requires `bash` and `jq`.

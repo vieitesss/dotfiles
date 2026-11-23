@@ -1,0 +1,22 @@
+{
+  "recado": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "recado hook agy session-start --store"
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "recado hook agy turn-start"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "recado hook agy turn-end --hold"
+      }
+    ]
+  }
+}
