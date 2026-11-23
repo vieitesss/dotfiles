@@ -34,6 +34,9 @@ the messages. This skill does not repeat it.
    change that meets it. Write both as the Ledger's `Goal:` line, then split
    the goal into Work Items, size them (see Sizing), and finish the Ledger
    before any Stage runs.
+3. Run `recado whoami` before the first `subagent launch`. On `agy`, a
+   `recado` command run as a tool records the endpoint that reports are
+   pushed to; without it, a report sent while you are idle waits unseen.
 
 ## Stages
 
