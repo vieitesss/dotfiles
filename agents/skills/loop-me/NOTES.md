@@ -6,7 +6,7 @@ Raw notes on tools, channels, and terminology. Sharpen fuzzy terms into canonica
 - **GitHub** — PRs, issues, reviews. `gh` CLI available.
 - **Copilot** — used as an automated PR *reviewer* (GitHub Copilot code review).
 - **pi** — the coding agent harness this runs in. Has skills:
-  - `review-github-pr-comments` — fetch + triage PR comments (fix/reject/defer/handled), implement accepted ones.
+  - `babysit` — take a PR to merge-ready; its `threads-only` mode triages PR comments (fix/reject/defer/handled) via `review-github-pr-comments` and implements accepted ones.
   - `commit-changes` — conventional one-line atomic commits.
 - **sandcastle** (`~/opt/sandcastle`) — TS toolkit orchestrating AI agents in sandboxes, iteration loops. Candidate implementation vehicle; user wonders if something simpler suffices.
 

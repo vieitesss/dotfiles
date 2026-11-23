@@ -19,14 +19,15 @@ deterministic plumbing; `pi` is invoked only for judgment.
 - **bash + gh own:** cycle counting, commit, push, re-request Copilot, polling
   for the new review, termination check, assembling the brief.
 - **pi (one invocation per cycle) owns:** triage + implement accepted comments
-  via `review-github-pr-comments` (which itself uses `commit-changes`/`coding`).
+  via `babysit` in `threads-only` mode (its thread pass, `review-github-pr-comments`,
+  uses `commit-changes`/`coding`).
 
 ## Run (one cycle)
-1. `pi` runs `review-github-pr-comments` on the PR: triage Copilot's comments
+1. `pi` runs `babysit` in `threads-only` mode on the PR: triage Copilot's comments
    against the linked issue + diff (fix / reject / defer / handled), implement
    the accepted fixes, commit via `commit-changes`, and **reply to + resolve**
-   each triaged thread per that skill's §8 (fix → commit SHA; reject/defer →
-   one-line reason). Standing commit+push approval makes §8 apply every cycle.
+   each triaged thread (fix → commit SHA; reject/defer → one-line reason).
+   Standing commit+push approval makes this apply every cycle.
 2. bash: `git push`.
 3. bash: re-request Copilot as reviewer (`gh api .../requested_reviewers`).
 4. bash: poll `gh` until Copilot posts a new review (see wait policy).
@@ -89,6 +90,6 @@ Poll for a Copilot review newer than that timestamp.
 4. "Code comment" → actionable inline review comments; summary-only = clean.
 5. Autonomy → fully autonomous commit+push in-loop; one end-of-loop checkpoint.
 6. Cap → 5 cycles; no identical-review guard.
-7. Threads → reply + resolve every cycle per `review-github-pr-comments` §8.
+7. Threads → reply + resolve every cycle per `review-github-pr-comments` step 5.
 8. Launch → PR arg or infer from branch; auto-discover linked issue; first cycle
    triages existing comments (request a review first if none exist).

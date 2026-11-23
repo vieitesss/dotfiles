@@ -1,6 +1,6 @@
 ---
 name: babysit
-description: Babysit a GitHub PR to merge-ready across conflicts, review threads, and CI. Use for "babysit this PR", "get PR N merge-ready", "check PR N", or "handle PR threads".
+description: Babysit a GitHub PR to merge-ready across conflicts, review threads, and CI. Use for "babysit this PR", "get PR N merge-ready", "check PR N", or "review PR comments".
 ---
 
 # Babysit
@@ -12,8 +12,10 @@ Own one PR's path to merge-ready; stop where a human call begins. Use `gh` for a
 Declare the mode in your first line, before any query:
 
 - `drive` — loop until merge-ready or blocked on a human call.
-- `threads-only` — handle review threads only; leave CI alone.
+- `threads-only` — handle review threads only; leave CI alone. Pick this for "review PR comments".
 - `check` — run one read-only status pass and report; change nothing.
+
+Carry any reviewer filter the user names (e.g. only Copilot) into the thread pass.
 
 ## Pass order
 
@@ -29,7 +31,9 @@ Check `mergeable` and `mergeStateStatus`. If `mergeable` is `CONFLICTING` (or `m
 
 ### 2. Threads
 
-Fetch unresolved review threads:
+Run the thread pass in [`../review-github-pr-comments/SKILL.md`](../review-github-pr-comments/SKILL.md) (resolve the path against this skill's directory), passing the PR number, the mode, and any reviewer filter. In `check` it gives verdicts without editing; in `drive` and `threads-only` it fixes, commits, pushes, then replies and resolves. In `threads-only`, report and stop after it.
+
+Quick count of unresolved threads, for the status line and the exit check:
 
 ```bash
 gh api graphql -f owner=OWNER -f repo=REPO -F pr=N -f query='
@@ -43,8 +47,6 @@ query($owner: String!, $repo: String!, $pr: Int!) {
   }
 }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)]'
 ```
-
-In `check`, list unresolved threads and continue to CI. In `drive` and `threads-only`, hand them to `review-github-pr-comments`, pushing any fix commits before replying so replies cite the commit. In `threads-only`, report and stop here.
 
 ### 3. CI
 

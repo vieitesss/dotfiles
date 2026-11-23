@@ -484,11 +484,11 @@ while (( CYCLE < MAX_CYCLES )); do
 
   _pi_tmp=$(mktemp)
   log "Running ${AGENT} agent…"
-  run_agent "Use the review-github-pr-comments skill. ${PI_PR_CONTEXT}
-Review only Copilot's comments (author login matches 'copilot', case-insensitive).
+  run_agent "Use the babysit skill in threads-only mode. ${PI_PR_CONTEXT}
+Reviewer filter: only Copilot's comments (author login matches 'copilot', case-insensitive).
 Commit+push for this PR branch is explicitly authorised for the life of this loop —
 commit and push all accepted fixes, then reply to + resolve every triaged thread
-per the skill's §8 (fix → include the commit SHA; reject/defer → one-line reason)." | tee "$_pi_tmp"
+(fix → include the commit SHA; reject/defer → one-line reason)." | tee "$_pi_tmp"
   AGENT_RC=${PIPESTATUS[0]}
 
   PI_OUTPUT=$(cat "$_pi_tmp")

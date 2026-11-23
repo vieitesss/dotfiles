@@ -60,7 +60,7 @@ gh api graphql \
 
 ## Resolve a review thread
 
-Use this only after the user explicitly asks you to resolve GitHub comments. Post the final reply first, then resolve the thread.
+Use this in step 5 (reply and resolve). Post the final reply first, then resolve the thread.
 
 Fetch thread IDs and comment context:
 
@@ -129,4 +129,4 @@ gh api graphql \
 
 ## Filter to specific reviewers when needed
 
-If the user mentions CodeRabbit, Qodo, Copilot, or another reviewer explicitly, filter the collected review data by `author.login` after fetching it.
+When a reviewer filter was given (CodeRabbit, Qodo, Copilot, or another reviewer), filter the collected review data by `author.login` after fetching it.
