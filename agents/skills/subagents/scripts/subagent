@@ -591,14 +591,17 @@ descendants() { # descendants PID: PID and every process below it, as ps sees no
 
 window_pids() { # window_pids BLOCK: the pids in that window's process tree
     wp_json=$("$rex_cmd" --autostart=false block call -b "$1" process 2>/dev/null) || return 1
+    # The field has to be a JSON integer above zero: null, true, and a string
+    # such as "123\n" are not process ids, and command substitution would strip
+    # the newline before the shell could tell the string from the number.
     wp_pid=$(printf '%s' "$wp_json" | python3 -c 'import json, sys
 try:
-    print(json.load(sys.stdin)["child"]["pid"])
+    pid = json.load(sys.stdin)["child"]["pid"]
 except (ValueError, KeyError, TypeError):
-    sys.exit(1)' 2>/dev/null) || return 1
-    # JSON null arrives as None; a string arrives as itself. Reject both here
-    # rather than let word splitting turn a pid inside them into a target.
-    case $wp_pid in '' | *[!0-9]* | 0) return 1 ;; esac
+    sys.exit(1)
+if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+    sys.exit(1)
+print(pid)' 2>/dev/null) || return 1
     descendants "$wp_pid"
 }
 
