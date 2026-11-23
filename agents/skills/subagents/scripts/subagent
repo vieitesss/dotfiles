@@ -7,6 +7,8 @@
 #   subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR]
 #                   [--harness HARNESS] [--model ROLE|MODEL] [--effort EFFORT] < BRIEF
 #   subagent close WINDOW
+#   subagent ls
+#   subagent cap [N|off]
 #
 # launch reads the brief on stdin and prints one JSON object on stdout:
 #   {"name": ..., "window": ..., "block": ..., "report": ...}
@@ -28,11 +30,15 @@ REAP_POLL=0.2
 # shellcheck disable=SC2016 # the child shell expands these, not this one.
 CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
 
+# What every Subagent is told, Stage or ad-hoc: how it uses tools, and what on
+# the machine is not its own.
+HOUSE_RULES="Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps). Start a server only on a port the OS picks (port 0), never on a fixed one; never stop a process you did not start; never print \`.env\` or another secrets file."
+
 # What every Stage Subagent is told, whichever Stage it runs.
-SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Open the report with a summary block of at most 10 lines: verdict (or outcome), what changed, must-fix count, decisions needed; then \`## \` sections carrying the detail. Send the Manager two kinds of message only: the completion report, and questions. The brief's done criterion is the whole bar: add no gate, check, or scope above it. A problem that behaves the same on the diff base goes in the report under \"Pre-existing\", one line each, never as a finding or a fix. A reversible implementation choice is yours to make: make it and list it under \"Choices made\" with its reason. Product and irreversible choices stay questions: ask, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
+SUBAGENT_RULES="The Manager runs the workflow; you run this one Stage and report. Open the report with a summary block of at most 10 lines: verdict (or outcome), what changed, must-fix count, decisions needed; then \`## \` sections carrying the detail. Send the Manager two kinds of message only: the completion report, and questions. The brief's done criterion is the whole bar: add no gate, check, or scope above it. A problem that behaves the same on the diff base goes in the report under \"Pre-existing\", one line each, never as a finding or a fix. A reversible implementation choice is yours to make: make it and list it under \"Choices made\" with its reason. Product and irreversible choices stay questions: ask, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt from the Manager is a follow-up: apply it, update your report file, and report again. Delegating belongs to the Manager, so do every part of this Stage yourself. Reporting is part of every Stage, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. $HOUSE_RULES"
 
 # What an ad-hoc Subagent (launched without --stage) is told.
-ADHOC_RULES="The calling agent coordinates the work; you run this task and report. Send it two kinds of message only: the completion report, and questions. A decision the brief leaves open is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt is a follow-up: apply it, update your report file, and report again. Do every part of this task yourself. Reporting is part of every task, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. Use the read and edit tools for files (not python heredocs or bash cat). Scope diffs and batched reads (\`git diff --stat\` first, bounded line ranges); in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps)."
+ADHOC_RULES="The calling agent coordinates the work; you run this task and report. Send it two kinds of message only: the completion report, and questions. A decision the brief leaves open is a question: ask it, end your turn, and wait for the answer, which arrives as your next prompt. After you report, a new prompt is a follow-up: apply it, update your report file, and report again. Do every part of this task yourself. Reporting is part of every task, a read-only one included: run the reporting command even though it writes temporary files. Do not use intercom or your harness's built-in subagent, swarm, or messaging tools, do not poll, and do not read other sessions. $HOUSE_RULES"
 
 die() {
     printf '[subagent] %s\n' "$*" >&2
@@ -67,6 +73,15 @@ Usage:
       left running in its worktree (SIGINT, then SIGTERM after 3 seconds),
       printing every pid and command it stopped. Only that window's own
       process tree is stopped.
+
+  subagent ls
+      List every open Subagent on this machine: name, Stage (- when ad-hoc),
+      item, window, caller, and cwd. Subagents whose agent exited drop off.
+
+  subagent cap [N|off]
+      Print, set, or clear the machine-wide cap on open Stage Subagents.
+      A Stage launch past the cap fails and lists the open ones; ad-hoc
+      launches (Managers) are not counted.
 
 REX_SESSION names the Rex session, and recado whoami the caller's address.
 EOF
@@ -256,10 +271,12 @@ skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
     return 1
 }
 
-# close needs the worktree and block of the window it closes, so launch records
-# them once per window, in a file of its own to keep concurrent launches off
-# each other. The record lives outside any checkout: the Manager often closes a
-# window from a different repo than the one that launched it.
+# close needs the worktree and block of the window it closes, and ls and the
+# cap need who launched it and for what, so launch records them once per
+# window, in a file of its own to keep concurrent launches off each other: cwd,
+# block, name, Stage (- when ad-hoc), item, and caller, one per line. The
+# record lives outside any checkout: the Manager often closes a window from a
+# different repo than the one that launched it.
 subagent_state_dir() {
     case ${XDG_STATE_HOME:-} in
         # XDG says a relative value is invalid, and honouring it would put the
@@ -273,10 +290,62 @@ window_state_file() { # window_state_file WINDOW
     printf '%s/%s\n' "$(subagent_state_dir)" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
 }
 
-record_window_state() { # record_window_state WINDOW CWD BLOCK
+record_window_state() { # record_window_state WINDOW CWD BLOCK NAME STAGE ITEM CALLER
     rs_file=$(window_state_file "$1")
     mkdir -p "${rs_file%/*}" || return 0
-    printf '%s\n%s\n' "$2" "$3" >"$rs_file.$$" && mv "$rs_file.$$" "$rs_file"
+    printf '%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >"$rs_file.$$" && mv "$rs_file.$$" "$rs_file"
+}
+
+subagent_home() { # the folder above the window records: the cap and the launch lock
+    sh_dir=$(subagent_state_dir)
+    printf '%s\n' "${sh_dir%/windows}"
+}
+
+take_lock() { # take_lock: hold the launch lock, taking over a dead holder's
+    lock=$(subagent_home)/lock
+    mkdir -p "$(subagent_home)"
+    tries=0
+    until mkdir "$lock" 2>/dev/null; do
+        holder=$(cat "$lock/pid" 2>/dev/null || true)
+        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+            rm -rf "$lock"
+            continue
+        fi
+        tries=$((tries + 1))
+        [ "$tries" -lt 240 ] ||
+            die "another launch has held $lock for a minute; remove it if no launch is running"
+        sleep "$POLL_INTERVAL"
+    done
+    printf '%s\n' "$$" >"$lock/pid"
+    locked=1
+}
+
+release_lock() {
+    [ "${locked:-0}" -eq 1 ] || return 0
+    rm -rf "$(subagent_home)/lock"
+    locked=0
+}
+
+# open_records: one tab-separated line per Subagent whose agent still runs:
+# name, Stage, item, caller, window, cwd. The record of an exited agent stays,
+# since close still needs it to stop what the agent left running.
+open_records() {
+    for or_file in "$(subagent_state_dir)"/*; do
+        [ -f "$or_file" ] || continue
+        or_name=$(sed -n 3p "$or_file")
+        [ -n "$or_name" ] || continue
+        still_alive "$(sed -n 2p "$or_file")" || continue
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$or_name" "$(sed -n 4p "$or_file")" \
+            "$(sed -n 5p "$or_file")" "$(sed -n 6p "$or_file")" "${or_file##*/}" \
+            "$(sed -n 1p "$or_file")"
+    done
+}
+
+print_records() { # print_records: records on stdin as aligned columns
+    while IFS=$'\t' read -r r_name r_stage r_item r_caller r_window r_cwd; do
+        printf '%-26s %-14s %-18s %-10s %s  %s\n' \
+            "$r_name" "$r_stage" "$r_item" "$r_window" "$r_caller" "$r_cwd"
+    done
 }
 
 still_alive() { # still_alive BLOCK: the agent started and is still running
@@ -407,6 +476,20 @@ cmd_launch() {
     [ -n "$manager" ] ||
         die "recado whoami cannot identify the caller; run recado skill setup and restart the session"
 
+    # Count and claim a place under one lock, so two Managers launching at
+    # once cannot both take the last one.
+    take_lock
+    trap release_lock EXIT
+    cap_file=$(subagent_home)/cap
+    if [ -n "$stage" ] && [ -f "$cap_file" ]; then
+        cap=$(cat "$cap_file")
+        open_stage=$(open_records | awk -F '\t' '$2 != "-"')
+        count=$(printf '%s' "$open_stage" | grep -c . || true)
+        [ "$count" -lt "$cap" ] ||
+            die "$count of $cap Stage Subagents are open, the cap \`subagent cap\` set; launch once one is closed:
+$(printf '%s\n' "$open_stage" | print_records)"
+    fi
+
     if [ -n "$stage" ]; then
         stage_label=$stage
         [ -z "$axis" ] || stage_label="$stage $axis"
@@ -459,7 +542,7 @@ $brief"
 
     prompt_file=$(mktemp "${TMPDIR:-/tmp}/$name.XXXXXX")
     printf '%s\n' "$prompt" >"$prompt_file"
-    trap 'rm -f "$prompt_file" "$prompt_file.err"' EXIT
+    trap 'rm -f "$prompt_file" "$prompt_file.err"; release_lock' EXIT
 
     case $harness in
         pi)
@@ -487,15 +570,17 @@ $brief"
     ) || die "rex window new failed: $(cat "$prompt_file.err")
 check \`$rex_cmd window ls -s $REX_SESSION\` for a window named $name and close it before relaunching"
     rm -f "$prompt_file.err"
-    trap - EXIT
+    trap release_lock EXIT
 
     window=$(printf '%s' "$created" | python3 -c 'import json, sys
 print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new output: $created"
     block=$(printf '%s' "$created" | python3 -c 'import json, sys
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
-    record_window_state "$window" "$cwd" "$block" ||
+    record_window_state "$window" "$cwd" "$block" "$name" "${stage_label:--}" "$item" "$manager" ||
         printf '[subagent] cannot record %s; close cannot reap it\n' "$window" >&2
+    release_lock
+    trap - EXIT
 
     alive=1
     for ((poll = 0; poll < STARTUP_POLLS; poll++)); do
@@ -745,6 +830,34 @@ cmd_close() {
     reap_worktree "$boundary" "$tree"
 }
 
+# ---------------------------------------------------------------- ls & cap
+
+cmd_ls() {
+    [ $# -eq 0 ] || die "ls takes no arguments"
+    rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
+    open_records | print_records
+}
+
+cmd_cap() {
+    cap_file=$(subagent_home)/cap
+    case $# in
+        0)
+            if [ -f "$cap_file" ]; then cat "$cap_file"; else printf 'off\n'; fi
+            ;;
+        1)
+            case $1 in
+                off) rm -f "$cap_file" ;;
+                '' | *[!0-9]* | 0) die "cap takes a positive number or off, not $1" ;;
+                *)
+                    mkdir -p "$(subagent_home)"
+                    printf '%s\n' "$1" >"$cap_file"
+                    ;;
+            esac
+            ;;
+        *) die "cap takes a positive number or off" ;;
+    esac
+}
+
 # -------------------------------------------------------------------- main
 
 command_name=${1-}
@@ -756,6 +869,8 @@ case $command_name in
         ;;
     launch) cmd_launch "$@" ;;
     close) cmd_close "$@" ;;
+    ls) cmd_ls "$@" ;;
+    cap) cmd_cap "$@" ;;
     help | -h | --help) usage ;;
     '')
         usage >&2

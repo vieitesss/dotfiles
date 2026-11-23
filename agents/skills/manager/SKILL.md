@@ -64,8 +64,9 @@ fixes. Rot beyond the touched code becomes a new Work Item.
 ## Ledger
 
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
-outlives `/clear`, compaction, a handoff, and resuming on another device. The
-`git/ignore` manifest keeps it and `.agents/reports/` out of git. Edit it with
+outlives `/clear`, compaction, a handoff, a restart, and resuming on another
+device. The `git/ignore` manifest keeps it, `.agents/handoff.md`,
+`.agents/briefs/`, and `.agents/reports/` out of git. Edit it with
 your file-edit tools (`edit` / `write` / `edit_file` / `write_file`, not shell
 scripts) from the template in `LEDGER_EXAMPLE.md`. When starting a new goal,
 archive or clear completed rows and stale decisions from earlier goals so the
@@ -91,8 +92,10 @@ and shell or Python scripts are never needed.
 Update the Ledger at every change: a launch, a Question, an acceptance, a user
 decision.
 
-Handing the session to another Manager goes through the `handoff` skill. Its
-document and the Ledger are the whole handover.
+Handing the session to another Manager goes through the `handoff` skill. Save
+its document as `.agents/handoff.md` beside the Ledger, not in `$TMPDIR`: a
+restart empties the temporary directory. That document and the Ledger are the
+whole handover.
 
 ## Sizing a Work Item
 
@@ -105,8 +108,10 @@ series.
 ## Briefs
 
 A Subagent starts cold: its brief is everything it knows. Write each brief to
-a scratch file with your file-write tool (`write` / `write_file`, not a shell
-heredoc), then launch:
+`.agents/briefs/ITEM-STAGE.md` at the main checkout's root with your
+file-write tool (`write` / `write_file`, not a shell heredoc), then launch.
+Never write it under `/tmp` or `$TMPDIR`: a restart empties them, and the
+Ledger's pointers then lead nowhere.
 
 ```bash
 subagent launch --stage S [--axis A] --item I --cwd WORKTREE \
@@ -128,6 +133,11 @@ in the Ledger. The brief carries:
   fix brief states a checkable repro for each must-fix finding;
 - the decisions it brings back as a Question instead of making.
 
+Leave out what `subagent launch` already tells every Subagent: tool use, free
+ports, processes and secrets it must not touch, and the non-interactive git
+environment (`GIT_EDITOR=true` and the rest). A rule copied into each brief by
+hand drifts between copies; one the repo enforces needs no brief line at all.
+
 Never put the new report path in the brief; launch adds it. Point Write briefs
 for human-facing docs, such as READMEs and PR bodies, at the `technical-writing`
 skill. Stages hand over through files: point the next brief at earlier reports
@@ -140,6 +150,8 @@ Work Items on disjoint code run in parallel, one worktree each. Work Items that
 overlap run in series in one worktree. At most one Subagent edits a worktree at
 a time; read-only Stages (Research, Review, Retro) may share one. Run at most
 two concurrent builds per provider, or stagger launches, to avoid rate limits.
+A cap on open Subagents across Managers is `subagent cap`, enforced at launch
+(see `subagents`); never keep that count by hand or by chat.
 Create each worktree before you launch into it, and pass its path as `--cwd`.
 
 Merge a branch into main yourself once its Work Item's Review loop is clean.

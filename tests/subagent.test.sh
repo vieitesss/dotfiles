@@ -43,6 +43,7 @@ new_fixture() {
     fixture_stderr="$fixture_tmp/stderr"
     fixture_state="$fixture_tmp/state"
     fixture_process=
+    fixture_exited=
     fixture_close_fail=
     fixture_close_error=
     fixture_close_refusal=
@@ -78,9 +79,20 @@ case "$1 ${2:-}" in
             cat "$REX_STUB_LOG.child" >&2
             exit 1
         }
-        printf '{"window_id":"win-1","block_ids":["blk-1"]}\n'
+        # Each window gets the next id, as in Rex, so a fixture's first
+        # launch is win-1 and its second win-2.
+        n=$(($(cat "$REX_STUB_LOG.windows" 2>/dev/null || echo 0) + 1))
+        printf '%s\n' "$n" >"$REX_STUB_LOG.windows"
+        printf '{"window_id":"win-%s","block_ids":["blk-%s"]}\n' "$n" "$n"
         ;;
     'block call')
+        # REX_STUB_EXITED names the blocks whose agent has exited.
+        case " ${REX_STUB_EXITED:-} " in
+            *" ${4:-} "*)
+                printf '{"last_exit":0}\n'
+                exit 0
+                ;;
+        esac
         if [ -n "${REX_STUB_PROCESS:-}" ]; then
             printf '%s\n' "$REX_STUB_PROCESS"
         else
@@ -247,7 +259,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
         # Drop the variables the child must set itself, so a value inherited
         # from the caller cannot make the assertion pass.
         env -u CI -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
-            -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED \
+            -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED -u XDG_STATE_HOME \
             CLAUDECODE=1 \
             HOME="$fixture_home" \
             XDG_STATE_HOME="${SG_XDG_STATE_HOME-$fixture_state}" \
@@ -268,6 +280,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             OPENCODE_STUB_LOG="$fixture_opencode_log" \
             OPENCODE_STUB_PROMPT="$fixture_opencode_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
+            REX_STUB_EXITED="$fixture_exited" \
             REX_STUB_CLOSE_FAIL="$fixture_close_fail" \
             REX_STUB_CLOSE_ERROR="$fixture_close_error" \
             REX_STUB_CLOSE_REFUSAL="$fixture_close_refusal" \
@@ -576,6 +589,10 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     expect_prompt_contains 'Open the report with a summary block of at most 10 lines'
     expect_prompt_contains 'verdict (or outcome), what changed, must-fix count, decisions needed'
     expect_prompt_contains "then \`## \` sections"
+    expect_prompt_contains 'Start a server only on a port the OS picks (port 0)'
+    expect_prompt_contains 'never stop a process you did not start'
+    # shellcheck disable=SC2016 # the backticks are the rule's own text.
+    expect_prompt_contains 'never print `.env` or another secrets file'
 done
 
 rm -rf "$fixture_tmp"
@@ -691,6 +708,8 @@ expect_claude_option --permission-mode auto
 expect_claude_env CLAUDECODE '<unset>'
 expect_claude_prompt_contains '· cmp-claude]'
 expect_claude_prompt_contains 'Compare approach A.'
+expect_claude_prompt_contains 'Start a server only on a port the OS picks (port 0)'
+expect_claude_prompt_contains 'never stop a process you did not start'
 expect_file_not_contains "$fixture_claude_prompt" "claude prompt" "Read and follow these skills:"
 expect_file_not_contains "$fixture_claude_prompt" "claude prompt" 'summary block of at most 10 lines'
 expect_contains '"name":"subagent-adhoc-'
@@ -1253,6 +1272,109 @@ fixture_close_fail=1
 run_subagent close win-1 </dev/null
 expect_status 0
 expect_stderr_contains 'already gone'
+
+# --- ls names every open Subagent, its Stage, Work Item and caller ----------
+
+new_fixture
+run_subagent launch --stage build --item widget <<'BRIEF'
+Build it.
+BRIEF
+expect_status 0
+run_subagent launch --item mgr <<'BRIEF'
+Manage it.
+BRIEF
+expect_status 0
+run_subagent ls
+expect_status 0
+expect_contains 'build'
+expect_contains 'widget'
+expect_contains 'mgr'
+expect_contains 'recado://local/manager'
+expect_contains 'win-1'
+expect_contains 'win-2'
+
+# A Subagent whose agent has exited is no longer open, and drops off the list.
+fixture_process='{"last_exit":0}'
+run_subagent ls
+expect_status 0
+checks=$((checks + 1))
+[ -z "$output" ] || fail "ls still lists exited Subagents:
+$output"
+
+rm -rf "$fixture_tmp"
+
+# --- the cap refuses a Stage launch past it; Managers are not counted -------
+
+new_fixture
+run_subagent cap
+expect_status 0
+expect_contains 'off'
+run_subagent cap 1
+expect_status 0
+run_subagent cap
+expect_contains '1'
+
+run_subagent launch --stage build --item first <<'BRIEF'
+Build the first.
+BRIEF
+expect_status 0
+
+: > "$fixture_log"
+run_subagent launch --stage build --item second <<'BRIEF'
+Build the second.
+BRIEF
+expect_nonzero
+expect_stderr_contains '1 of 1'
+expect_stderr_contains 'first'
+expect_no_rex_command
+
+# An ad-hoc launch is a Manager's, and the cap counts Stage Subagents only.
+run_subagent launch --item manager <<'BRIEF'
+Manage.
+BRIEF
+expect_status 0
+
+# Closing the open Stage Subagent frees its place.
+run_subagent close win-1
+expect_status 0
+run_subagent launch --stage build --item second <<'BRIEF'
+Build the second.
+BRIEF
+expect_status 0
+
+run_subagent cap off
+expect_status 0
+run_subagent cap
+expect_contains 'off'
+
+run_subagent cap many
+expect_nonzero
+expect_stderr_contains 'cap takes a positive number or off'
+
+rm -rf "$fixture_tmp"
+
+# --- an exited Stage Subagent leaves its place under the cap ----------------
+
+new_fixture
+run_subagent cap 1
+run_subagent launch --stage build --item first <<'BRIEF'
+Build the first.
+BRIEF
+expect_status 0
+fixture_exited=blk-1
+run_subagent launch --stage build --item second <<'BRIEF'
+Build the second.
+BRIEF
+expect_status 0
+# ls leaves the exited agent's record, which close still needs to reap.
+run_subagent ls
+case $output in
+    *first*) fail "ls lists the exited Subagent:
+$output" ;;
+esac
+checks=$((checks + 1))
+run_subagent close win-1
+expect_stderr_contains 'ran in the main checkout'
 
 rm -rf "$fixture_tmp"
 

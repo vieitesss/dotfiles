@@ -2,3 +2,5 @@
 **/.claude/.cc-writes/
 .agents/ledger.md
 .agents/reports/
+.agents/briefs/
+.agents/handoff.md
