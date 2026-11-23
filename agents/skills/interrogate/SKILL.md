@@ -14,13 +14,15 @@ Leave repo files untouched: keep any scratch state in a command-scoped temp dire
 
 Read the brief for the diff command, diff base, worktree, and spec. Run the diff command to inspect the change, then state the intent in one or two sentences from the spec and commits. Target runtime behavior and contracts: edge cases, boundary inputs, error paths, state transitions, and regressions against the intent.
 
+Then follow steps 2–3 of [`../blast-radius/SKILL.md`](../blast-radius/SKILL.md) (resolve the path against this skill's directory): name the one safety fact and trace the change past grep. Add every outside-the-diff consumer you find to the attack list. Report in this skill's format, not blast-radius's.
+
 ## 2. Attack
 
 Exercise the changed code directly from the worktree root: run tests, invoke commands or functions with adversarial inputs, hit error paths, and probe integration seams.
 
 Every finding's command must be **self-contained and rerunnable** from a clean worktree root without prior shell state, repo edits, or pre-existing temp files (use inline invocations such as `sh -c`, `python3 -c`, or existing test commands). The Manager reruns each finding's command before accepting it; any command that fails to reproduce cold is dropped.
 
-Finish attacking only when every changed behavior and risky boundary in the diff has been probed or noted as unreachable in this environment.
+Finish attacking only when every changed behavior, risky boundary, and traced outside-the-diff consumer has been probed or noted as unreachable in this environment.
 
 ## 3. Filter
 
