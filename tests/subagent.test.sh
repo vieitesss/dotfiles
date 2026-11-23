@@ -243,7 +243,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED \
             CLAUDECODE=1 \
             HOME="$fixture_home" \
-            XDG_STATE_HOME="$fixture_state" \
+            XDG_STATE_HOME="${SG_XDG_STATE_HOME-$fixture_state}" \
             PATH="$fixture_bin:$PATH" \
             STUB_BIN="$fixture_bin" \
             SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
@@ -1098,6 +1098,66 @@ if ! kill -0 "$mover" 2>/dev/null; then
     fail "close terminated pid $mover after it left the worktree for $outside"
 fi
 kill -TERM "$mover" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close reaps a worktree whose path holds a backslash -------------------
+
+new_fixture
+worktree="$fixture_tmp/wt\\back"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+own=$(leak_proc "$worktree" "$fixture_tmp/own")
+use_window_pids "$own"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $own"
+checks=$((checks + 1))
+if kill -0 "$own" 2>/dev/null; then
+    fail "close left pid $own running in a worktree whose path holds a backslash"
+fi
+kill -TERM "$own" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- a relative XDG_STATE_HOME falls back to HOME -------------------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+other_repo="$fixture_tmp/other"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+mkdir -p "$other_repo"
+git -C "$other_repo" init -q
+SG_XDG_STATE_HOME=relative-state
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+checks=$((checks + 1))
+if [ ! -f "$fixture_home/.local/state/subagent/windows/win-1" ]; then
+    fail "a relative XDG_STATE_HOME did not fall back to \$HOME/.local/state"
+fi
+checks=$((checks + 1))
+if [ -e "$fixture_repo/relative-state" ]; then
+    fail "a relative XDG_STATE_HOME created state under the launch directory"
+fi
+leaked=$(leak_proc "$worktree" "$fixture_tmp/leaked")
+use_window_pids "$leaked"
+
+SG_CWD=$other_repo
+run_subagent close win-1 </dev/null
+SG_CWD=
+SG_XDG_STATE_HOME=
+expect_status 0
+expect_stderr_contains "stopped pid $leaked"
+checks=$((checks + 1))
+if kill -0 "$leaked" 2>/dev/null; then
+    fail "close from another directory lost the record written with a relative XDG_STATE_HOME"
+fi
 
 rm -rf "$fixture_tmp"
 

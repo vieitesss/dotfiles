@@ -261,11 +261,12 @@ skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
 # each other. The record lives outside any checkout: the Manager often closes a
 # window from a different repo than the one that launched it.
 subagent_state_dir() {
-    if [ -n "${XDG_STATE_HOME:-}" ]; then
-        printf '%s/subagent/windows\n' "$XDG_STATE_HOME"
-    else
-        printf '%s/.local/state/subagent/windows\n' "$HOME"
-    fi
+    case ${XDG_STATE_HOME:-} in
+        # XDG says a relative value is invalid, and honouring it would put the
+        # record under whichever directory the caller happens to run in.
+        /*) printf '%s/subagent/windows\n' "$XDG_STATE_HOME" ;;
+        *) printf '%s/.local/state/subagent/windows\n' "$HOME" ;;
+    esac
 }
 
 window_state_file() { # window_state_file WINDOW
@@ -536,7 +537,13 @@ self_and_parents() { # self_and_parents: pids close must never signal
 
 cwd_pids() { # cwd_pids DIR: pids whose cwd is DIR or below it
     if command -v lsof >/dev/null 2>&1; then
-        lsof -a -d cwd -Fpn 2>/dev/null | awk -v dir="$1" '
+        # Through the environment, not awk -v: a path holding a backslash
+        # would be read as an escape sequence. lsof's -F output doubles a
+        # backslash, so compare in its terms.
+        cp_dir=$(printf '%s' "$1" | sed 's/\\/\\\\/g')
+        export cp_dir
+        lsof -a -d cwd -Fpn 2>/dev/null | awk '
+            BEGIN { dir = ENVIRON["cp_dir"] }
             /^p/ { pid = substr($0, 2); next }
             /^n/ {
                 path = substr($0, 2)
