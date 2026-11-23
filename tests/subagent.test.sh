@@ -44,6 +44,7 @@ new_fixture() {
     fixture_state="$fixture_tmp/state"
     fixture_process=
     fixture_close_fail=
+    fixture_close_error=
     SG_CWD=
 
     mkdir -p "$fixture_repo" "$fixture_home" "$fixture_bin" "$fixture_tmp/tmp"
@@ -90,7 +91,11 @@ case "$1 ${2:-}" in
         ;;
     'window close')
         if [ "${REX_STUB_CLOSE_FAIL:-}" = 1 ]; then
-            printf 'no such window\n' >&2
+            printf 'Error: window target "%s" not found\n' "$3" >&2
+            exit 3
+        fi
+        if [ -n "${REX_STUB_CLOSE_ERROR:-}" ]; then
+            printf 'Rex connection reset; window still open\n' >&2
             exit 1
         fi
         ;;
@@ -257,6 +262,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             OPENCODE_STUB_PROMPT="$fixture_opencode_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
             REX_STUB_CLOSE_FAIL="$fixture_close_fail" \
+            REX_STUB_CLOSE_ERROR="$fixture_close_error" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
     status=$?
@@ -968,6 +974,44 @@ if ! kill -0 "$kept" 2>/dev/null; then
     fail "close killed pid $kept, whose cwd is a subdirectory of the main checkout"
 fi
 kill -TERM "$kept" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- a failing rex close keeps the record and stops nothing ----------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+leaked=$(leak_proc "$worktree" "$fixture_tmp/leaked")
+use_window_pids "$leaked"
+fixture_close_error=1
+
+run_subagent close win-1 </dev/null
+expect_nonzero
+expect_stderr_contains 'could not close'
+expect_stderr_contains 'Rex connection reset'
+checks=$((checks + 1))
+if [ ! -f "$fixture_state/subagent/windows/win-1" ]; then
+    fail "close dropped the record of a window Rex failed to close"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$leaked" 2>/dev/null; then
+    fail "close stopped pid $leaked although the window never closed"
+fi
+
+# The record it kept is what a retry uses.
+fixture_close_error=
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $leaked"
+checks=$((checks + 1))
+if kill -0 "$leaked" 2>/dev/null; then
+    fail "the retried close left pid $leaked running"
+fi
 
 rm -rf "$fixture_tmp"
 

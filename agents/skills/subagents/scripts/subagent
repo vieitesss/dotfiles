@@ -660,7 +660,6 @@ cmd_close() {
     if [ -f "$state_file" ]; then
         worktree=$(sed -n 1p "$state_file")
         block=$(sed -n 2p "$state_file")
-        rm -f "$state_file"
         if [ -n "$worktree" ] && [ -d "$worktree" ] && [ -n "$block" ]; then
             # lsof and /proc report physical paths, so compare in the same terms.
             worktree=$(cd "$worktree" && pwd -P)
@@ -674,11 +673,20 @@ cmd_close() {
         fi
     fi
 
-    if "$rex_cmd" --autostart=false window close "$window" >/dev/null 2>&1; then
+    # A close Rex refuses is not an already-gone window: keep the record so it
+    # can be retried, and signal nothing while that window may still be alive.
+    close_status=0
+    close_output=$("$rex_cmd" --autostart=false window close "$window" 2>&1) || close_status=$?
+    if [ "$close_status" -eq 0 ]; then
         printf '[subagent] closed window %s\n' "$window" >&2
-    else
+    elif printf '%s' "$close_output" | grep -qi 'not found'; then
         printf '[subagent] window %s is already gone\n' "$window" >&2
+    else
+        printf '[subagent] rex could not close window %s: %s\n' "$window" "$close_output" >&2
+        printf '[subagent] kept record %s; stopped nothing\n' "$state_file" >&2
+        return 1
     fi
+    rm -f "$state_file"
 
     if [ -z "$worktree" ]; then
         printf '[subagent] no worktree recorded for %s; nothing to reap\n' "$window" >&2

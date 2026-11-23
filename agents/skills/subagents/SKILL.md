@@ -122,5 +122,6 @@ git worktree of the launch directory, so a launch from a subdirectory still
 covers the whole worktree — get SIGINT, then SIGTERM after 3 seconds, and each
 is printed with its pid and command. Anything else in that worktree — another
 Subagent, your own checks — is left alone, and so is a Subagent launched in the
-main checkout, where `close` says it is not reaping.
+main checkout, where `close` says it is not reaping. If Rex refuses the close,
+`close` prints the error, keeps the record and stops nothing.
 A window that is already gone still closes cleanly.
