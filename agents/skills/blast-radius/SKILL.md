@@ -26,7 +26,6 @@ Push every safety fact as far down this ladder as is cheap, and report where it 
 3. **Trace past grep.** Follow what a symbol search misses: indirect callers, downstream consumers, config and manifests, data or wire formats, pinned library source and local patches, execution order (teardown, async, hooks), and other repos or symlinks that link this one. Cite real `file:line` for every claim; record an empty search explicitly.
 4. **Separate confirmed and cleared risks.** Rate each confirmed risk by real likelihood and impact. List checked areas that hold separately with their proof level.
 5. **Prove the safety fact.** Run real code — a read-only command, test, or minimal script calling the exact implementation — that fails loud if the fact is false, and capture the command and output. Mark the fact `unproven` if you cannot run it, and report the highest level reached.
-6. **Escalate wide changes to `arena`.** For a big or wide change spanning multiple modules or failure modes, run this question through the `arena` skill (competing Subagents via `subagent launch`, with a judge on another vendor) and merge the findings.
 
 ## Writeup
 

@@ -159,12 +159,6 @@ When a merged Work Item is one part of a split parent issue that stays open,
 post a one-line comment on the parent issue stating what landed so parallel or
 triage sessions see live state.
 
-## Arena
-
-When a Work Item admits several valid shapes or is a one-way door, follow the
-`arena` skill to run competing Build Subagents, cross-judge them, and graft the
-strongest parts onto the chosen base.
-
 ## Review
 
 Run Review after Build, and after Refine when Refine ran. Never after Write or

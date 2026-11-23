@@ -61,8 +61,7 @@ subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR] \
   commands.
 
 To run multiple Subagents in parallel, call `subagent launch` once per Subagent
-with a distinct `--item` and keep each returned `name` and `window`. For judged
-multi-harness comparisons on one Work Item, use the `arena` skill.
+with a distinct `--item` and keep each returned `name` and `window`.
 
 Example ad-hoc launches:
 

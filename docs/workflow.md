@@ -3,9 +3,8 @@
 How a goal moves from the user's request to a changed, reviewed branch. Terms
 are defined in [GLOSSARY.md](../GLOSSARY.md); the decisions behind this shape
 are [ADR 0003](adr/0003-subagent-is-a-stage-instance.md),
-[ADR 0006](adr/0006-manager-always-delegates.md),
-[ADR 0007](adr/0007-bash-launcher-rex-only.md), and
-[ADR 0008](adr/0008-arena-reuses-build-stage.md).
+[ADR 0006](adr/0006-manager-always-delegates.md), and
+[ADR 0007](adr/0007-bash-launcher-rex-only.md).
 
 ## Flow
 
@@ -26,10 +25,7 @@ flowchart TD
     write --> done
     kind -- retro --> retro{{"Retro (read-only)"}}
     retro --> done
-    kind -- code --> arenap{"Several valid shapes<br/>or one-way door?"}
-    arenap -- yes --> arena(["Arena: competing Builds,<br/>cross-vendor judge, graft Build"])
-    arenap -- no --> build{{"Build (builder)<br/>ends with Verdict"}}
-    arena --> verdict
+    kind -- code --> build{{"Build (builder)<br/>ends with Verdict"}}
     build --> verdict{"Manager reruns Verdict command<br/>VERIFIED?"}
     verdict -- "NOT VERIFIED / INCONCLUSIVE" --> build
     verdict -- VERIFIED --> refinep{"Build reshaped an existing module?<br/>Skip for new code, hotfixes, small fixes"}
@@ -66,11 +62,6 @@ Defaults the flow leaves implicit:
   design, diagnosis, planning, and shipping happen outside it. After the
   Manager reports, `babysit` owns shipping the PR through conflicts, review
   threads, and CI.
-- For a Work Item that admits several valid shapes or is a one-way door, the
-  Manager can run an Arena before normal Build. Competing Build Subagents solve
-  the same brief on distinct Harnesses in separate worktrees, a read-only judge
-  on another vendor scores them against a rubric, and a fresh Build Subagent
-  grafts the strongest parts onto the picked base.
 - Every Build report ends with a Verdict (`VERIFIED`, `NOT VERIFIED`, or
   `INCONCLUSIVE`) backed by a command and its observed output on the real code
   or interface. The Manager reruns that command before accepting the report.
@@ -140,7 +131,6 @@ sequenceDiagram
     U->>M: /manager + goal
     M->>U: restate goal and smallest change
     M->>L: write Goal line and Work Items to .agents/ledger.md
-    Note over M,B: Optional Arena: competing Builds on distinct Harnesses, cross-vendor judge, graft Build
     M->>B: subagent launch --stage build --item I
     B-->>M: QUESTION (product or irreversible choice)
     M-->>B: answer (or ask the User first)

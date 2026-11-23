@@ -82,6 +82,3 @@ _Avoid_: Final response handoff, done message
 The closing status of a Build report (`VERIFIED`, `NOT VERIFIED`, or `INCONCLUSIVE`) backed by a rerunnable command and its observed output; `INCONCLUSIVE` is not a pass.
 _Avoid_: Pass/fail, test result, sign-off
 
-**Arena**:
-A Manager procedure where competing Build Subagents solve the same brief on distinct Harnesses in separate worktrees, a read-only judge on another vendor scores them against a rubric, and a fresh Build Subagent grafts the strongest parts onto the picked base.
-_Avoid_: Bake-off, tournament, comparison run

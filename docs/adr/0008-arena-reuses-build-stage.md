@@ -1,5 +1,8 @@
 # Arena reuses the Build Stage
 
+**Status:** Withdrawn. The `arena` skill was removed: running several competing
+Builds plus a judge and a graft costs more tokens than the budget allows.
+
 When a Work Item admits several valid shapes or is a one-way door, the Manager
 can run an Arena through the `arena` skill without adding a Stage or a launcher
 flag. Each candidate is an ordinary `subagent launch --stage build` call with a
