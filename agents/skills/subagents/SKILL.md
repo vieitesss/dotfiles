@@ -124,6 +124,8 @@ still there, and each is printed with its pid and command. A process that moves
 out of the worktree during those 3 seconds is printed, never signalled. Anything
 else in that worktree — another Subagent, your own checks — is left alone, and
 so is a Subagent launched in the main checkout, where `close` says it is not
-reaping. If Rex refuses the close,
-`close` prints the error, keeps the record and stops nothing.
-A window that is already gone still closes cleanly.
+reaping. If Rex refuses the close, `close` prints the error, keeps the record
+and stops nothing.
+A window that is already gone still closes cleanly. The tree is what Rex
+reports, so a process reparented to init before `close` runs is not in it and
+survives: that leftover is a known limit, not a reaping bug.
