@@ -117,9 +117,10 @@ Once you accept the report, run `subagent close WINDOW`. That can come right
 after TASK COMPLETE.
 
 `close` also stops what the Subagent left running: the processes still alive in
-its window's process tree, with a working directory inside its worktree, get
-SIGINT, then SIGTERM after 3 seconds, and each is printed with its pid and
-command. Anything else in that worktree — another Subagent, your own checks —
-is left alone, and so is a Subagent launched in the main checkout, where
-`close` says it is not reaping.
+its window's process tree, with a working directory inside its worktree — the
+git worktree of the launch directory, so a launch from a subdirectory still
+covers the whole worktree — get SIGINT, then SIGTERM after 3 seconds, and each
+is printed with its pid and command. Anything else in that worktree — another
+Subagent, your own checks — is left alone, and so is a Subagent launched in the
+main checkout, where `close` says it is not reaping.
 A window that is already gone still closes cleanly.

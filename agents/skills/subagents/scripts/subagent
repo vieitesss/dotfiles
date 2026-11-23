@@ -233,6 +233,18 @@ main_checkout() { # main_checkout DIR: checkout sharing DIR's git dir, '' outsid
     esac
 }
 
+main_root() { # main_root DIR: the main checkout of DIR, physical; '' when DIR is it
+    mr_main=$(main_checkout "$1")
+    [ -n "$mr_main" ] || return 0
+    (cd "$mr_main" 2>/dev/null && pwd -P) || printf '%s\n' "$mr_main"
+}
+
+checkout_root() { # checkout_root DIR: DIR's git worktree top-level, physical
+    cr_top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || cr_top=
+    [ -n "$cr_top" ] || return 1
+    (cd "$cr_top" 2>/dev/null && pwd -P)
+}
+
 skill_path() { # skill_path NAME CWD MAIN: the skill's SKILL.md, or nothing
     for root in "$2/.agents/skills" "$3/.agents/skills" \
         "$HOME/.agents/skills" "$HOME/.pi/agent/skills" "$HOME/.gemini/config/skills"; do
@@ -641,6 +653,7 @@ cmd_close() {
 
     # Snapshot the window's process tree before Rex tears the window down.
     worktree=
+    boundary=
     tree=
     tree_known=1
     state_file=$(window_state_file "$window")
@@ -651,7 +664,13 @@ cmd_close() {
         if [ -n "$worktree" ] && [ -d "$worktree" ] && [ -n "$block" ]; then
             # lsof and /proc report physical paths, so compare in the same terms.
             worktree=$(cd "$worktree" && pwd -P)
+            # The boundary is the worktree the launch cwd belongs to, not the
+            # cwd itself: a launch from a subdirectory still owns the whole
+            # worktree, and a launch from the main checkout owns nothing.
+            boundary=$(checkout_root "$worktree") || boundary=$worktree
             tree=$(window_pids "$block") || tree_known=0
+        else
+            worktree=
         fi
     fi
 
@@ -665,9 +684,9 @@ cmd_close() {
         printf '[subagent] no worktree recorded for %s; nothing to reap\n' "$window" >&2
         return 0
     fi
-    if [ "$worktree" = "$(main_checkout "$worktree")" ]; then
+    if [ "$boundary" = "$(main_root "$boundary")" ]; then
         printf '[subagent] %s ran in the main checkout %s; not reaping its processes\n' \
-            "$window" "$worktree" >&2
+            "$window" "$boundary" >&2
         return 0
     fi
     if [ "$tree_known" -eq 0 ]; then
@@ -675,7 +694,7 @@ cmd_close() {
             "$window" >&2
         return 0
     fi
-    reap_worktree "$worktree" "$tree"
+    reap_worktree "$boundary" "$tree"
 }
 
 # -------------------------------------------------------------------- main

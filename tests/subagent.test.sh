@@ -925,6 +925,52 @@ kill -TERM "$kept" 2>/dev/null || true
 
 rm -rf "$fixture_tmp"
 
+# --- close reaps the whole worktree when the launch cwd is a subdirectory --
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+mkdir -p "$worktree/nested"
+run_subagent launch --stage build --item widget --cwd "$worktree/nested" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+own=$(leak_proc "$worktree" "$fixture_tmp/own")
+use_window_pids "$own"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $own"
+checks=$((checks + 1))
+if kill -0 "$own" 2>/dev/null; then
+    fail "close left pid $own running: it sits at the worktree root and the launch cwd was a subdirectory"
+fi
+kill -TERM "$own" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close reaps nothing under the main checkout ---------------------------
+
+new_fixture
+mkdir -p "$fixture_repo/subdir"
+run_subagent launch --stage build --item widget --cwd "$fixture_repo/subdir" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+kept=$(leak_proc "$fixture_repo/subdir" "$fixture_tmp/kept")
+use_window_pids "$kept"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'not reaping'
+checks=$((checks + 1))
+if ! kill -0 "$kept" 2>/dev/null; then
+    fail "close killed pid $kept, whose cwd is a subdirectory of the main checkout"
+fi
+kill -TERM "$kept" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
 # --- close says so when it cannot read the window's process tree ----------
 
 new_fixture
