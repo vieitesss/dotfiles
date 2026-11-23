@@ -641,11 +641,29 @@ $reap_pid
         kill -INT "$reap_pid" 2>/dev/null || true
     done
     reap_live=$(reap_wait "$reap_pids" "$REAP_GRACE")
-    for reap_pid in $reap_live; do
+    # A process that left the boundary while it had the grace period is no
+    # longer this worktree's business, so escalate only those still inside it.
+    reap_here=
+    reap_left=
+    if [ -n "$reap_live" ]; then
+        reap_still=$(cwd_pids "$reap_root")
+        for reap_pid in $reap_live; do
+            case "
+$reap_still
+" in *"
+$reap_pid
+"*) reap_here="$reap_here $reap_pid" ;; *) reap_left="$reap_left $reap_pid" ;; esac
+        done
+    fi
+    for reap_pid in $reap_left; do
+        printf '[subagent] pid %s left %s; not terminating it\n' "$reap_pid" "$reap_root" >&2
+    done
+    for reap_pid in $reap_here; do
         kill -TERM "$reap_pid" 2>/dev/null || true
     done
-    [ -z "$reap_live" ] || reap_wait "$reap_live" "$REAP_GRACE" >/dev/null
+    [ -z "$reap_here" ] || reap_wait "$reap_here" "$REAP_GRACE" >/dev/null
     while IFS="$(printf '\t')" read -r reap_pid reap_cmd; do
+        case " $reap_left " in *" $reap_pid "*) continue ;; esac
         if kill -0 "$reap_pid" 2>/dev/null; then
             printf '[subagent] pid %s survived SIGTERM (%s)\n' "$reap_pid" "$reap_cmd" >&2
         else

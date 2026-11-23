@@ -1062,6 +1062,45 @@ kill -TERM "$kept" 2>/dev/null || true
 
 rm -rf "$fixture_tmp"
 
+# --- close does not escalate to a process that left the worktree -----------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+outside="$fixture_tmp/outside"
+mkdir -p "$outside"
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+# A process that leaves for OUTSIDE when it takes the SIGINT, and keeps running.
+# Python, because a background job of this suite carries SIGINT ignored.
+mover=$(leak_proc "$worktree" "$fixture_tmp/mover" \
+    python3 -c 'import os, signal, sys, time
+
+def move(*_):
+    os.chdir(sys.argv[1])
+    open(sys.argv[2], "w").close()
+
+signal.signal(signal.SIGINT, move)
+while True:
+    time.sleep(0.05)' "$outside" "$fixture_tmp/moved")
+use_window_pids "$mover"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "pid $mover left"
+expect_stderr_contains 'not terminating'
+checks=$((checks + 1))
+[ -f "$fixture_tmp/moved" ] || fail "close did not deliver SIGINT to pid $mover before escalating"
+checks=$((checks + 1))
+if ! kill -0 "$mover" 2>/dev/null; then
+    fail "close terminated pid $mover after it left the worktree for $outside"
+fi
+kill -TERM "$mover" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
 # --- close says so when it cannot read the window's process tree ----------
 
 new_fixture
