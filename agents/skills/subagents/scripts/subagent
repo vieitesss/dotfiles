@@ -709,11 +709,14 @@ cmd_close() {
 
     # A close Rex refuses is not an already-gone window: keep the record so it
     # can be retried, and signal nothing while that window may still be alive.
+    # Only rex's own exit 3 with the window-target wording means the window was
+    # already gone; a "not found" inside any other error is a refusal too.
     close_status=0
     close_output=$("$rex_cmd" --autostart=false window close "$window" 2>&1) || close_status=$?
     if [ "$close_status" -eq 0 ]; then
         printf '[subagent] closed window %s\n' "$window" >&2
-    elif printf '%s' "$close_output" | grep -qi 'not found'; then
+    elif [ "$close_status" -eq 3 ] &&
+        printf '%s' "$close_output" | grep -Eqi 'window target .*not found'; then
         printf '[subagent] window %s is already gone\n' "$window" >&2
     else
         printf '[subagent] rex could not close window %s: %s\n' "$window" "$close_output" >&2
