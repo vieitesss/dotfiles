@@ -45,6 +45,7 @@ new_fixture() {
     fixture_process=
     fixture_close_fail=
     fixture_close_error=
+    fixture_close_refusal=
     SG_CWD=
 
     mkdir -p "$fixture_repo" "$fixture_home" "$fixture_bin" "$fixture_tmp/tmp"
@@ -93,6 +94,12 @@ case "$1 ${2:-}" in
         if [ "${REX_STUB_CLOSE_FAIL:-}" = 1 ]; then
             printf 'Error: window target "%s" not found\n' "$3" >&2
             exit 3
+        fi
+        # A refusal that talks about "not found" without the window-target
+        # wording and exit 3 is still a failed close, not a gone window.
+        if [ "${REX_STUB_CLOSE_REFUSAL:-}" = 1 ]; then
+            printf 'Error: Rex session not found; window still open\n' >&2
+            exit 1
         fi
         if [ -n "${REX_STUB_CLOSE_ERROR:-}" ]; then
             printf 'Rex connection reset; window still open\n' >&2
@@ -263,6 +270,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             REX_STUB_PROCESS="$fixture_process" \
             REX_STUB_CLOSE_FAIL="$fixture_close_fail" \
             REX_STUB_CLOSE_ERROR="$fixture_close_error" \
+            REX_STUB_CLOSE_REFUSAL="$fixture_close_refusal" \
             "$subagent_bash" "$subagent_src" "$@" 2>"$fixture_stderr"
     )
     status=$?
@@ -1015,6 +1023,35 @@ fi
 
 rm -rf "$fixture_tmp"
 
+# --- a Rex refusal that says "not found" is not a gone window --------------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+leaked=$(leak_proc "$worktree" "$fixture_tmp/leaked")
+use_window_pids "$leaked"
+# Exit 1, and the message holds "not found" without naming the window target.
+fixture_close_refusal=1
+
+run_subagent close win-1 </dev/null
+expect_nonzero
+expect_stderr_contains 'could not close'
+checks=$((checks + 1))
+if [ ! -f "$fixture_state/subagent/windows/win-1" ]; then
+    fail "close dropped the record of a window Rex refused to close"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$leaked" 2>/dev/null; then
+    fail "close reaped pid $leaked because a Rex refusal mentioned 'not found'"
+fi
+kill -TERM "$leaked" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
 # --- close rejects a PID field that is not a process id --------------------
 
 new_fixture
@@ -1034,6 +1071,31 @@ expect_stderr_contains 'cannot read the process tree'
 checks=$((checks + 1))
 if ! kill -0 "$other" 2>/dev/null; then
     fail "close signalled pid $other because its pid appeared inside a malformed PID field"
+fi
+kill -TERM "$other" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
+# --- close rejects a PID string that differs only by a trailing newline ----
+
+new_fixture
+worktree="$fixture_tmp/wt"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+other=$(leak_proc "$worktree" "$fixture_tmp/other")
+# Command substitution strips the trailing newline, so the digits alone would
+# reach the check as a usable pid.
+fixture_process="{\"child\":{\"pid\":\"$other\n\"}}"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains 'cannot read the process tree'
+checks=$((checks + 1))
+if ! kill -0 "$other" 2>/dev/null; then
+    fail "close signalled pid $other from a PID string with a trailing newline"
 fi
 kill -TERM "$other" 2>/dev/null || true
 
