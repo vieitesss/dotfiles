@@ -7,10 +7,8 @@
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
     "npm:@ff-labs/pi-fff",
-    "npm:pi-web-extension",
-    "npm:pi-intercom",
     "npm:@inobit/pi-themes",
-    "git:github.com/badlogic/pi-telegram"
+    "npm:pi-background-tasks"
   ],
   "theme": "gruber-lighter",
   "fullscreenScrollbar": "auto",
@@ -35,8 +33,11 @@
     "mermaid": "streaming"
   },
   "compaction": {
-    "enabled": false,
+    "enabled": true,
     "modelOverrides": {
+      "anthropic/claude-opus-5-5": {
+        "reserveTokens": 850000
+      },
       "github-copilot/claude-haiku-5.5": {
         "reserveTokens": 850000
       },
