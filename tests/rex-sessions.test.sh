@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 # The unit cases keep the project cache in a throwaway database.
 out=$(REX_CONFIG_DIR="$repo_root/rex" REX_DB="$tmp/unit-db.json" \
-    rex do "$repo_root/tests/rex-sessions.test.lua") || {
+    rex 'do' "$repo_root/tests/rex-sessions.test.lua") || {
     printf 'FAIL: %s\n' "$out" >&2
     exit 1
 }
@@ -37,7 +37,7 @@ rex -S "$endpoint" server start --config "$repo_root/tests/rex-sessions.config.l
 # A real config action must reach the server's prompt dispatcher. Without an
 # app connected it returns no_client; script actions return unsupported instead.
 for scope in local remote; do
-    set -- do rex_sessions
+    set -- 'do' rex_sessions
     if [ "$scope" = remote ]; then
         # Exercise the actual remote action context, not a Lua mock. This
         # caller cannot proxy the foreign host, but local catalog access and
@@ -45,7 +45,7 @@ for scope in local remote; do
         set -- api call client.action \
             '{"action":"rex_sessions","server":"remote","servers":[{"name":"remote","id":"unreachable"}]}'
     fi
-    if REX_SESSION= REX_BLOCK= REX_CLIENT= rex --autostart=false -S "$endpoint" \
+    if REX_SESSION='' REX_BLOCK='' REX_CLIENT='' rex --autostart=false -S "$endpoint" \
         --timeout 20s "$@" >"$tmp/stdout" 2>"$tmp/stderr"; then
         printf 'FAIL: expected no_client in %s context without a connected app\n' "$scope" >&2
         exit 1
@@ -65,10 +65,10 @@ for scope in remote local remote; do
     if [ "$scope" = remote ]; then
         args='{"action":"rex_sessions_select_test","server":"remote","servers":[{"name":"remote","id":"unreachable"}]}'
     fi
-    REX_SESSION= REX_BLOCK= REX_CLIENT= rex --autostart=false -S "$endpoint" \
+    REX_SESSION='' REX_BLOCK='' REX_CLIENT='' rex --autostart=false -S "$endpoint" \
         api call client.action "$args" >"$tmp/selection"
-    selected=$(REX_SESSION= REX_BLOCK= REX_CLIENT= REX_TEST_PROJECT="$tmp/home/personal/demo.app" \
-        rex --autostart=false -S "$endpoint" do -e '
+    selected=$(REX_SESSION='' REX_BLOCK='' REX_CLIENT='' REX_TEST_PROJECT="$tmp/home/personal/demo.app" \
+        rex --autostart=false -S "$endpoint" 'do' -e '
 local response = rex.json.decode(io.read("*a"))
 assert(#response.client_actions == 1, "one deferred selection")
 local action = response.client_actions[1]

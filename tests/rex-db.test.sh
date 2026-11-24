@@ -18,7 +18,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 # The corrupt-file case logs a warning on stderr; only stdout is the verdict.
 out=$(REX_DB="$tmp/state/db.json" REX_CONFIG_DIR="$repo_root/rex" \
-    rex do "$repo_root/tests/rex-db.test.lua" 2>"$tmp/stderr") || {
+    rex 'do' "$repo_root/tests/rex-db.test.lua" 2>"$tmp/stderr") || {
     printf 'FAIL: %s\n' "$out" >&2
     cat "$tmp/stderr" >&2
     exit 1
@@ -36,7 +36,7 @@ for n = 1, 20 do db.set(os.getenv("WRITER"), n) end
 LUA
 for w in 1 2 3 4 5; do
     WRITER="w$w" REX_DB="$tmp/race/db.json" REX_CONFIG_DIR="$repo_root/rex" \
-        rex do "$tmp/writer.lua" >/dev/null 2>&1 &
+        rex 'do' "$tmp/writer.lua" >/dev/null 2>&1 &
 done
 wait
 cat >"$tmp/reader.lua" <<'LUA'
@@ -46,6 +46,6 @@ for w = 1, 5 do
   assert(db.get("w" .. w) == 20, "concurrent writers lost w" .. w)
 end
 LUA
-REX_DB="$tmp/race/db.json" REX_CONFIG_DIR="$repo_root/rex" rex do "$tmp/reader.lua"
+REX_DB="$tmp/race/db.json" REX_CONFIG_DIR="$repo_root/rex" rex 'do' "$tmp/reader.lua"
 
 printf 'ok: %s\n' "$0"
