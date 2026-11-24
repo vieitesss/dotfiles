@@ -203,7 +203,7 @@ print_stages() {
     done
 }
 
-check_axis() { # check_axis STAGE AXIS
+check_axis() { # check_axis STAGE AXIS [AXIS_SET]
     case $1 in
         review)
             case $2 in
@@ -213,10 +213,10 @@ check_axis() { # check_axis STAGE AXIS
             esac
             ;;
         '')
-            [ -z "$2" ] || die "--axis requires --stage review"
+            [ "${3:-0}" -eq 0 ] && [ -z "$2" ] || die "--axis requires --stage review"
             ;;
         *)
-            [ -z "$2" ] || die "--stage $1 takes no --axis"
+            [ "${3:-0}" -eq 0 ] && [ -z "$2" ] || die "--stage $1 takes no --axis"
             ;;
     esac
 }
@@ -372,6 +372,7 @@ sys.exit(0 if last_exit is None else 1)'
 cmd_launch() {
     stage=
     axis=
+    axis_set=0
     item=
     cwd=
     override_harness=
@@ -381,21 +382,19 @@ cmd_launch() {
     override_effort=
     override_effort_set=0
     while [ $# -gt 0 ]; do
+        flag=
+        value=
         case $1 in
             --stage | --axis | --item | --cwd | --harness | --model | --effort)
                 [ $# -ge 2 ] || die "launch: $1 needs a value"
                 flag=$1
                 value=$2
                 shift 2
-                case $flag in
-                    --stage) stage=$value ;;
-                    --axis) axis=$value ;;
-                    --item) item=$value ;;
-                    --cwd) cwd=$value ;;
-                    --harness) override_harness=$value; override_harness_set=1 ;;
-                    --model) override_model=$value; override_model_set=1 ;;
-                    --effort) override_effort=$value; override_effort_set=1 ;;
-                esac
+                ;;
+            --stage=* | --axis=* | --item=* | --cwd=* | --harness=* | --model=* | --effort=*)
+                flag=${1%%=*}
+                value=${1#*=}
+                shift
                 ;;
             -h | --help)
                 usage
@@ -403,16 +402,25 @@ cmd_launch() {
                 ;;
             *) die "launch: unexpected argument: $1" ;;
         esac
+        case $flag in
+            --stage) stage=$value ;;
+            --axis) axis=$value; axis_set=1 ;;
+            --item) item=$value ;;
+            --cwd) cwd=$value ;;
+            --harness) override_harness=$value; override_harness_set=1 ;;
+            --model) override_model=$value; override_model_set=1 ;;
+            --effort) override_effort=$value; override_effort_set=1 ;;
+        esac
     done
 
     [ -n "$item" ] || die "launch needs --item"
     if [ -n "$stage" ]; then
         load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
-        check_axis "$stage" "$axis"
+        check_axis "$stage" "$axis" "$axis_set"
         load_profile "$model_role"
         rules=$SUBAGENT_RULES
     else
-        check_axis '' "$axis"
+        check_axis '' "$axis" "$axis_set"
         skill_names=
         role="You are a Subagent running an ad-hoc task for the calling agent. Follow the brief and report back when done."
         load_profile builder
@@ -681,7 +689,76 @@ descendants() { # descendants PID: PID and every process below it, as ps sees no
     printf '%s\n' "$dc_out"
 }
 
-window_pids() { # window_pids BLOCK: the pids in that window's process tree
+group_peers() { # group_peers "PIDS": PIDS plus same-pgid/session peers outside self_and_parents' groups
+    gp_seeds=$1
+    gp_keep=$(self_and_parents)
+    gp_use_sess=0
+    if [ "$(uname -s)" = Linux ]; then
+        gp_use_sess=1
+        gp_ps=$(ps -axo pid=,pgid=,sess= 2>/dev/null) || return 1
+    else
+        # macOS BSD ps -o sess= prints a kernel pointer rather than a session id.
+        gp_ps=$(ps -axo pid=,pgid= 2>/dev/null) || return 1
+    fi
+    gp_out=$(printf '%s\n' "$gp_ps" | awk -v seeds="$gp_seeds" -v keep="$gp_keep" -v use_sess="$gp_use_sess" '
+        BEGIN {
+            n = split(seeds, arr, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) {
+                if (arr[i] != "") {
+                    seed[arr[i]] = 1
+                    seen[arr[i]] = 1
+                    print arr[i]
+                }
+            }
+            n = split(keep, arr, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) {
+                if (arr[i] != "") kept[arr[i]] = 1
+            }
+            blocked_pgid["0"] = 1
+            blocked_pgid["1"] = 1
+            blocked_sess["0"] = 1
+            blocked_sess["1"] = 1
+        }
+        {
+            p = $1
+            g = $2
+            s = (use_sess ? $3 : "")
+            if (p !~ /^[0-9]+$/) next
+            pids[++count] = p
+            pgid[p] = g
+            if (use_sess) sess[p] = s
+            if (p in kept) {
+                if (g ~ /^[0-9]+$/) blocked_pgid[g] = 1
+                if (use_sess && s ~ /^[0-9]+$/) blocked_sess[s] = 1
+            }
+        }
+        END {
+            for (p in seed) {
+                g = pgid[p]
+                if (g ~ /^[0-9]+$/ && !(g in blocked_pgid)) target_pgid[g] = 1
+                if (use_sess) {
+                    s = sess[p]
+                    if (s ~ /^[0-9]+$/ && !(s in blocked_sess)) target_sess[s] = 1
+                }
+            }
+            for (i = 1; i <= count; i++) {
+                p = pids[i]
+                if (p in seen) continue
+                g = pgid[p]
+                s = sess[p]
+                if ((g in target_pgid) || (use_sess && (s in target_sess))) {
+                    seen[p] = 1
+                    print p
+                }
+            }
+        }') || return 1
+    for gp_pid in $gp_out; do
+        case $gp_pid in '' | *[!0-9]*) return 1 ;; esac
+    done
+    printf '%s\n' "$gp_out"
+}
+
+window_pids() { # window_pids BLOCK: the pids in that window's process tree and group/session
     wp_json=$("$rex_cmd" --autostart=false block call -b "$1" process 2>/dev/null) || return 1
     # The field has to be a JSON integer above zero: null, true, and a string
     # such as "123\n" are not process ids, and command substitution would strip
@@ -694,7 +771,8 @@ except (ValueError, KeyError, TypeError):
 if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
     sys.exit(1)
 print(pid)' 2>/dev/null) || return 1
-    descendants "$wp_pid"
+    wp_pids=$(descendants "$wp_pid") || return 1
+    group_peers "$wp_pids"
 }
 
 reap_wait() { # reap_wait "PIDS" SECONDS: the pids still alive when it ends
