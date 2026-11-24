@@ -16,7 +16,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 out=$(REX_DB="$tmp/db.json" REX_CONFIG_DIR="$repo_root/rex" \
-    rex do "$repo_root/tests/rex-snapshot.test.lua" 2>"$tmp/stderr") || {
+    rex 'do' "$repo_root/tests/rex-snapshot.test.lua" 2>"$tmp/stderr") || {
     printf 'FAIL: %s\n' "$out" >&2
     cat "$tmp/stderr" >&2
     exit 1
