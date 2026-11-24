@@ -922,6 +922,82 @@ expect_rex_arg win-1
 
 rm -rf "$fixture_tmp"
 
+# --- close reaps reparented processes in the window's process group ---------
+
+new_fixture
+worktree="$fixture_tmp/wt"
+outside="$fixture_tmp/outside"
+mkdir -p "$outside"
+git -C "$fixture_repo" worktree add -q "$worktree" -b wt
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+# Start the window's root in its own session/process group (as Rex does), then
+# spawn two reparented processes (whose intermediate parent exits immediately)
+# in that same group/session: one inside the worktree and one outside it.
+root=$(leak_proc "$worktree" "$fixture_tmp/root" python3 -c 'import os, subprocess, sys, time
+
+worktree, outside, pid_in, pid_out = sys.argv[1:5]
+os.setsid()
+
+def spawn_reparented(cwd, pidfile):
+    mid = os.fork()
+    if mid == 0:
+        os.chdir(cwd)
+        proc = subprocess.Popen(
+            ["sleep", "300"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with open(pidfile, "w") as handle:
+            handle.write("%d\n" % proc.pid)
+        os._exit(0)
+    os.waitpid(mid, 0)
+
+spawn_reparented(worktree, pid_in)
+spawn_reparented(outside, pid_out)
+time.sleep(300)
+' "$worktree" "$outside" "$fixture_tmp/reparented-in" "$fixture_tmp/reparented-out")
+reparented_in=
+reparented_out=
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [ -s "$fixture_tmp/reparented-in" ] && [ -s "$fixture_tmp/reparented-out" ]; then
+        reparented_in=$(cat "$fixture_tmp/reparented-in")
+        reparented_out=$(cat "$fixture_tmp/reparented-out")
+        break
+    fi
+    sleep 0.1
+done
+use_window_pids "$root"
+unrelated=$(leak_proc "$worktree" "$fixture_tmp/unrelated")
+for pid in "$root" "$reparented_in" "$reparented_out" "$unrelated"; do
+    checks=$((checks + 1))
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        fail "pid $pid did not start"
+    fi
+done
+
+run_subagent close win-1 </dev/null
+expect_status 0
+expect_stderr_contains "stopped pid $reparented_in"
+checks=$((checks + 1))
+if kill -0 "$reparented_in" 2>/dev/null; then
+    fail "close left reparented pid $reparented_in (same group/session, in worktree) running"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$reparented_out" 2>/dev/null; then
+    fail "close killed reparented pid $reparented_out (same group/session, outside worktree)"
+fi
+checks=$((checks + 1))
+if ! kill -0 "$unrelated" 2>/dev/null; then
+    fail "close killed unrelated pid $unrelated (other session, inside worktree)"
+fi
+kill -TERM "$root" "$reparented_in" "$reparented_out" "$unrelated" 2>/dev/null || true
+
+rm -rf "$fixture_tmp"
+
 # --- a process that ignores SIGINT is terminated after the grace period ----
 
 new_fixture
