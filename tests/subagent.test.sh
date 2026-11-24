@@ -47,7 +47,10 @@ new_fixture() {
     fixture_close_fail=
     fixture_close_error=
     fixture_close_refusal=
+    fixture_inbox=
+    fixture_agents=
     SG_CWD=
+    SG_WAIT_POLL=
 
     mkdir -p "$fixture_repo" "$fixture_home" "$fixture_bin" "$fixture_tmp/tmp"
 
@@ -183,7 +186,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$prompt" ] || exit 1
 printf '%s\n' "$prompt" > "$AGY_STUB_PROMPT"
-for name in GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_TERMINAL_PROMPT GIT_PAGER PAGER GH_PROMPT_DISABLED CI; do
+for name in RECADO_MANAGER GIT_EDITOR GIT_SEQUENCE_EDITOR GIT_TERMINAL_PROMPT GIT_PAGER PAGER GH_PROMPT_DISABLED CI; do
     printf '%s=%s\n' "$name" "$(printenv "$name" || printf '<unset>')" >> "$AGY_STUB_ENV"
 done
 STUB
@@ -240,11 +243,25 @@ done
 printf '%s\n' "$prompt" > "$OPENCODE_STUB_PROMPT"
 STUB
 
-    # recado stub: whoami names the caller; nothing is delivered.
+    # recado stub: whoami names the caller; inbox and agents return fixture JSON.
     cat > "$fixture_bin/recado" <<'STUB'
 #!/usr/bin/env bash
 case $1 in
     whoami) printf 'recado://local/manager\n' ;;
+    inbox)
+        if [ -n "${RECADO_STUB_INBOX:-}" ]; then
+            printf '%s\n' "$RECADO_STUB_INBOX"
+        else
+            printf '{"messages":null}\n'
+        fi
+        ;;
+    agents)
+        if [ -n "${RECADO_STUB_AGENTS:-}" ]; then
+            printf '%s\n' "$RECADO_STUB_AGENTS"
+        else
+            printf '{"agents":[]}\n'
+        fi
+        ;;
 esac
 STUB
 
@@ -258,7 +275,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
         cd "${SG_CWD:-$fixture_repo}" || exit 1
         # Drop the variables the child must set itself, so a value inherited
         # from the caller cannot make the assertion pass.
-        env -u CI -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
+        env -u CI -u RECADO_MANAGER -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
             -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED -u XDG_STATE_HOME \
             CLAUDECODE=1 \
             HOME="$fixture_home" \
@@ -268,6 +285,9 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
             TMPDIR="$fixture_tmp/tmp" \
             REX_SESSION=session:test \
+            SUBAGENT_WAIT_POLL="${SG_WAIT_POLL:-0.1}" \
+            RECADO_STUB_INBOX="$fixture_inbox" \
+            RECADO_STUB_AGENTS="$fixture_agents" \
             REX_STUB_LOG="$fixture_log" \
             PI_STUB_LOG="$fixture_pi_log" \
             PI_STUB_PROMPT="$fixture_prompt" \
@@ -436,21 +456,21 @@ expect_contains 'build'
 expect_contains 'harness pi'
 expect_contains 'harness agy'
 expect_contains 'model gemini-4-neon-medium'
-expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
+expect_contains 'build                    harness agy        model gemini-4-neon-low                    effort low'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'model opencode-go/muse-spark-1.3-contributor'
 # Each row owns its skills: a list missing from one row must not pass because
 # another row still prints it.
 expect_row_contains research 'skills research, why'
-expect_row_contains build 'skills tdd, coding, principles'
+expect_row_contains build 'skills tdd, coding'
 expect_row_contains write 'skills writing-for-agents, unslop'
 expect_row_contains refine 'skills zero-tech-debt, principles'
 # The break axis runs on the critic profile, asserted on its own row.
 expect_row_contains 'review --axis break' 'skills interrogate'
 expect_row_contains 'review --axis break' 'harness pi'
 expect_row_contains 'review --axis break' 'model opencode-go/muse-spark-1.3-contributor'
-expect_row_contains 'review --axis break' 'effort xhigh'
+expect_row_contains 'review --axis break' 'effort max'
 
 rm -rf "$fixture_tmp"
 
@@ -463,18 +483,23 @@ BRIEF
 expect_status 0
 # The tag embeds the launcher's pid, so match around it.
 checks=$((checks + 1))
-case "$(cat "$fixture_prompt" 2>/dev/null)" in
+case "$(cat "$fixture_agy_prompt" 2>/dev/null)" in
     *"[subagent-build-"*" · widget · build]"*) ;;
     *) fail "the prompt does not carry [subagent-build-<pid> · widget · build]:
-$(cat "$fixture_prompt" 2>/dev/null)" ;;
+$(cat "$fixture_agy_prompt" 2>/dev/null)" ;;
 esac
-expect_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
-expect_prompt_contains "recado send recado://local/manager --kind complete"
-expect_prompt_contains "recado ask recado://local/manager"
-expect_prompt_contains "Add the widget."
-expect_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
-expect_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
-expect_prompt_contains 'The brief is your approved plan; commit your work on the branch.'
+expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
+# shellcheck disable=SC2016 # literal $RECADO_MANAGER in the prompt text.
+expect_agy_prompt_contains 'Report through recado to recado://local/manager (`$RECADO_MANAGER` in your environment).'
+# shellcheck disable=SC2016
+expect_agy_prompt_contains 'recado send "$RECADO_MANAGER" --kind complete'
+# shellcheck disable=SC2016
+expect_agy_prompt_contains 'recado ask "$RECADO_MANAGER"'
+expect_agy_prompt_contains "Add the widget."
+expect_agy_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
+expect_agy_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
+expect_agy_prompt_contains 'The brief is your approved plan.'
+expect_agy_env RECADO_MANAGER 'recado://local/manager'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
 expect_contains '"window":"win-1"'
 expect_contains '"block":"blk-1"'
@@ -529,15 +554,10 @@ run_subagent launch --stage build --item widget <<'BRIEF'
 Add the widget.
 BRIEF
 expect_status 0
-expect_prompt_contains 'tdd/SKILL.md'
-expect_prompt_contains 'coding/SKILL.md'
-expect_prompt_contains 'principles/SKILL.md'
-expect_prompt_contains 'prove it on the surface a user touches'
-expect_prompt_contains 'verify-*` skill when one exists'
-expect_prompt_contains 'commit the failing repro before the fix'
-expect_prompt_contains 'Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE'
-expect_prompt_contains 'and the command and output behind it'
-expect_prompt_contains 'an INCONCLUSIVE verdict or a check on the wrong surface is not a pass'
+expect_agy_prompt_contains 'tdd/SKILL.md'
+expect_agy_prompt_contains 'coding/SKILL.md'
+expect_agy_prompt_contains 'for a bug, commit a failing regression test before the fix'
+expect_agy_prompt_contains 'report the exact gate commands and outputs'
 
 rm -f "$fixture_prompt"
 run_subagent launch --stage refine --item widget <<'BRIEF'
@@ -553,12 +573,12 @@ BRIEF
 expect_status 0
 expect_agy_prompt_contains 'unslop/SKILL.md'
 
-rm -f "$fixture_prompt"
+rm -f "$fixture_agy_prompt"
 run_subagent launch --stage research --item widget <<'BRIEF'
 Find out how the widget is built.
 BRIEF
 expect_status 0
-expect_prompt_contains 'why/SKILL.md'
+expect_agy_prompt_contains 'why/SKILL.md'
 
 rm -rf "$fixture_tmp"
 
@@ -613,13 +633,13 @@ expect_no_rex_command
 rm -rf "$fixture_tmp"
 
 new_fixture
-rm -rf "$fixture_home/.agents/skills/principles"
+rm -rf "$fixture_home/.agents/skills/coding"
 run_subagent launch --stage build --item widget <<'BRIEF'
 Add the widget.
 BRIEF
 expect_nonzero
 expect_stderr_contains 'skills not installed'
-expect_stderr_contains 'principles'
+expect_stderr_contains 'coding'
 expect_no_rex_command
 
 rm -rf "$fixture_tmp"
@@ -636,7 +656,7 @@ expect_rex_arg --focus=false
 expect_rex_arg --keep-open
 expect_rex_arg --shell=none
 expect_pi_option --model opencode-go/muse-spark-1.3-contributor
-expect_pi_option --thinking xhigh
+expect_pi_option --thinking max
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'
@@ -654,6 +674,7 @@ expect_agy_option --model gemini-4-neon-medium
 expect_agy_option --effort medium
 expect_agy_option --mode auto
 expect_agy_flag -i
+expect_agy_env RECADO_MANAGER 'recado://local/manager'
 expect_agy_env GIT_EDITOR true
 expect_agy_env GIT_SEQUENCE_EDITOR true
 expect_agy_env GIT_TERMINAL_PROMPT 0
@@ -806,7 +827,7 @@ Second round.
 BRIEF
 expect_status 0
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build-r2.md\""
-expect_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
+expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
 
 : > "$fixture_repo/.agents/reports/widget-build-r2.md"
 run_subagent launch --stage build --item widget <<'BRIEF'
@@ -1376,6 +1397,52 @@ esac
 checks=$((checks + 1))
 run_subagent close win-1
 expect_stderr_contains 'ran in the main checkout'
+
+rm -rf "$fixture_tmp"
+
+# --- wait exits on inbox, exited, idle, and fails if exited without report --
+
+new_fixture
+run_subagent launch --stage build --item watch <<'BRIEF'
+Build watch.
+BRIEF
+expect_status 0
+watch_name=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')
+watch_report=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["report"])')
+
+# 1. Unknown window fails.
+run_subagent wait win-unknown </dev/null
+expect_nonzero
+expect_stderr_contains 'unknown window'
+
+# 2. Exited without writing report fails.
+fixture_exited=blk-1
+run_subagent wait win-1 </dev/null
+expect_nonzero
+expect_stderr_contains 'exited without writing report'
+
+# 3. Report exists + exited -> reason: exited.
+printf 'Summary\n' > "$watch_report"
+run_subagent wait win-1 </dev/null
+expect_status 0
+expect_contains '"window":"win-1"'
+expect_contains "\"name\":\"$watch_name\""
+expect_contains "\"report\":\"$watch_report\""
+expect_contains '"reason":"exited"'
+
+# 4. Report exists + inbox complete message -> reason: inbox.
+fixture_exited=
+fixture_inbox="{\"messages\":[{\"from\":\"recado://local/$watch_name\",\"kind\":\"complete\",\"meta\":{\"report\":\"$watch_report\"}}]}"
+run_subagent wait win-1 </dev/null
+expect_status 0
+expect_contains '"reason":"inbox"'
+
+# 5. Report exists + agent idle for N seconds -> reason: idle.
+fixture_inbox=
+fixture_agents="{\"agents\":[{\"name\":\"$watch_name\",\"address\":\"recado://local/$watch_name\",\"state\":\"idle\"}]}"
+run_subagent wait win-1 --idle-seconds 1 </dev/null
+expect_status 0
+expect_contains '"reason":"idle"'
 
 rm -rf "$fixture_tmp"
 

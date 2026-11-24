@@ -6,6 +6,7 @@
 #   subagent stages
 #   subagent launch [--stage STAGE [--axis AXIS]] --item ITEM [--cwd DIR]
 #                   [--harness HARNESS] [--model ROLE|MODEL] [--effort EFFORT] < BRIEF
+#   subagent wait WINDOW [--idle-seconds N]
 #   subagent close WINDOW
 #   subagent ls
 #   subagent cap [N|off]
@@ -28,7 +29,7 @@ REAP_POLL=0.2
 # prompt as its last argument; a trailing -- (where the harness supports it)
 # keeps a prompt that starts with a dash from being read as an option.
 # shellcheck disable=SC2016 # the child shell expands these, not this one.
-CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift; exec "$@" "$prompt"'
+CHILD_SCRIPT='if ! prompt=$(cat "$1"); then printf "%s\n" "[subagent] cannot read prompt file: $1" >&2; rm -f "$1"; exit 1; fi; rm -f "$1"; unset ANTIGRAVITY_CONVERSATION_ID ANTIGRAVITY_LS_ADDRESS ANTIGRAVITY_CSRF_TOKEN CLAUDECODE; export RECADO_ADDR="$0" RECADO_MANAGER="$2" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat PAGER=cat GH_PROMPT_DISABLED=1; shift 2; exec "$@" "$prompt"'
 
 # What every Subagent is told, Stage or ad-hoc: how it uses tools, and what on
 # the machine is not its own.
@@ -67,6 +68,12 @@ Usage:
           gemini-4-neon-high for agy, opus or claude-sonnet-4-6 for claude).
       --effort overrides the thinking effort:
           off, minimal, low, medium, high, xhigh, or max.
+
+  subagent wait WINDOW [--idle-seconds SECONDS]
+      Wait until WINDOW's report file is non-empty and either a completion
+      message arrives in recado inbox, the Subagent process exits, or the
+      Subagent stays idle in recado agents for SECONDS (default 60). Prints
+      {"window", "name", "report", "reason"} as JSON.
 
   subagent close WINDOW
       Close the Subagent's Rex window, then stop the processes the window
@@ -290,10 +297,10 @@ window_state_file() { # window_state_file WINDOW
     printf '%s/%s\n' "$(subagent_state_dir)" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
 }
 
-record_window_state() { # record_window_state WINDOW CWD BLOCK NAME STAGE ITEM CALLER
+record_window_state() { # record_window_state WINDOW CWD BLOCK NAME STAGE ITEM CALLER REPORT
     rs_file=$(window_state_file "$1")
     mkdir -p "${rs_file%/*}" || return 0
-    printf '%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >"$rs_file.$$" && mv "$rs_file.$$" "$rs_file"
+    printf '%s\n' "$2" "$3" "$4" "$5" "$6" "$7" "$8" >"$rs_file.$$" && mv "$rs_file.$$" "$rs_file"
 }
 
 subagent_home() { # the folder above the window records: the cap and the launch lock
@@ -514,7 +521,7 @@ $(printf '%s\n' "$open_stage" | print_records)"
     fi
     mkdir -p "$report_dir"
 
-    send_cmd="recado send $manager --kind complete"
+    send_cmd="recado send \"\$RECADO_MANAGER\" --kind complete"
     send_cmd="$send_cmd --meta $(q "item=$item")"
     [ -z "$stage" ] || send_cmd="$send_cmd --meta $(q "stage=$stage")"
     [ -z "$axis" ] || send_cmd="$send_cmd --meta $(q "axis=$axis")"
@@ -531,10 +538,10 @@ $skills"
     fi
     prompt="$prompt
 Write your full report to $report; the completion report is one line pointing at it.
-Report through recado to $manager. Its send and ask commands below are the complete route. Ask if the reporting command fails.
+Report through recado to $manager (\`\$RECADO_MANAGER\` in your environment). Its send and ask commands below are the complete route. Ask if the reporting command fails.
 Run these exact commands to report and to ask (the address and tag are already filled in; never retype them):
 $send_cmd \"[$(dq "$tag")] TASK COMPLETE: <one line>\"
-recado ask $manager \"[$(dq "$tag")] QUESTION: <question>\"
+recado ask \"\$RECADO_MANAGER\" \"[$(dq "$tag")] QUESTION: <question>\"
 
 $rules
 
@@ -564,7 +571,7 @@ $brief"
         "$rex_cmd" --autostart=false window new \
             -s "$REX_SESSION" "$name" -c "$cwd" \
             --focus=false --keep-open --shell=none --json \
-            -- "${SHELL:-/bin/sh}" -lc "$CHILD_SCRIPT" "$name" "$prompt_file" \
+            -- "${SHELL:-/bin/sh}" -lc "$CHILD_SCRIPT" "$name" "$prompt_file" "$manager" \
             "${agent_cmd[@]}" \
             2>"$prompt_file.err"
     ) || die "rex window new failed: $(cat "$prompt_file.err")
@@ -577,7 +584,7 @@ print(json.load(sys.stdin)["window_id"])') || die "cannot read rex window new ou
     block=$(printf '%s' "$created" | python3 -c 'import json, sys
 print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new output: $created"
     printf '[subagent] %s window %s block %s\n' "$name" "$window" "$block" >&2
-    record_window_state "$window" "$cwd" "$block" "$name" "${stage_label:--}" "$item" "$manager" ||
+    record_window_state "$window" "$cwd" "$block" "$name" "${stage_label:--}" "$item" "$manager" "$report" ||
         printf '[subagent] cannot record %s; close cannot reap it\n' "$window" >&2
     release_lock
     trap - EXIT
@@ -830,6 +837,131 @@ cmd_close() {
     reap_worktree "$boundary" "$tree"
 }
 
+# -------------------------------------------------------------------- wait
+
+wait_inbox_complete() { # wait_inbox_complete CALLER NAME REPORT
+    wi_json=$(recado inbox --as "$1" --json 2>/dev/null) || return 1
+    [ -n "$wi_json" ] || return 1
+    printf '%s' "$wi_json" | python3 -c 'import json, sys
+name, report = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+msgs = data.get("messages") if isinstance(data, dict) else data
+for m in (msgs or []):
+    if not isinstance(m, dict):
+        continue
+    sender = str(m.get("from") or m.get("sender") or "")
+    from_name = str(m.get("from_name") or "")
+    if not (sender == name or sender.endswith("/" + name) or from_name == name):
+        continue
+    meta = m.get("meta") if isinstance(m.get("meta"), dict) else {}
+    if m.get("kind") == "complete" or meta.get("report") == report:
+        sys.exit(0)
+sys.exit(1)' "$2" "$3"
+}
+
+wait_agent_idle() { # wait_agent_idle NAME
+    wa_json=$(recado agents --json 2>/dev/null) || return 1
+    [ -n "$wa_json" ] || return 1
+    printf '%s' "$wa_json" | python3 -c 'import json, sys
+name = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+agents = data.get("agents") if isinstance(data, dict) else data
+for a in (agents or []):
+    if not isinstance(a, dict):
+        continue
+    addr = str(a.get("address") or "")
+    aname = str(a.get("name") or "")
+    if (aname == name or addr == name or addr.endswith("/" + name)) and a.get("state") == "idle":
+        sys.exit(0)
+sys.exit(1)' "$1"
+}
+
+cmd_wait() {
+    window=
+    idle_seconds=60
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --idle-seconds)
+                [ $# -ge 2 ] || die "wait: --idle-seconds needs a value"
+                case $2 in
+                    '' | *[!0-9]*) die "wait: --idle-seconds takes a non-negative integer, not $2" ;;
+                esac
+                idle_seconds=$2
+                shift 2
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            -*)
+                die "wait: unexpected option: $1"
+                ;;
+            *)
+                [ -z "$window" ] || die "wait: unexpected argument: $1"
+                window=$1
+                shift
+                ;;
+        esac
+    done
+    [ -n "$window" ] || die "wait needs a WINDOW"
+
+    rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
+    state_file=$(window_state_file "$window")
+    [ -f "$state_file" ] || die "unknown window: $window"
+
+    block=$(sed -n 2p "$state_file")
+    name=$(sed -n 3p "$state_file")
+    caller=$(sed -n 6p "$state_file")
+    report=$(sed -n 7p "$state_file")
+    [ -n "$block" ] && [ -n "$name" ] && [ -n "$caller" ] && [ -n "$report" ] ||
+        die "incomplete window state for $window"
+
+    poll_interval=${SUBAGENT_WAIT_POLL:-2}
+    idle_since=
+    reason=
+    while :; do
+        alive=1
+        still_alive "$block" || alive=0
+        if [ ! -s "$report" ]; then
+            if [ "$alive" -eq 0 ]; then
+                die "subagent $name ($window) exited without writing report $report"
+            fi
+            idle_since=
+            sleep "$poll_interval"
+            continue
+        fi
+        if wait_inbox_complete "$caller" "$name" "$report"; then
+            reason=inbox
+            break
+        fi
+        if [ "$alive" -eq 0 ]; then
+            reason=exited
+            break
+        fi
+        if wait_agent_idle "$name"; then
+            now=$(date +%s)
+            [ -n "$idle_since" ] || idle_since=$now
+            if [ $((now - idle_since)) -ge "$idle_seconds" ]; then
+                reason=idle
+                break
+            fi
+        else
+            idle_since=
+        fi
+        sleep "$poll_interval"
+    done
+
+    python3 -c 'import json, sys
+print(json.dumps(dict(zip(("window", "name", "report", "reason"), sys.argv[1:])), separators=(",", ":")))' \
+        "$window" "$name" "$report" "$reason"
+}
+
 # ---------------------------------------------------------------- ls & cap
 
 cmd_ls() {
@@ -868,6 +1000,7 @@ case $command_name in
         print_stages
         ;;
     launch) cmd_launch "$@" ;;
+    wait) cmd_wait "$@" ;;
     close) cmd_close "$@" ;;
     ls) cmd_ls "$@" ;;
     cap) cmd_cap "$@" ;;

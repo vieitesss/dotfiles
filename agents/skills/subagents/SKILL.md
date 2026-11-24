@@ -106,6 +106,15 @@ resumes you and is the only signal to act on. Check `recado inbox` only on
 session start, after compaction, or on a user-initiated turn — never in empty
 poll loops, and never by reading another Subagent's session status.
 
+Each launched Subagent gets `$RECADO_MANAGER` in its environment, and its
+prompt's `recado send` / `recado ask` commands reference `"$RECADO_MANAGER"` so
+it never has to copy a UUID. To guard against a Subagent writing its report and
+going idle without waking you, you can run `subagent wait WINDOW [--idle-seconds N]`
+(default 60) as a background command: it exits 0 with
+`{"window","name","report","reason"}` once the report file is non-empty and
+either a completion message is in `recado inbox`, the process has exited, or
+the agent has stayed `idle` in `recado agents` for `N` seconds.
+
 A Subagent can stall on an approval only the user can give. It waits in its
 window: tell the user to answer it there.
 
