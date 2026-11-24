@@ -439,7 +439,7 @@ expect_contains 'model gemini-4-neon-medium'
 expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
-expect_contains 'model github-copilot/gpt-6.2-sol'
+expect_contains 'model opencode-go/muse-spark-1.3-contributor'
 # Each row owns its skills: a list missing from one row must not pass because
 # another row still prints it.
 expect_row_contains research 'skills research, why'
@@ -449,8 +449,8 @@ expect_row_contains refine 'skills zero-tech-debt, principles'
 # The break axis runs on the critic profile, asserted on its own row.
 expect_row_contains 'review --axis break' 'skills interrogate'
 expect_row_contains 'review --axis break' 'harness pi'
-expect_row_contains 'review --axis break' 'model github-copilot/gpt-6.2-sol'
-expect_row_contains 'review --axis break' 'effort high'
+expect_row_contains 'review --axis break' 'model opencode-go/muse-spark-1.3-contributor'
+expect_row_contains 'review --axis break' 'effort xhigh'
 
 rm -rf "$fixture_tmp"
 
@@ -635,8 +635,8 @@ expect_rex_arg session:test
 expect_rex_arg --focus=false
 expect_rex_arg --keep-open
 expect_rex_arg --shell=none
-expect_pi_option --model github-copilot/gpt-6.2-sol
-expect_pi_option --thinking high
+expect_pi_option --model opencode-go/muse-spark-1.3-contributor
+expect_pi_option --thinking xhigh
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'

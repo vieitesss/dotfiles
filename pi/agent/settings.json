@@ -61,5 +61,8 @@
   "defaultTools": [
     "+codemode"
   ],
-  "showHardwareCursor": true
+  "showHardwareCursor": true,
+  "warnings": {
+    "anthropicExtraUsage": false
+  }
 }

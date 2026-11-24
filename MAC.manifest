@@ -40,6 +40,7 @@ kitty|~/.config/kitty
 wezterm|~/.config/wezterm
 
 aerospace/aerospace.toml|~/.aerospace.toml
+spaceman/config.toml|~/Library/Application Support/Spaceman/config.toml
 hammerspoon/init.lua|~/.hammerspoon/init.lua
 hammerspoon/keyboard-layout.lua|~/.hammerspoon/keyboard-layout.lua
 karabiner|~/.config/karabiner

@@ -1,0 +1,42 @@
+# Spaceman configuration.
+# Mirrors workspace-to-monitor assignments from aerospace/aerospace.toml.
+version = 1
+
+[settings]
+hud = true
+
+[[workspaces]]
+workspace = 1
+monitor = "1"
+
+[[workspaces]]
+workspace = 2
+monitor = "1"
+
+[[workspaces]]
+workspace = 3
+monitor = "1"
+
+[[workspaces]]
+workspace = 4
+monitor = "1"
+
+[[workspaces]]
+workspace = 5
+monitor = "1"
+
+[[workspaces]]
+workspace = 6
+monitor = "2"
+
+[[workspaces]]
+workspace = 7
+monitor = "2"
+
+[[workspaces]]
+workspace = 8
+monitor = "2"
+
+[[workspaces]]
+workspace = 9
+monitor = "2"

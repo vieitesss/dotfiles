@@ -1,6 +1,6 @@
 ---
 name: review-github-pr-comments
-description: Thread pass of `babysit`: triage one PR's review feedback to a verdict per point, fix the accepted ones, reply and resolve.
+description: "Thread pass of `babysit`: triage one PR's review feedback to a verdict per point, fix the accepted ones, reply and resolve."
 disable-model-invocation: true
 ---
 
