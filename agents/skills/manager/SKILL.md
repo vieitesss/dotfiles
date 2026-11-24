@@ -132,8 +132,10 @@ in the Ledger. The brief carries:
   module" spends its context before it edits;
 - the cheapest fix that meets the acceptance criteria, naming any existing
   tool or script that covers part of it. New machinery needs a Question first;
-- a checkable done criterion: named tests, lint, pass counts (`10/10`); every
-  fix brief states a checkable repro for each must-fix finding;
+- a checkable done criterion: fast automated gates only (scoped tests,
+  typecheck, lint). Leave end-to-end surface drives (`verify-*`, live
+  server/browser checks) to Review; for fix briefs, require a regression test
+  per must-fix finding rather than rerunning full adversarial repros;
 - the decisions it brings back as a Question instead of making.
 
 Leave out what `subagent launch` already tells every Subagent: tool use, free
@@ -214,10 +216,10 @@ itself.
   `sed -n '1,/^## /p' REPORT`. Every Stage report opens with a summary block
   of at most 10 lines: `Verdict`, what changed, must-fix count, and decisions
   needed. Open the rest of the report only when the summary block points
-  there. Inspect the diff, and rerun the command behind the Build `Verdict`
-  and the tests the report names. Never accept `INCONCLUSIVE` or a
-  wrong-surface check as done. Run anything over a minute in its own
-  background call, then end your turn.
+  there. Inspect the diff, and rerun the automated gate commands (tests,
+  typecheck, lint) the Build report names, then hand off to Review for surface
+  verification. Run anything over a minute in its own background call, then end
+  your turn.
 - Turn each line in a report's "Pre-existing" section into a follow-up Work
   Item or issue instead of launching a fix round.
 - Before acceptance, a failed spot-check or a missing piece goes as a follow-up

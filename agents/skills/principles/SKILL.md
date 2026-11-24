@@ -1,6 +1,6 @@
 ---
 name: principles
-description: Engineering principles for verification, root-cause debugging, stateful design, and code clarity. Loaded by Build and Refine Subagents; also use when verifying work, tracing a bug or measurement, or simplifying hard-to-trace code.
+description: Engineering principles for verification, root-cause debugging, stateful design, and code clarity. Loaded by Refine Subagents; also use when verifying work, tracing a bug or measurement, or simplifying hard-to-trace code.
 ---
 
 # Engineering principles

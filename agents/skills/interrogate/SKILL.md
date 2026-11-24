@@ -18,7 +18,7 @@ Then follow steps 2–3 of [`../blast-radius/SKILL.md`](../blast-radius/SKILL.md
 
 ## 2. Attack
 
-Exercise the changed code directly from the worktree root: run tests, invoke commands or functions with adversarial inputs, hit error paths, and probe integration seams.
+Exercise the changed code directly from the worktree root on the real surface a user touches — using the repo's `verify-*` skill when one exists — running tests, invoking commands or functions with adversarial inputs, hitting error paths, and probing integration seams.
 
 Every finding's command must be **self-contained and rerunnable** from a clean worktree root without prior shell state, repo edits, or pre-existing temp files (use inline invocations such as `sh -c`, `python3 -c`, or existing test commands). The Manager reruns each finding's command before accepting it; any command that fails to reproduce cold is dropped.
 

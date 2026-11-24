@@ -98,9 +98,9 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
             role="You run the Research stage: you are the background agent the research skill describes, so do its job yourself. Change no files except the findings file."
             ;;
         build)
-            skill_names='tdd coding principles'
+            skill_names='tdd coding'
             model_role=builder
-            role="You run the Build stage: implement the brief and prove it on the surface a user touches (a CLI run, an HTTP call, a UI drive), using the repo's \`verify-*\` skill when one exists, plus lint and tests scoped to what you touched; for a bug, commit the failing repro before the fix. Refine and Review are later Stages run by other Subagents, so finish at your own report. The brief is your approved plan; commit your work on the branch. End the report with \`Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE\` and the command and output behind it; an INCONCLUSIVE verdict or a check on the wrong surface is not a pass."
+            role="You run the Build stage: implement the brief, run lint, typecheck, and tests scoped to what you touched, and commit your work on the branch; for a bug, commit a failing regression test before the fix. The brief is your approved plan. Refine and Review are later Stages run by other Subagents — Review owns end-to-end surface verification and adversarial probing, so finish once the scoped automated gates are green and report the exact gate commands and outputs."
             ;;
         write)
             skill_names='writing-for-agents unslop'
@@ -123,7 +123,7 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
             stage_axes=(spec standards debt break)
             if [ "${2:-}" = break ]; then
                 skill_names=interrogate
-                role="You run the Review stage, break axis: you are the break-axis adversary the interrogate skill describes, so apply its brief yourself. Change no files."
+                role="You run the Review stage, break axis: you are the break-axis adversary the interrogate skill describes, so apply its brief yourself. Exercise the real surface a user touches (CLI, HTTP, or browser via the repo's \`verify-*\` skill when one exists). Change no files."
             else
                 role="You run the Review stage, ${2:-} axis: you are the ${2:-} sub-agent the review skill describes, so apply its brief yourself. Change no files."
             fi
@@ -163,9 +163,9 @@ model_value_known() { # model_value_known TEXT: non-empty, no whitespace
 load_profile() { # load_profile ROLE: set profile_harness, profile_model, profile_effort
     case $1 in
         builder)
-            profile_harness=pi
-            profile_model=opencode-go/deepseek-v4.1-flash
-            profile_effort=high
+            profile_harness=agy
+            profile_model=gemini-4-neon-low
+            profile_effort=low
             ;;
         writer)
             profile_harness=agy
@@ -174,8 +174,8 @@ load_profile() { # load_profile ROLE: set profile_harness, profile_model, profil
             ;;
         critic)
             profile_harness=pi
-            profile_model=github-copilot/gpt-6.2-sol
-            profile_effort=high
+            profile_model=opencode-go/muse-spark-1.3-contributor
+            profile_effort=max
             ;;
         *) return 1 ;;
     esac

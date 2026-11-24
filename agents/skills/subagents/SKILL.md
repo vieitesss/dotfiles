@@ -76,9 +76,8 @@ Launch prints JSON `{name, window, block, report}`. Keep `name` and `window`.
 `report` is `.agents/reports/<item>-<stage>[-<axis>].md` (or
 `.agents/reports/<item>.md` for ad-hoc launches) in the main checkout, suffixed
 `-r2`, `-r3`, ... automatically if a prior report already exists. Stage reports
-include "Choices made" and "Pre-existing" sections; Build reports end with a
-`Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE` line and the command and
-output behind it.
+include "Choices made" and "Pre-existing" sections; Build reports include the
+scoped test and lint gate commands and outputs behind their outcome.
 
 Launch exits non-zero before anything runs when a Stage's skill is not
 installed for `--cwd`, or when `--harness`, `--model`, or `--effort` is invalid.

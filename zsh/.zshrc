@@ -496,3 +496,7 @@ if [[ -d /opt/homebrew/share/android-commandlinetools ]]; then
   export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
   export PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
 fi
+
+
+# Added by Antigravity CLI installer
+export PATH="/home/vieitesrpi/.local/bin:$PATH"
