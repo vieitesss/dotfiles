@@ -436,21 +436,21 @@ expect_contains 'build'
 expect_contains 'harness pi'
 expect_contains 'harness agy'
 expect_contains 'model gemini-4-neon-medium'
-expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
+expect_contains 'build                    harness agy        model gemini-4-neon-low                    effort low'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'model opencode-go/muse-spark-1.3-contributor'
 # Each row owns its skills: a list missing from one row must not pass because
 # another row still prints it.
 expect_row_contains research 'skills research, why'
-expect_row_contains build 'skills tdd, coding, principles'
+expect_row_contains build 'skills tdd, coding'
 expect_row_contains write 'skills writing-for-agents, unslop'
 expect_row_contains refine 'skills zero-tech-debt, principles'
 # The break axis runs on the critic profile, asserted on its own row.
 expect_row_contains 'review --axis break' 'skills interrogate'
 expect_row_contains 'review --axis break' 'harness pi'
 expect_row_contains 'review --axis break' 'model opencode-go/muse-spark-1.3-contributor'
-expect_row_contains 'review --axis break' 'effort xhigh'
+expect_row_contains 'review --axis break' 'effort max'
 
 rm -rf "$fixture_tmp"
 
@@ -463,18 +463,19 @@ BRIEF
 expect_status 0
 # The tag embeds the launcher's pid, so match around it.
 checks=$((checks + 1))
-case "$(cat "$fixture_prompt" 2>/dev/null)" in
+case "$(cat "$fixture_agy_prompt" 2>/dev/null)" in
     *"[subagent-build-"*" · widget · build]"*) ;;
     *) fail "the prompt does not carry [subagent-build-<pid> · widget · build]:
-$(cat "$fixture_prompt" 2>/dev/null)" ;;
+$(cat "$fixture_agy_prompt" 2>/dev/null)" ;;
 esac
-expect_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
-expect_prompt_contains "recado send recado://local/manager --kind complete"
-expect_prompt_contains "recado ask recado://local/manager"
-expect_prompt_contains "Add the widget."
-expect_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
-expect_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
-expect_prompt_contains 'The brief is your approved plan; commit your work on the branch.'
+expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
+expect_agy_prompt_contains "recado send recado://local/manager --kind complete"
+expect_agy_prompt_contains "recado ask recado://local/manager"
+expect_agy_prompt_contains "Add the widget."
+expect_agy_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
+expect_agy_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
+expect_agy_prompt_contains 'The brief is your approved plan.'
+expect_agy_prompt_contains 'commit your work on the branch'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
 expect_contains '"window":"win-1"'
 expect_contains '"block":"blk-1"'
@@ -529,15 +530,12 @@ run_subagent launch --stage build --item widget <<'BRIEF'
 Add the widget.
 BRIEF
 expect_status 0
-expect_prompt_contains 'tdd/SKILL.md'
-expect_prompt_contains 'coding/SKILL.md'
-expect_prompt_contains 'principles/SKILL.md'
-expect_prompt_contains 'prove it on the surface a user touches'
-expect_prompt_contains 'verify-*` skill when one exists'
-expect_prompt_contains 'commit the failing repro before the fix'
-expect_prompt_contains 'Verdict: VERIFIED | NOT VERIFIED | INCONCLUSIVE'
-expect_prompt_contains 'and the command and output behind it'
-expect_prompt_contains 'an INCONCLUSIVE verdict or a check on the wrong surface is not a pass'
+expect_agy_prompt_contains 'tdd/SKILL.md'
+expect_agy_prompt_contains 'coding/SKILL.md'
+expect_file_not_contains "$fixture_agy_prompt" "agy prompt" 'principles/SKILL.md'
+expect_agy_prompt_contains 'run lint, typecheck, and tests scoped to what you touched'
+expect_agy_prompt_contains 'commit a failing regression test before the fix'
+expect_agy_prompt_contains 'finish once the scoped automated gates are green and report the exact gate commands and outputs'
 
 rm -f "$fixture_prompt"
 run_subagent launch --stage refine --item widget <<'BRIEF'
@@ -553,12 +551,12 @@ BRIEF
 expect_status 0
 expect_agy_prompt_contains 'unslop/SKILL.md'
 
-rm -f "$fixture_prompt"
+rm -f "$fixture_agy_prompt"
 run_subagent launch --stage research --item widget <<'BRIEF'
 Find out how the widget is built.
 BRIEF
 expect_status 0
-expect_prompt_contains 'why/SKILL.md'
+expect_agy_prompt_contains 'why/SKILL.md'
 
 rm -rf "$fixture_tmp"
 
@@ -593,12 +591,13 @@ for stage_pair in research: build: write: refine: review:spec review:break retro
     expect_prompt_contains 'never stop a process you did not start'
     # shellcheck disable=SC2016 # the backticks are the rule's own text.
     expect_prompt_contains 'never print `.env` or another secrets file'
+    # shellcheck disable=SC2016 # the backticks are the rule's own text.
     expect_prompt_contains 'Never use `git stash`: the stash is shared by every worktree of the repo'
 done
 
 rm -rf "$fixture_tmp"
 
-# --- a missing break-axis or build skill fails before a window opens ------
+# --- a missing break-axis or refine skill fails before a window opens -----
 
 new_fixture
 rm -rf "$fixture_home/.agents/skills/interrogate"
@@ -614,8 +613,8 @@ rm -rf "$fixture_tmp"
 
 new_fixture
 rm -rf "$fixture_home/.agents/skills/principles"
-run_subagent launch --stage build --item widget <<'BRIEF'
-Add the widget.
+run_subagent launch --stage refine --item widget <<'BRIEF'
+Reshape the widget.
 BRIEF
 expect_nonzero
 expect_stderr_contains 'skills not installed'
@@ -636,7 +635,7 @@ expect_rex_arg --focus=false
 expect_rex_arg --keep-open
 expect_rex_arg --shell=none
 expect_pi_option --model opencode-go/muse-spark-1.3-contributor
-expect_pi_option --thinking xhigh
+expect_pi_option --thinking max
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'
@@ -806,7 +805,7 @@ Second round.
 BRIEF
 expect_status 0
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build-r2.md\""
-expect_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
+expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
 
 : > "$fixture_repo/.agents/reports/widget-build-r2.md"
 run_subagent launch --stage build --item widget <<'BRIEF'
