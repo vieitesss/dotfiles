@@ -196,7 +196,7 @@ print_stages() {
     done
 }
 
-check_axis() { # check_axis STAGE AXIS
+check_axis() { # check_axis STAGE AXIS [AXIS_SET]
     case $1 in
         review)
             case $2 in
@@ -206,10 +206,10 @@ check_axis() { # check_axis STAGE AXIS
             esac
             ;;
         '')
-            [ -z "$2" ] || die "--axis requires --stage review"
+            [ "${3:-0}" -eq 0 ] && [ -z "$2" ] || die "--axis requires --stage review"
             ;;
         *)
-            [ -z "$2" ] || die "--stage $1 takes no --axis"
+            [ "${3:-0}" -eq 0 ] && [ -z "$2" ] || die "--stage $1 takes no --axis"
             ;;
     esac
 }
@@ -365,6 +365,7 @@ sys.exit(0 if last_exit is None else 1)'
 cmd_launch() {
     stage=
     axis=
+    axis_set=0
     item=
     cwd=
     override_harness=
@@ -374,21 +375,19 @@ cmd_launch() {
     override_effort=
     override_effort_set=0
     while [ $# -gt 0 ]; do
+        flag=
+        value=
         case $1 in
             --stage | --axis | --item | --cwd | --harness | --model | --effort)
                 [ $# -ge 2 ] || die "launch: $1 needs a value"
                 flag=$1
                 value=$2
                 shift 2
-                case $flag in
-                    --stage) stage=$value ;;
-                    --axis) axis=$value ;;
-                    --item) item=$value ;;
-                    --cwd) cwd=$value ;;
-                    --harness) override_harness=$value; override_harness_set=1 ;;
-                    --model) override_model=$value; override_model_set=1 ;;
-                    --effort) override_effort=$value; override_effort_set=1 ;;
-                esac
+                ;;
+            --stage=* | --axis=* | --item=* | --cwd=* | --harness=* | --model=* | --effort=*)
+                flag=${1%%=*}
+                value=${1#*=}
+                shift
                 ;;
             -h | --help)
                 usage
@@ -396,16 +395,25 @@ cmd_launch() {
                 ;;
             *) die "launch: unexpected argument: $1" ;;
         esac
+        case $flag in
+            --stage) stage=$value ;;
+            --axis) axis=$value; axis_set=1 ;;
+            --item) item=$value ;;
+            --cwd) cwd=$value ;;
+            --harness) override_harness=$value; override_harness_set=1 ;;
+            --model) override_model=$value; override_model_set=1 ;;
+            --effort) override_effort=$value; override_effort_set=1 ;;
+        esac
     done
 
     [ -n "$item" ] || die "launch needs --item"
     if [ -n "$stage" ]; then
         load_stage "$stage" "$axis" || die "unknown stage: $stage; see \`subagent stages\`"
-        check_axis "$stage" "$axis"
+        check_axis "$stage" "$axis" "$axis_set"
         load_profile "$model_role"
         rules=$SUBAGENT_RULES
     else
-        check_axis '' "$axis"
+        check_axis '' "$axis" "$axis_set"
         skill_names=
         role="You are a Subagent running an ad-hoc task for the calling agent. Follow the brief and report back when done."
         load_profile builder

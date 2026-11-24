@@ -737,6 +737,42 @@ expect_nonzero
 expect_stderr_contains '--axis requires --stage review'
 expect_no_rex_command
 
+rm -f "$fixture_log"
+run_subagent launch --axis '' --item widget <<'BRIEF'
+Check spec.
+BRIEF
+expect_nonzero
+expect_stderr_contains '--axis requires --stage review'
+expect_no_rex_command
+
+rm -f "$fixture_log"
+run_subagent launch --axis= --item widget <<'BRIEF'
+Check spec.
+BRIEF
+expect_nonzero
+expect_stderr_contains '--axis requires --stage review'
+expect_no_rex_command
+
+rm -rf "$fixture_tmp"
+
+# --- --flag=VALUE form is accepted for launch value flags -------------------
+
+new_fixture
+run_subagent launch --stage review --axis=spec --item widget <<'BRIEF'
+Check spec.
+BRIEF
+expect_status 0
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-review-spec.md\""
+
+rm -rf "$fixture_tmp"
+
+new_fixture
+run_subagent launch --item=widget --stage=build <<'BRIEF'
+Add the widget.
+BRIEF
+expect_status 0
+expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
+
 rm -rf "$fixture_tmp"
 
 # --- invalid --harness, --model, and --effort fail before a window opens ----
