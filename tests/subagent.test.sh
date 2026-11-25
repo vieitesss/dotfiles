@@ -47,6 +47,9 @@ new_fixture() {
     fixture_close_fail=
     fixture_close_error=
     fixture_close_refusal=
+    fixture_rex_block=block:test
+    fixture_whoami=
+    fixture_whoami_fail=
     fixture_inbox=
     fixture_agents=
     SG_CWD=
@@ -73,6 +76,17 @@ set -eu
 printf '%s\n' "$@" >> "$REX_STUB_LOG"
 [ "${1:-}" != --autostart=false ] || shift
 case "$1 ${2:-}" in
+    'whoami --json')
+        if [ "${REX_STUB_WHOAMI_FAIL:-}" = 1 ]; then
+            printf 'Error: rex daemon unreachable\n' >&2
+            exit 1
+        fi
+        if [ -n "${REX_STUB_WHOAMI:-}" ]; then
+            printf '%s\n' "$REX_STUB_WHOAMI"
+        else
+            printf '{"session_id":"session:test","block_id":"block:test"}\n'
+        fi
+        ;;
     'window new')
         shift 2
         while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
@@ -276,7 +290,7 @@ run_subagent() { # run_subagent ARGS... < BRIEF
         # Drop the variables the child must set itself, so a value inherited
         # from the caller cannot make the assertion pass.
         env -u CI -u RECADO_MANAGER -u GIT_EDITOR -u GIT_SEQUENCE_EDITOR -u GIT_TERMINAL_PROMPT \
-            -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED -u XDG_STATE_HOME \
+            -u GIT_PAGER -u PAGER -u GH_PROMPT_DISABLED -u XDG_STATE_HOME -u REX_SESSION \
             CLAUDECODE=1 \
             HOME="$fixture_home" \
             XDG_STATE_HOME="${SG_XDG_STATE_HOME-$fixture_state}" \
@@ -284,7 +298,9 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             STUB_BIN="$fixture_bin" \
             SHELL="$fixture_bin/shell" BASH_ENV=/dev/null ENV=/dev/null \
             TMPDIR="$fixture_tmp/tmp" \
-            REX_SESSION=session:test \
+            REX_BLOCK="$fixture_rex_block" \
+            REX_STUB_WHOAMI="$fixture_whoami" \
+            REX_STUB_WHOAMI_FAIL="$fixture_whoami_fail" \
             SUBAGENT_WAIT_POLL="${SG_WAIT_POLL:-0.1}" \
             RECADO_STUB_INBOX="$fixture_inbox" \
             RECADO_STUB_AGENTS="$fixture_agents" \
@@ -1560,6 +1576,61 @@ run_subagent wait win-1 --idle-seconds 1 </dev/null
 expect_status 0
 expect_contains '"reason":"idle"'
 
+rm -rf "$fixture_tmp"
+
+# --- REX_BLOCK session resolution via rex whoami --json ---------------------
+
+# 1. Launch resolves session via rex whoami --json from REX_BLOCK and passes -s.
+new_fixture
+fixture_whoami='{"session_id":"session:from-whoami","block_id":"block:test"}'
+run_subagent launch --stage build --item rex-block-ok <<'BRIEF'
+Resolve session from REX_BLOCK.
+BRIEF
+expect_status 0
+expect_file_contains "$fixture_log" 'rex log' 'whoami'
+expect_file_contains "$fixture_log" 'rex log' 'session:from-whoami'
+rm -rf "$fixture_tmp"
+
+# 2. Launch fails before opening a window when REX_BLOCK is unset.
+new_fixture
+fixture_rex_block=
+run_subagent launch --stage build --item rex-block-missing <<'BRIEF'
+Missing REX_BLOCK.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'REX_BLOCK'
+checks=$((checks + 1))
+if [ -f "$fixture_log" ]; then
+    fail "rex should not be called when REX_BLOCK is unset; log:
+$(cat "$fixture_log")"
+fi
+rm -rf "$fixture_tmp"
+
+# 3. Launch fails before opening a window when rex whoami --json fails or omits session_id.
+new_fixture
+fixture_whoami_fail=1
+run_subagent launch --stage build --item rex-whoami-fail <<'BRIEF'
+whoami fails.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'rex whoami'
+checks=$((checks + 1))
+case "$(cat "$fixture_log" 2>/dev/null || true)" in
+    *window*) fail "rex window new should not be called when whoami fails" ;;
+esac
+rm -rf "$fixture_tmp"
+
+new_fixture
+fixture_whoami='{"block_id":"block:test"}'
+run_subagent launch --stage build --item rex-whoami-no-session <<'BRIEF'
+whoami omits session_id.
+BRIEF
+expect_nonzero
+expect_stderr_contains 'session_id'
+checks=$((checks + 1))
+case "$(cat "$fixture_log" 2>/dev/null || true)" in
+    *window*) fail "rex window new should not be called when whoami omits session_id" ;;
+esac
 rm -rf "$fixture_tmp"
 
 if [ "$failures" -gt 0 ]; then
