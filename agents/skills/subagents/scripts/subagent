@@ -90,7 +90,7 @@ Usage:
       A Stage launch past the cap fails and lists the open ones; ad-hoc
       launches (Managers) are not counted.
 
-REX_SESSION names the Rex session, and recado whoami the caller's address.
+REX_BLOCK identifies the caller's Rex terminal (resolved via \`rex whoami\`), and recado whoami the caller's address.
 EOF
 }
 
@@ -482,8 +482,20 @@ cmd_launch() {
     [ -z "$missing" ] || die "skills not installed for $cwd:$missing"
 
     rex_cmd=$(find_rex) || die "rex not found on PATH or in REX_BIN_DIR"
-    [ -n "${REX_SESSION:-}" ] ||
-        die "REX_SESSION is not set; run from a Rex terminal"
+    [ -n "${REX_BLOCK:-}" ] ||
+        die "REX_BLOCK is not set; run from a Rex terminal"
+    rex_whoami=$("$rex_cmd" --autostart=false whoami --json 2>/dev/null) ||
+        die "rex whoami failed; run from a live Rex terminal"
+    rex_session=$(printf '%s' "$rex_whoami" | python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+sid = data.get("session_id") if isinstance(data, dict) else None
+if not isinstance(sid, str) or not sid:
+    sys.exit(1)
+print(sid)') ||
+        die "rex whoami did not return a session_id; run from a live Rex terminal"
     command -v recado >/dev/null 2>&1 ||
         die "recado is not on PATH; install it and run recado skill setup"
     manager=$(recado whoami 2>/dev/null) ||
@@ -577,13 +589,13 @@ $brief"
     printf '[subagent] %s harness %s model %s effort %s\n' "$name" "$harness" "$model" "$effort" >&2
     created=$(
         "$rex_cmd" --autostart=false window new \
-            -s "$REX_SESSION" "$name" -c "$cwd" \
+            -s "$rex_session" "$name" -c "$cwd" \
             --focus=false --keep-open --shell=none --json \
             -- "${SHELL:-/bin/sh}" -lc "$CHILD_SCRIPT" "$name" "$prompt_file" "$manager" \
             "${agent_cmd[@]}" \
             2>"$prompt_file.err"
     ) || die "rex window new failed: $(cat "$prompt_file.err")
-check \`$rex_cmd window ls -s $REX_SESSION\` for a window named $name and close it before relaunching"
+check \`$rex_cmd window ls -s $rex_session\` for a window named $name and close it before relaunching"
     rm -f "$prompt_file.err"
     trap release_lock EXIT
 
@@ -908,7 +920,7 @@ cmd_close() {
         return 0
     fi
     if [ "$tree_known" -eq 0 ]; then
-        printf '[subagent] cannot read the process tree of %s (is REX_SESSION set?); not reaping\n' \
+        printf '[subagent] cannot read the process tree of %s (is rex reachable?); not reaping\n' \
             "$window" >&2
         return 0
     fi
