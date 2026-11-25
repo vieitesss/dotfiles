@@ -90,7 +90,7 @@ Usage:
       A Stage launch past the cap fails and lists the open ones; ad-hoc
       launches (Managers) are not counted.
 
-REX_BLOCK identifies the caller's Rex terminal (resolved via \`rex whoami\`), and recado whoami the caller's address.
+REX_BLOCK identifies the caller's Rex terminal (resolved via rex whoami), and recado whoami the caller's address.
 EOF
 }
 
