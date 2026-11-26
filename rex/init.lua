@@ -167,62 +167,40 @@ bind("a", "nexo_agents")
 require("sessions")
 bind("o", "rex_sessions")
 
--- Resume pi panes on the session file they have open after the server
--- restarts. pi/agent/extensions/program-resume.ts reports the command; this
--- rule is what lets Rex trust it. The kept flags are the ones that shape the
--- run; every flag that picks a session or adds a prompt is dropped.
+-- Program Resume for agy: a pane whose agy reported its conversation with
+-- OSC 7577 (see antigravity/hooks.json and scripts/agy-resume-hook) reopens
+-- on that conversation after the server restarts. The program is antigravity,
+-- the binary agy wraps, because that is the process Rex finds.
+rex.set("resume.trust.antigravity", {
+  command = { "antigravity", "--conversation", rex.match.uuid },
+  flags = {
+    ["--model"] = { "keep", values = 1 },
+    ["--effort"] = { "keep", values = 1 },
+    ["--mode"] = { "keep", values = 1 },
+    ["--agent"] = { "keep", values = 1 },
+    ["--project"] = { "keep", values = 1 },
+    ["--add-dir"] = { "keep", values = 1 },
+    ["--settings"] = { "keep", values = 1 },
+    ["--log-file"] = { "keep", values = 1 },
+    ["--dangerously-skip-permissions"] = "keep",
+    ["--sandbox"] = "keep",
+    ["--new-project"] = "keep",
+    ["--remote-agent"] = "keep",
+    ["-c"] = "drop",
+    ["--continue"] = "drop",
+    ["--conversation"] = { "drop", values = 1 },
+    ["-i"] = { "drop", values = 1 },
+    ["--prompt-interactive"] = { "drop", values = 1 },
+  },
+})
+
+-- Program Resume for pi: a pane whose pi reported its session file with
+-- OSC 7577 (pi/agent/extensions/program-resume.ts) reopens on that file after
+-- the server restarts. There are no kept flags on purpose: pi sets
+-- process.title, which wipes its flags from the OS argv Rex reads, so a
+-- reported flag can never match and every pane would fail with flags_differ.
 rex.set("resume.trust.pi", {
-	command = { "pi", "--session", rex.match.under(os.getenv("HOME") .. "/.pi/agent/sessions") },
-	flags = {
-		["--provider"] = { "keep", values = 1 },
-		["--model"] = { "keep", values = 1 },
-		["--models"] = { "keep", values = 1 },
-		["--thinking"] = { "keep", values = 1 },
-		["--tools"] = { "keep", values = 1 },
-		["-t"] = { "keep", values = 1 },
-		["--exclude-tools"] = { "keep", values = 1 },
-		["-xt"] = { "keep", values = 1 },
-		["--no-tools"] = "keep",
-		["-nt"] = "keep",
-		["--no-builtin-tools"] = "keep",
-		["-nbt"] = "keep",
-		["--extension"] = { "keep", values = 1 },
-		["-e"] = { "keep", values = 1 },
-		["--no-extensions"] = "keep",
-		["-ne"] = "keep",
-		["--system-prompt"] = { "keep", values = 1 },
-		["--append-system-prompt"] = { "keep", values = 1 },
-		["--skill"] = { "keep", values = 1 },
-		["--prompt-template"] = { "keep", values = 1 },
-		["--theme"] = { "keep", values = 1 },
-		["--use-theme"] = { "keep", values = 1 },
-		["--tui-mode"] = { "keep", values = 1 },
-		["--no-skills"] = "keep",
-		["-ns"] = "keep",
-		["--no-prompt-templates"] = "keep",
-		["-np"] = "keep",
-		["--no-themes"] = "keep",
-		["--no-context-files"] = "keep",
-		["-nc"] = "keep",
-		["--no-mcp"] = "keep",
-		["--approve"] = "keep",
-		["-a"] = "keep",
-		["--no-approve"] = "keep",
-		["-na"] = "keep",
-		["--offline"] = "keep",
-		["--verbose"] = "keep",
-		-- Session-picking and naming flags: the resumed run already has its
-		-- session file, so a pane started with one of these is still resumed.
-		["-c"] = "drop",
-		["--continue"] = "drop",
-		["-r"] = "drop",
-		["--resume"] = "drop",
-		["--session"] = { "drop", values = 1 },
-		["--session-id"] = { "drop", values = 1 },
-		["--fork"] = { "drop", values = 1 },
-		["-n"] = { "drop", values = 1 },
-		["--name"] = { "drop", values = 1 },
-	},
+  command = { "pi", "--session", rex.match.under(os.getenv("HOME") .. "/.pi/agent/sessions") },
 })
 
 -- Keep last_session_watch.lua running, to record each session the app shows.
