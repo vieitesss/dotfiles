@@ -126,7 +126,7 @@ load_stage() { # load_stage STAGE [AXIS]: load its skills, model role and prompt
             ;;
         review)
             skill_names=review
-            model_role=critic
+            model_role=writer
             stage_axes=(spec standards debt break)
             if [ "${2:-}" = break ]; then
                 skill_names=interrogate

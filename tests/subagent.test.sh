@@ -482,11 +482,11 @@ expect_row_contains research 'skills research, why'
 expect_row_contains build 'skills tdd, coding'
 expect_row_contains write 'skills writing-for-agents, unslop'
 expect_row_contains refine 'skills zero-tech-debt, principles'
-# The break axis runs on the critic profile, asserted on its own row.
+# The break axis runs on the writer profile, asserted on its own row.
 expect_row_contains 'review --axis break' 'skills interrogate'
-expect_row_contains 'review --axis break' 'harness pi'
-expect_row_contains 'review --axis break' 'model opencode-go/muse-spark-1.3-contributor'
-expect_row_contains 'review --axis break' 'effort max'
+expect_row_contains 'review --axis break' 'harness agy'
+expect_row_contains 'review --axis break' 'model gemini-4-neon-medium'
+expect_row_contains 'review --axis break' 'effort medium'
 
 rm -rf "$fixture_tmp"
 

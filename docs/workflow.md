@@ -33,7 +33,7 @@ flowchart TD
     refinep -- no --> review
     refine --> review
 
-    subgraph review [Review: fresh critics, one per axis, read-only]
+    subgraph review [Review: fresh reviewers, one per axis, read-only]
         spec{{"Spec: always"}}
         standards{{"Standards: several modules or reshaped"}}
         debt{{"Debt: several modules or reshaped"}}
