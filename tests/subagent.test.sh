@@ -1634,6 +1634,144 @@ case "$(cat "$fixture_log" 2>/dev/null || true)" in
 esac
 rm -rf "$fixture_tmp"
 
+# --- ledger: launch, wait, close, and ledger CLI own Work Item rows ---------
+
+new_fixture
+ledger_file="$fixture_repo/.agents/ledger.md"
+mkdir -p "$fixture_repo/.agents"
+cat > "$ledger_file" <<'LEDGER'
+# Ledger
+
+Goal: Ship the widget cleanly.
+
+## Open questions to user
+
+- none
+
+## Decisions
+
+- keep the existing API (user, 2026-11-25).
+LEDGER
+
+worktree="$fixture_tmp/wt-widget"
+git -C "$fixture_repo" worktree add -q "$worktree" -b feat-widget
+
+# 1. Build launch creates the Work Items table and row while preserving Goal/Decisions.
+run_subagent launch --stage build --item widget --cwd "$worktree" <<'BRIEF'
+Build widget.
+BRIEF
+expect_status 0
+w1_name=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')
+w1_report=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["report"])')
+expect_file_contains "$ledger_file" "ledger" "Goal: Ship the widget cleanly."
+expect_file_contains "$ledger_file" "ledger" "## Decisions"
+expect_file_contains "$ledger_file" "ledger" "keep the existing API"
+expect_file_contains "$ledger_file" "ledger" "| widget"
+expect_file_contains "$ledger_file" "ledger" "| build"
+expect_file_contains "$ledger_file" "ledger" "| running"
+expect_file_contains "$ledger_file" "ledger" "$w1_name win-1"
+expect_file_contains "$ledger_file" "ledger" "$worktree (feat-widget)"
+
+# 2. Ad-hoc launch (no --stage) does not add a row to the Ledger.
+run_subagent launch --item adhoc-check <<'BRIEF'
+Ad-hoc check.
+BRIEF
+expect_status 0
+expect_file_not_contains "$ledger_file" "ledger" "adhoc-check"
+
+# 3. wait updates Status to reported / stalled / exited.
+printf 'Summary\n' > "$w1_report"
+fixture_inbox="{\"messages\":[{\"from\":\"recado://local/$w1_name\",\"kind\":\"complete\",\"meta\":{\"report\":\"$w1_report\"}}]}"
+run_subagent wait win-1 </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "reported; see .agents/reports/widget-build.md"
+
+fixture_inbox=
+fixture_agents="{\"agents\":[{\"name\":\"$w1_name\",\"address\":\"recado://local/$w1_name\",\"state\":\"idle\"}]}"
+run_subagent wait win-1 --idle-seconds 1 </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "stalled; see .agents/reports/widget-build.md"
+
+fixture_agents=
+fixture_exited=blk-1
+run_subagent wait win-1 </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "exited; see .agents/reports/widget-build.md"
+fixture_exited=
+
+# 4. Manager marks accepted via `subagent ledger`, then closes build window -> Subagent becomes '-'.
+run_subagent ledger --cwd "$worktree" widget accepted "Verdict VERIFIED" </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "accepted; Verdict VERIFIED"
+
+run_subagent close win-1 </dev/null
+expect_status 0
+checks=$((checks + 1))
+python3 - "$ledger_file" <<'PY' || fail "close did not clear Subagent cell to '-'"
+import sys
+for line in open(sys.argv[1]):
+    if line.startswith("| widget"):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        assert cells[1] == "build", cells
+        assert cells[2] == "accepted; Verdict VERIFIED", cells
+        assert cells[3] == "-", cells
+        sys.exit(0)
+sys.exit(1)
+PY
+
+# 5. Parallel review axes append to the same item's Subagent cell; close removes only its own window.
+run_subagent launch --stage review --axis spec --item widget --cwd "$worktree" <<'BRIEF'
+Spec review.
+BRIEF
+expect_status 0
+r1_name=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')
+r1_win=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["window"])')
+
+run_subagent launch --stage review --axis break --item widget --cwd "$worktree" <<'BRIEF'
+Break review.
+BRIEF
+expect_status 0
+r2_name=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["name"])')
+r2_win=$(printf '%s' "$output" | python3 -c 'import json, sys; print(json.load(sys.stdin)["window"])')
+
+expect_file_contains "$ledger_file" "ledger" "$r1_name $r1_win (spec); $r2_name $r2_win (break)"
+
+run_subagent close "$r1_win" </dev/null
+expect_status 0
+expect_file_not_contains "$ledger_file" "ledger" "$r1_win"
+expect_file_contains "$ledger_file" "ledger" "$r2_name $r2_win (break)"
+
+run_subagent close "$r2_win" </dev/null
+expect_status 0
+expect_file_not_contains "$ledger_file" "ledger" "$r2_win"
+
+# 6. Manager marks merged via `subagent ledger` (and tests creating a missing row + validation).
+run_subagent ledger widget merged "PR #99" </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "merged; PR #99"
+
+run_subagent ledger --stage build other "sent back" "missing test" </dev/null
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "| other"
+expect_file_contains "$ledger_file" "ledger" "sent back; missing test"
+
+run_subagent ledger only-item </dev/null
+expect_nonzero
+expect_stderr_contains "ledger needs ITEM and STATUS"
+
+# 7. Ledger file is created automatically when missing on Stage launch.
+rm -f "$ledger_file"
+run_subagent launch --stage write --item docs <<'BRIEF'
+Write docs.
+BRIEF
+expect_status 0
+expect_file_contains "$ledger_file" "ledger" "# Ledger"
+expect_file_contains "$ledger_file" "ledger" "| docs"
+expect_file_contains "$ledger_file" "ledger" "| write"
+expect_file_contains "$ledger_file" "ledger" "| running"
+
+rm -rf "$fixture_tmp"
+
 if [ "$failures" -gt 0 ]; then
     printf '\n%s of %s checks failed\n' "$failures" "$checks"
     exit 1

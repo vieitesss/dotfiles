@@ -4,3 +4,4 @@
 .agents/reports/
 .agents/briefs/
 .agents/handoff.md
+.agents/.ledger.lock

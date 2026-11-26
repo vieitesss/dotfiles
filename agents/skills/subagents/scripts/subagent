@@ -8,6 +8,7 @@
 #                   [--harness HARNESS] [--model ROLE|MODEL] [--effort EFFORT] < BRIEF
 #   subagent wait WINDOW [--idle-seconds N]
 #   subagent close WINDOW
+#   subagent ledger [--cwd DIR] [--stage STAGE] ITEM STATUS [NOTE]
 #   subagent ls
 #   subagent cap [N|off]
 #
@@ -72,14 +73,20 @@ Usage:
   subagent wait WINDOW [--idle-seconds SECONDS]
       Wait until WINDOW's report file is non-empty and either a completion
       message arrives in recado inbox, the Subagent process exits, or the
-      Subagent stays idle in recado agents for SECONDS (default 60). Prints
+      Subagent stays idle in recado agents for SECONDS (default 60). Updates
+      the item's Ledger row to reported, stalled, or exited, and prints
       {"window", "name", "report", "reason"} as JSON.
 
   subagent close WINDOW
-      Close the Subagent's Rex window, then stop the processes the window
-      left running in its worktree (SIGINT, then SIGTERM after 3 seconds),
-      printing every pid and command it stopped. Only that window's own
-      process tree is stopped.
+      Close the Subagent's Rex window, clear its entry from the Ledger's
+      Subagent cell, then stop the processes the window left running in its
+      worktree (SIGINT, then SIGTERM after 3 seconds), printing every pid and
+      command it stopped. Only that window's own process tree is stopped.
+
+  subagent ledger [--cwd DIR] [--stage STAGE] ITEM STATUS [NOTE]
+      Update ITEM's row in .agents/ledger.md at the main checkout root with
+      STATUS (and optional NOTE), creating the row if missing. Use for
+      Manager-owned transitions such as accepted, sent back, or merged.
 
   subagent ls
       List every open Subagent on this machine: name, Stage (- when ad-hoc),
@@ -367,6 +374,227 @@ except ValueError:
 sys.exit(0 if last_exit is None else 1)'
 }
 
+# ------------------------------------------------------------------ ledger
+
+# Own the Work Item table rows in <main>/.agents/ledger.md under an exclusive
+# file lock so concurrent launches, waits, closes, and ledger calls never
+# clobber each other or hand-written sections (Goal, Open questions, Decisions).
+update_ledger() { # update_ledger MAIN ACTION ITEM [ARGS...]
+    ul_main=$1
+    shift
+    python3 - "$ul_main" "$@" <<'PY'
+import fcntl
+import os
+import sys
+import tempfile
+
+main_dir = sys.argv[1]
+action = sys.argv[2]
+item = sys.argv[3]
+rest = sys.argv[4:]
+
+agents_dir = os.path.join(main_dir, ".agents")
+ledger_path = os.path.join(agents_dir, "ledger.md")
+lock_path = os.path.join(agents_dir, ".ledger.lock")
+
+if action in ("wait", "close") and not os.path.exists(ledger_path):
+    sys.exit(0)
+
+os.makedirs(agents_dir, exist_ok=True)
+
+HEADERS = ["Item", "Stage", "Status", "Subagent", "Worktree"]
+
+
+def clean_cell(val, limit=None):
+    s = " ".join(str(val).replace("|", "/").split())
+    if limit and len(s) > limit:
+        s = s[: limit - 3].rstrip() + "..."
+    return s
+
+
+def parse_row(line):
+    stripped = line.strip()
+    if not (stripped.startswith("|") and stripped.endswith("|")):
+        return None
+    parts = [p.strip() for p in stripped[1:-1].split("|")]
+    return parts
+
+
+def is_sep_row(cells):
+    if not cells:
+        return False
+    for c in cells:
+        t = c.strip().replace("-", "").replace(":", "")
+        if t or "-" not in c:
+            return False
+    return True
+
+
+def find_table(lines):
+    for i in range(len(lines) - 1):
+        hdr = parse_row(lines[i])
+        sep = parse_row(lines[i + 1])
+        if (
+            hdr
+            and sep
+            and len(hdr) >= 5
+            and len(sep) == len(hdr)
+            and is_sep_row(sep)
+            and hdr[0].lower() == "item"
+        ):
+            end = i + 2
+            rows = []
+            while end < len(lines):
+                r = parse_row(lines[end])
+                if r is None or len(r) != len(hdr):
+                    break
+                rows.append(r)
+                end += 1
+            return i, end, hdr, rows
+    return None
+
+
+def format_table(hdr, rows):
+    widths = [max(3, len(h)) for h in hdr]
+    for r in rows:
+        for idx, cell in enumerate(r):
+            if len(cell) > widths[idx]:
+                widths[idx] = len(cell)
+    out = []
+    out.append("| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(hdr)) + " |")
+    out.append("| " + " | ".join("-" * widths[i] for i in range(len(hdr))) + " |")
+    for r in rows:
+        out.append("| " + " | ".join(r[i].ljust(widths[i]) for i in range(len(hdr))) + " |")
+    return out
+
+
+def write_atomic(path, content):
+    fd, tmp = tempfile.mkstemp(prefix=".ledger.", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+with open(lock_path, "a+", encoding="utf-8") as lock_fh:
+    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+
+    if action in ("wait", "close") and not os.path.exists(ledger_path):
+        sys.exit(0)
+
+    if os.path.exists(ledger_path):
+        with open(ledger_path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        lines = text.splitlines()
+    else:
+        lines = ["# Ledger", ""]
+
+    found = find_table(lines)
+    if found is None:
+        if action in ("wait", "close"):
+            sys.exit(0)
+        hdr = list(HEADERS)
+        rows = []
+        insert_at = len(lines)
+        for idx, line in enumerate(lines):
+            if line.startswith("## "):
+                insert_at = idx
+                break
+        start, end = insert_at, insert_at
+        created_table = True
+    else:
+        start, end, hdr, rows = found
+        created_table = False
+
+    row_idx = None
+    for idx, r in enumerate(rows):
+        if r[0] == item:
+            row_idx = idx
+            break
+
+    changed = False
+    if action == "launch":
+        stage, axis, name, window, worktree = rest
+        entry = f"{name} {window} ({axis})" if axis else f"{name} {window}"
+        entry = clean_cell(entry)
+        stage_c = clean_cell(stage)
+        worktree_c = clean_cell(worktree)
+        if row_idx is None:
+            row = [clean_cell(item), stage_c, "running", entry, worktree_c]
+            row.extend([""] * (len(hdr) - len(row)))
+            rows.append(row)
+        else:
+            row = rows[row_idx]
+            prev_stage = row[1]
+            prev_sub = row[3]
+            if stage_c == "review" and axis and prev_stage == "review" and prev_sub not in ("", "-"):
+                parts = [p.strip() for p in prev_sub.split(";") if p.strip() and p.strip() != "-"]
+                axis_tag = f"({axis})"
+                kept = [p for p in parts if window not in p.split() and not p.endswith(axis_tag)]
+                kept.append(entry)
+                sub_val = "; ".join(kept)
+            else:
+                sub_val = entry
+            row[1] = stage_c
+            row[2] = "running"
+            row[3] = sub_val
+            row[4] = worktree_c
+        changed = True
+    elif action == "wait":
+        status_val, report_rel = rest
+        if row_idx is not None:
+            full = f"{status_val}; see {report_rel}" if report_rel else status_val
+            rows[row_idx][2] = clean_cell(full, limit=200)
+            changed = True
+    elif action == "close":
+        window = rest[0]
+        if row_idx is not None:
+            prev_sub = rows[row_idx][3]
+            if prev_sub not in ("", "-"):
+                parts = [p.strip() for p in prev_sub.split(";") if p.strip() and p.strip() != "-"]
+                kept = [p for p in parts if window not in p.split()]
+                rows[row_idx][3] = "; ".join(kept) if kept else "-"
+                changed = True
+    elif action == "set":
+        status_val, note, stage_opt = rest
+        full = f"{status_val}; {note}" if note else status_val
+        status_c = clean_cell(full, limit=200)
+        stage_c = clean_cell(stage_opt) if stage_opt else ""
+        if row_idx is None:
+            row = [clean_cell(item), stage_c or "-", status_c, "-", "-"]
+            row.extend([""] * (len(hdr) - len(row)))
+            rows.append(row)
+        else:
+            if stage_c:
+                rows[row_idx][1] = stage_c
+            rows[row_idx][2] = status_c
+        changed = True
+
+    if not changed:
+        sys.exit(0)
+
+    table_lines = format_table(hdr, rows)
+    if created_table:
+        before = lines[:start]
+        after = lines[end:]
+        while before and before[-1] == "":
+            before.pop()
+        while after and after[0] == "":
+            after.pop(0)
+        new_lines = before + ([""] if before else []) + table_lines + ([""] + after if after else [])
+    else:
+        new_lines = lines[:start] + table_lines + lines[end:]
+
+    write_atomic(ledger_path, "\n".join(new_lines) + "\n")
+PY
+}
+
 # ------------------------------------------------------------------ launch
 
 cmd_launch() {
@@ -627,6 +855,16 @@ print(json.load(sys.stdin)["block_ids"][0])') || die "cannot read rex window new
         die "agent start failed for $name; window $window is left open"
     fi
 
+    if [ -n "$stage" ]; then
+        wt_branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        if [ -n "$wt_branch" ] && [ "$wt_branch" != HEAD ]; then
+            wt_label="$cwd ($wt_branch)"
+        else
+            wt_label=$cwd
+        fi
+        update_ledger "$main" launch "$item" "$stage" "$axis" "$name" "$window" "$wt_label"
+    fi
+
     python3 -c 'import json, sys
 print(json.dumps(dict(zip(("name", "window", "block", "report"), sys.argv[1:])), separators=(",", ":")))' \
         "$name" "$window" "$block" "$report"
@@ -875,10 +1113,16 @@ cmd_close() {
     boundary=
     tree=
     tree_known=1
+    close_stage=
+    close_item=
+    close_report=
     state_file=$(window_state_file "$window")
     if [ -f "$state_file" ]; then
         worktree=$(sed -n 1p "$state_file")
         block=$(sed -n 2p "$state_file")
+        close_stage=$(sed -n 4p "$state_file")
+        close_item=$(sed -n 5p "$state_file")
+        close_report=$(sed -n 7p "$state_file")
         if [ -n "$worktree" ] && [ -d "$worktree" ] && [ -n "$block" ]; then
             # lsof and /proc report physical paths, so compare in the same terms.
             worktree=$(cd "$worktree" && pwd -P)
@@ -909,6 +1153,19 @@ cmd_close() {
         return 1
     fi
     rm -f "$state_file"
+
+    ledger_main=
+    if [ -n "$worktree" ]; then
+        ledger_main=$(main_checkout "$worktree")
+        [ -n "$ledger_main" ] || ledger_main=$worktree
+    elif [ -n "$close_report" ]; then
+        case $close_report in
+            */.agents/reports/*) ledger_main=${close_report%/.agents/reports/*} ;;
+        esac
+    fi
+    if [ -n "$ledger_main" ] && [ -n "$close_item" ] && [ "$close_stage" != "-" ]; then
+        update_ledger "$ledger_main" close "$close_item" "$window"
+    fi
 
     if [ -z "$worktree" ]; then
         printf '[subagent] no worktree recorded for %s; nothing to reap\n' "$window" >&2
@@ -1005,12 +1262,31 @@ cmd_wait() {
     state_file=$(window_state_file "$window")
     [ -f "$state_file" ] || die "unknown window: $window"
 
+    worktree=$(sed -n 1p "$state_file")
     block=$(sed -n 2p "$state_file")
     name=$(sed -n 3p "$state_file")
+    stage_label=$(sed -n 4p "$state_file")
+    item=$(sed -n 5p "$state_file")
     caller=$(sed -n 6p "$state_file")
     report=$(sed -n 7p "$state_file")
     [ -n "$block" ] && [ -n "$name" ] && [ -n "$caller" ] && [ -n "$report" ] ||
         die "incomplete window state for $window"
+
+    ledger_main=
+    if [ -n "$worktree" ] && [ -d "$worktree" ]; then
+        ledger_main=$(main_checkout "$worktree")
+        [ -n "$ledger_main" ] || ledger_main=$worktree
+    elif [ -n "$report" ]; then
+        case $report in
+            */.agents/reports/*) ledger_main=${report%/.agents/reports/*} ;;
+        esac
+    fi
+    report_rel=$report
+    if [ -n "$ledger_main" ]; then
+        case $report in
+            "$ledger_main"/*) report_rel=${report#"$ledger_main"/} ;;
+        esac
+    fi
 
     poll_interval=${SUBAGENT_WAIT_POLL:-2}
     idle_since=
@@ -1020,6 +1296,9 @@ cmd_wait() {
         still_alive "$block" || alive=0
         if [ ! -s "$report" ]; then
             if [ "$alive" -eq 0 ]; then
+                if [ -n "$ledger_main" ] && [ -n "$item" ] && [ "$stage_label" != "-" ]; then
+                    update_ledger "$ledger_main" wait "$item" "exited (no report)" ""
+                fi
                 die "subagent $name ($window) exited without writing report $report"
             fi
             idle_since=
@@ -1047,9 +1326,69 @@ cmd_wait() {
         sleep "$poll_interval"
     done
 
+    if [ -n "$ledger_main" ] && [ -n "$item" ] && [ "$stage_label" != "-" ]; then
+        case $reason in
+            inbox) ledger_status=reported ;;
+            idle) ledger_status=stalled ;;
+            exited) ledger_status=exited ;;
+            *) ledger_status=$reason ;;
+        esac
+        update_ledger "$ledger_main" wait "$item" "$ledger_status" "$report_rel"
+    fi
+
     python3 -c 'import json, sys
 print(json.dumps(dict(zip(("window", "name", "report", "reason"), sys.argv[1:])), separators=(",", ":")))' \
         "$window" "$name" "$report" "$reason"
+}
+
+# ------------------------------------------------------------------ ledger
+
+cmd_ledger() {
+    ledger_cwd=
+    ledger_stage=
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --cwd | --stage)
+                [ $# -ge 2 ] || die "ledger: $1 needs a value"
+                case $1 in
+                    --cwd) ledger_cwd=$2 ;;
+                    --stage) ledger_stage=$2 ;;
+                esac
+                shift 2
+                ;;
+            --cwd=* | --stage=*)
+                case ${1%%=*} in
+                    --cwd) ledger_cwd=${1#*=} ;;
+                    --stage) ledger_stage=${1#*=} ;;
+                esac
+                shift
+                ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                die "ledger: unexpected option: $1"
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    [ $# -ge 2 ] || die "ledger needs ITEM and STATUS"
+    ledger_item=$1
+    ledger_status=$2
+    shift 2
+    ledger_note=$*
+    ledger_cwd=$(CDPATH='' cd "${ledger_cwd:-$PWD}" && pwd -P) ||
+        die "cwd is not a directory: ${ledger_cwd:-$PWD}"
+    ledger_main=$(main_checkout "$ledger_cwd")
+    [ -n "$ledger_main" ] || ledger_main=$ledger_cwd
+    update_ledger "$ledger_main" set "$ledger_item" "$ledger_status" "$ledger_note" "$ledger_stage"
 }
 
 # ---------------------------------------------------------------- ls & cap
@@ -1092,6 +1431,7 @@ case $command_name in
     launch) cmd_launch "$@" ;;
     wait) cmd_wait "$@" ;;
     close) cmd_close "$@" ;;
+    ledger) cmd_ledger "$@" ;;
     ls) cmd_ls "$@" ;;
     cap) cmd_cap "$@" ;;
     help | -h | --help) usage ;;

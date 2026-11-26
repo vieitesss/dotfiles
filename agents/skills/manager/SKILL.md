@@ -69,22 +69,28 @@ fixes. Rot beyond the touched code becomes a new Work Item.
 `.agents/ledger.md` at the main checkout's root is the session's memory. It
 outlives `/clear`, compaction, a handoff, a restart, and resuming on another
 device. The `git/ignore` manifest keeps it, `.agents/handoff.md`,
-`.agents/briefs/`, and `.agents/reports/` out of git. Edit it with
-your file-edit tools (`edit` / `write` / `edit_file` / `write_file`, not shell
-scripts) from the template in `LEDGER_EXAMPLE.md`. When starting a new goal,
-archive or clear completed rows and stale decisions from earlier goals so the
-Ledger holds only the active goal. Once more than 10 rows accumulate, archive
-merged rows into a single `Merged: ...` summary line so `edit` stays trivial
-and shell or Python scripts are never needed.
+`.agents/briefs/`, and `.agents/reports/` out of git.
 
-- **Subagent**: the name and window that `subagent launch` printed, while the
-  Subagent is open. Write `-` once you close it.
-- **Status**: `running` when launched; `question` when a Subagent sends a
-  Question; `blocked on user` when a decision waits on the user; `done` when
-  the last Stage is accepted. Cap the cell at 200 characters; put detail in
-  the report and point to it from the cell.
-- **Stage**: on acceptance, move the row to its next Stage and set `running`
-  when you launch that Stage.
+The `subagent` CLI owns the Work Item table rows — never edit table rows by hand:
+
+- `subagent launch` creates or updates the item's row to `running` with the
+  Subagent name, window (and axis for Review), Stage, and worktree.
+- `subagent wait` sets the row's Status to `reported`, `stalled`, or `exited`
+  (pointing at the report) when it returns.
+- `subagent close` removes the closed window from the Subagent cell, setting it
+  to `-` once no Subagent remains open for that item.
+- `subagent ledger ITEM STATUS [NOTE]` records transitions only the Manager
+  decides: `accepted`, `sent back`, `merged`, `question`, `blocked on user`,
+  `done` (capped at 200 characters; put detail in the report and point to it).
+
+Hand-write only the non-table sections with your file-edit tools (`edit` /
+`write` / `edit_file` / `write_file`, not shell scripts), following the
+structure in `LEDGER_EXAMPLE.md`:
+
+- **`Goal:`**: write this line when starting a new goal (and clear completed
+  rows and stale decisions from earlier goals so the Ledger holds only the
+  active goal). Once more than 10 rows accumulate, archive merged rows into a
+  single `Merged: ...` summary line.
 - **`## Decisions`**: one line each, with the answer and its date. Check this
   section before asking the user anything.
 - **`## Open questions to user`**: write a pending question here before asking
@@ -92,8 +98,10 @@ and shell or Python scripts are never needed.
   `## Decisions`.
 - **`## Operations`**: date each line and prune it when the fact stops holding.
 
-Update the Ledger at every change: a launch, a Question, an acceptance, a user
-decision.
+Update the Ledger at every change: `launch`, `wait`, and `close` handle row
+bookkeeping automatically; call `subagent ledger` for Manager decisions
+(Question, acceptance, sent back, merged), and edit the sections above only
+for `Goal:`, open questions, decisions, and operations.
 
 Handing the session to another Manager goes through the `handoff` skill. Save
 its document as `.agents/handoff.md` beside the Ledger, not in `$TMPDIR`: a
@@ -121,8 +129,8 @@ subagent launch --stage S [--axis A] --item I --cwd WORKTREE \
   [--harness H] [--model M] [--effort E] < BRIEF_FILE
 ```
 
-It prints the name, window, block, and report path. Record the name and window
-in the Ledger. The brief carries:
+It prints the name, window, block, and report path, and updates the item's
+Ledger row automatically. The brief carries:
 
 - the Ledger's `Goal:` line first, then the Work Item and what you already know:
   symptom, repro, `file:line`, earlier reports;
@@ -230,8 +238,10 @@ itself.
   of a follow-up.
 - Fresh Subagents are for each Stage and for each fix round born from Review
   findings (see Review), never for a follow-up on an unaccepted report.
-- On acceptance, once the evidence checks out: `subagent close WINDOW`, set the
-  Ledger's Subagent cell to `-`, and move the row to its next Stage.
+- On acceptance, once the evidence checks out: run
+  `subagent ledger ITEM accepted` and `subagent close WINDOW` (which clears the
+  Subagent cell to `-`), then launch the next Stage (or run
+  `subagent ledger ITEM merged` after merging).
 
 ## Waiting on outside state
 

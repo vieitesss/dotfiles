@@ -73,6 +73,9 @@ subagent launch --item cmp-oc --harness opencode --model anthropic/claude-sonnet
 ```
 
 Launch prints JSON `{name, window, block, report}`. Keep `name` and `window`.
+For Stage launches, it also creates or updates the item's row in
+`.agents/ledger.md` at the main checkout root to `running` with the Subagent
+name, window, and worktree.
 `report` is `.agents/reports/<item>-<stage>[-<axis>].md` (or
 `.agents/reports/<item>.md` for ad-hoc launches) in the main checkout, suffixed
 `-r2`, `-r3`, ... automatically if a prior report already exists. Stage reports
@@ -121,7 +124,21 @@ window: tell the user to answer it there.
 ## Close
 
 Once you accept the report, run `subagent close WINDOW`. That can come right
-after TASK COMPLETE.
+after TASK COMPLETE. For Stage Subagents, `close` also removes that window from
+the item's Subagent cell in `.agents/ledger.md` (setting it to `-` when no
+Subagent remains open for the item).
+
+## Ledger
+
+```bash
+subagent ledger [--cwd DIR] [--stage STAGE] ITEM STATUS [NOTE]
+```
+
+`launch`, `wait`, and `close` maintain the Work Item rows of
+`.agents/ledger.md` automatically for Stage Subagents (`launch` sets `running`,
+`wait` sets `reported` / `stalled` / `exited`, `close` clears the Subagent
+cell). Use `subagent ledger` for Manager-owned status transitions such as
+`accepted`, `sent back`, `merged`, `question`, or `blocked on user`.
 
 `close` also stops what the Subagent left running: the processes still alive in
 its window's process tree, with a working directory inside its worktree — the
