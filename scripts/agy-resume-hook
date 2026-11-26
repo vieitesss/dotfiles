@@ -8,6 +8,10 @@
 # antigravity process behind it, then reports through program-resume-report
 # (OSC 7577).
 #
+# The program is antigravity, not agy. agy is a wrapper that execs
+# antigravity, and Rex trusts a record only when it names the process it
+# finds, so scripts/antigravity runs agy again from that name.
+#
 # Hooks must answer "{}" and succeed whatever happens.
 #
 # AGY_RESUME_PS names another program to answer the ps queries, for tests.
@@ -16,41 +20,81 @@ set -u
 
 ps_cmd=${AGY_RESUME_PS:-ps}
 
-# The flags that pick a conversation, and how many values each takes.
-# The rest of the command line is kept as it was.
-#
-# ps joins the arguments with spaces, so an argument that holds one comes
-# back split. Rex then marks the record untrusted and asks, rather than
-# running something else.
-keep_flags() {
+# The flags that resume.trust.antigravity in rex/init.lua keeps, and how many
+# values each takes. A flag that is not here is skipped along with its words,
+# so a prompt handed to -i / --prompt-interactive never reaches the report.
+# tests/program-resume-report.test.sh checks this list against the rule.
+kept_flags='
+--model 1
+--effort 1
+--mode 1
+--agent 1
+--project 1
+--add-dir 1
+--settings 1
+--log-file 1
+--dangerously-skip-permissions 0
+--sandbox 0
+--new-project 0
+--remote-agent 0
+'
+
+# How many values a kept flag takes, or nothing when the rule does not keep it.
+kept_values() {
+    wanted=$1
+    set -f
+    # shellcheck disable=SC2086 # one "flag count" pair per line.
+    set -- $kept_flags
+    while [ "$#" -ge 2 ]; do
+        if [ "$1" = "$wanted" ]; then
+            printf '%s' "$2"
+            return 0
+        fi
+        shift 2
+    done
+    return 1
+}
+
+# The kept part of a ps command line: the flags the rule keeps, with their
+# values, in the order they were given. ps joins the arguments with spaces, so
+# an argument that holds one comes back split. Keeping whole flags means that
+# costs nothing here, where keeping what is left would carry a prompt along.
+kept_words() {
     set -f
     kept=
     # shellcheck disable=SC2086 # ps gives one flat command line, not words.
     set -- $1
     if [ "$#" -gt 0 ]; then shift; fi
     while [ "$#" -gt 0 ]; do
-        case $1 in
-            -c | --continue | --continue=*) shift ;;
-            -i | --prompt-interactive | --conversation)
-                shift
-                if [ "$#" -gt 0 ]; then shift; fi
-                ;;
-            --prompt-interactive=* | --conversation=*) shift ;;
+        word=$1
+        shift
+        case $word in
+            -*=*) name=${word%%=*} ;;
+            *) name=$word ;;
+        esac
+        count=$(kept_values "$name") || continue
+        kept="$kept $word"
+        case $word in
+            -*=*) ;; # the value is inside the word
             *)
-                kept="$kept $1"
-                shift
+                while [ "$count" -gt 0 ] && [ "$#" -gt 0 ]; do
+                    kept="$kept $1"
+                    shift
+                    count=$((count - 1))
+                done
                 ;;
         esac
     done
     printf '%s' "$kept"
 }
 
-# The pid of the antigravity process this hook runs under.
+# The pid of the antigravity process this hook runs under. -ww keeps ps from
+# cutting the path of the Homebrew build short of the name.
 antigravity_pid() {
     pid=$$
     depth=0
     while [ "$pid" -gt 1 ] && [ "$depth" -lt 64 ]; do
-        line=$("$ps_cmd" -o ppid=,comm= -p "$pid")
+        line=$("$ps_cmd" -ww -o ppid=,comm= -p "$pid")
         [ -n "$line" ] || return 1
         parent=$(printf '%s\n' "$line" | awk '{print $1}')
         comm=$(printf '%s\n' "$line" | awk '{print $NF}')
@@ -68,19 +112,20 @@ report() {
     [ -n "$conversation" ] || return 0
 
     pid=$(antigravity_pid) || return 0
-    tty=$("$ps_cmd" -o tty= -p "$pid" | tr -d ' ')
-    case $tty in '' | '??') return 0 ;; esac
-    args=$("$ps_cmd" -o args= -p "$pid")
+    tty=$("$ps_cmd" -ww -o tty= -p "$pid" | tr -d ' ')
+    # Linux prints "?" and macOS "??" for a process with no terminal.
+    case $tty in '' | '?' | '??') return 0 ;; esac
+    args=$("$ps_cmd" -ww -o args= -p "$pid")
     [ -n "$args" ] || return 0
 
-    kept=$(keep_flags "$args")
+    kept=$(kept_words "$args")
     set -f
     # shellcheck disable=SC2086 # the flags are already words from ps.
-    program-resume-report "$pid" "/dev/$tty" agy $kept \
-        --conversation "$conversation"
+    program-resume-report "$pid" "/dev/$tty" antigravity \
+        --conversation "$conversation" $kept
 }
 
-report
+report 2>/dev/null
 
 printf '{}\n'
 exit 0

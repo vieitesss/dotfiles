@@ -169,9 +169,10 @@ bind("o", "rex_sessions")
 
 -- Program Resume for agy: a pane whose agy reported its conversation with
 -- OSC 7577 (see antigravity/hooks.json and scripts/agy-resume-hook) reopens
--- on that conversation after the server restarts.
-rex.set("resume.trust.agy", {
-  command = { "agy", "--conversation", rex.match.uuid },
+-- on that conversation after the server restarts. The program is antigravity,
+-- the binary agy wraps, because that is the process Rex finds.
+rex.set("resume.trust.antigravity", {
+  command = { "antigravity", "--conversation", rex.match.uuid },
   flags = {
     ["--model"] = { "keep", values = 1 },
     ["--effort"] = { "keep", values = 1 },

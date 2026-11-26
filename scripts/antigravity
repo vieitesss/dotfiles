@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# antigravity, by the name Rex knows it by. agy is a wrapper that execs
+# antigravity, so a pane running agy has an antigravity process behind it and
+# Rex accepts a resume record only when the command names that process (see
+# scripts/agy-resume-hook and rex/init.lua). This starts agy again from there.
+
+exec agy "$@"
