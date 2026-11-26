@@ -25,6 +25,18 @@ function formatCwd(cwd: string): string {
   return inHome ? (rel === "" ? "~" : `~${pathSep}${rel}`) : resolvedCwd;
 }
 
+function sanitizeStatusText(text: string): string {
+  return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+}
+
+const BG_STATUS_KEY = "background-tasks";
+
+// pi-background-tasks only exposes a formatted status string (e.g. " bg 2 running · Shift↓ ").
+function runningBackgroundTasks(statuses: ReadonlyMap<string, string>): number {
+  const text = statuses.get(BG_STATUS_KEY)?.replace(/\x1b\[[0-9;]*m/g, "") ?? "";
+  return Number(/(\d+) running/.exec(text)?.[1] ?? 0);
+}
+
 function sessionUsdCost(entries: SessionEntry[]): number {
   let cost = 0;
   for (const entry of entries) {
@@ -64,7 +76,7 @@ export default function (pi: ExtensionAPI) {
     model = ctx.model ?? model;
     thinking = pi.getThinkingLevel();
 
-    ctx.ui.setFooter((_tui, theme): Component => ({
+    ctx.ui.setFooter((_tui, theme, footerData): Component => ({
       render(width: number): string[] {
         const cwd = formatCwd(ctx.cwd);
         const branchName = gitBranch(ctx.cwd);
@@ -74,10 +86,12 @@ export default function (pi: ExtensionAPI) {
         const amount = formatTokens(usage?.tokens);
         const percent = usage?.percent == null ? "?" : `${usage.percent.toFixed(1)}%`;
         const cost = formatUsd(sessionUsdCost(ctx.sessionManager.getEntries()));
+        const bgRunning = runningBackgroundTasks(footerData.getExtensionStatuses());
         const left = [
           theme.fg("mdHeading", amount),
           theme.fg("dim", percent),
           theme.fg("dim", cost),
+          ...(bgRunning > 0 ? [theme.fg("accent", `⚙ ${bgRunning} bg`)] : []),
         ].join(` ${theme.fg("dim", sep)} `);
 
         const modelName = model?.id ?? "no-model";
@@ -113,7 +127,14 @@ export default function (pi: ExtensionAPI) {
           line = truncateToWidth(`${left} ${theme.fg("dim", "")} ${middle} ${right}`, width, "…");
         }
 
-        return [line];
+        const statuses = Array.from(footerData.getExtensionStatuses().entries())
+          .filter(([key]) => key !== BG_STATUS_KEY)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([, text]) => sanitizeStatusText(text))
+          .filter(Boolean);
+        if (statuses.length === 0) return [line];
+
+        return [line, truncateToWidth(statuses.join(" "), width, theme.fg("dim", "..."))];
       },
       invalidate() {},
     }));
