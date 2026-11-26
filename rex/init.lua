@@ -167,23 +167,57 @@ bind("a", "nexo_agents")
 require("sessions")
 bind("o", "rex_sessions")
 
+-- Resume pi panes on the session file they have open after the server
+-- restarts. pi/agent/extensions/program-resume.ts reports the command; this
+-- rule is what lets Rex trust it. The kept flags are the ones that shape the
+-- run; every flag that picks a session or adds a prompt is dropped.
+rex.set("resume.trust.pi", {
+	command = { "pi", "--session", rex.match.under(os.getenv("HOME") .. "/.pi/agent/sessions") },
+	flags = {
+		["--provider"] = { "keep", values = 1 },
+		["--model"] = { "keep", values = 1 },
+		["--models"] = { "keep", values = 1 },
+		["--thinking"] = { "keep", values = 1 },
+		["--tools"] = { "keep", values = 1 },
+		["-t"] = { "keep", values = 1 },
+		["--exclude-tools"] = { "keep", values = 1 },
+		["-xt"] = { "keep", values = 1 },
+		["--no-tools"] = "keep",
+		["-nt"] = "keep",
+		["--no-builtin-tools"] = "keep",
+		["-nbt"] = "keep",
+		["--extension"] = { "keep", values = 1 },
+		["-e"] = { "keep", values = 1 },
+		["--no-extensions"] = "keep",
+		["-ne"] = "keep",
+		["--system-prompt"] = { "keep", values = 1 },
+		["--append-system-prompt"] = { "keep", values = 1 },
+		["--skill"] = { "keep", values = 1 },
+		["--prompt-template"] = { "keep", values = 1 },
+		["--theme"] = { "keep", values = 1 },
+		["--use-theme"] = { "keep", values = 1 },
+		["--tui-mode"] = { "keep", values = 1 },
+		["--no-skills"] = "keep",
+		["-ns"] = "keep",
+		["--no-prompt-templates"] = "keep",
+		["-np"] = "keep",
+		["--no-themes"] = "keep",
+		["--no-context-files"] = "keep",
+		["-nc"] = "keep",
+		["--no-mcp"] = "keep",
+		["--approve"] = "keep",
+		["-a"] = "keep",
+		["--no-approve"] = "keep",
+		["-na"] = "keep",
+		["--offline"] = "keep",
+	},
+})
+
 -- Keep last_session_watch.lua running, to record each session the app shows.
 -- It starts on every load of this file, and a new one makes the old one stop.
 -- The server's PATH has no rex: see the rexai binding above.
 rex.exec.start({ "/bin/sh", "-c",
   'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/last_session_watch.lua"' }, {
-  detach = true,
-  stdout = false,
-  stderr = false,
-  env = {
-    PATH = "/Users/vieitesprefapp/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/usr/bin:/bin:/usr/sbin:/sbin",
-  },
-})
-
--- Keep snapshot.lua running, to resume each pane's program after the server
--- restarts. Same launch as last_session_watch.lua above.
-rex.exec.start({ "/bin/sh", "-c",
-  'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/snapshot.lua"' }, {
   detach = true,
   stdout = false,
   stderr = false,

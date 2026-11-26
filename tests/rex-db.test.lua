@@ -139,6 +139,8 @@ local function route(name, pressed_server, current_id, mac_state, rpi_state, wan
   end
   local fake = {
     action = function(action) actions[action.name] = action.run end,
+    set = function() end,
+    match = { under = function(dir) return { under = dir } end },
     exec = { start = function() end },
     bind = function(key, action) bindings[key] = action end,
     servers = function() return { "rpi" } end,
