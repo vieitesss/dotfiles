@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "1.6.0",
+  "lastChangelogVersion": "1.6.1",
   "hideThinkingBlock": true,
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5-5",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
   "defaultThinkingLevel": "max",
   "packages": [
     "git:github.com/vieitesss/pi-theme-gruber-darker",
@@ -28,7 +28,6 @@
   "enableInstallTelemetry": false,
   "quietStartup": false,
   "collapseChangelog": true,
-  "showCacheMissNotices": true,
   "markdown": {
     "mermaid": "streaming"
   },
@@ -53,6 +52,15 @@
       "opencode-go/muse-spark-1.3-contributor": {
         "reserveTokens": 898576
       },
+      "opencode-go/gemini-4-argon": {
+        "reserveTokens": 898576
+      },
+      "opencode/gemini-4-argon": {
+        "reserveTokens": 898576
+      },
+      "github-copilot/gemini-4-argon": {
+        "reserveTokens": 898576
+      },
       "opencode-go/deepseek-v4.1-flash": {
         "reserveTokens": 850000
       }
@@ -64,5 +72,11 @@
   "showHardwareCursor": true,
   "warnings": {
     "anthropicExtraUsage": false
+  },
+  "notices": {
+    "cacheMisses": true,
+    "cacheWarming": true,
+    "compactionCosts": true,
+    "reasoningDrops": true
   }
 }
