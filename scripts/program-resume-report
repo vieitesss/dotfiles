@@ -1,0 +1,49 @@
+#!/bin/sh
+
+# Tell a Rex terminal how to start a program again after the server restarts,
+# with an OSC 7577 Program Resume report:
+#
+#   ESC ] 7577 ; pid=<pid>:time=<secs>:argv=<b64>,...:mac=<hex> ESC \
+#
+# Each argv element is the standard base64 of its UTF-8, the program first as
+# a bare name. mac is the lowercase hex SHA-256 of everything before ":mac=",
+# then ":", then the token the terminal passes in OSC7577_TOKEN. The token
+# reaches the hash on stdin, never on a command line, and is never printed.
+#
+# Usage: program-resume-report PID TTY ARG...
+#
+# TTY is the device path, such as /dev/ttys019: hooks run without a
+# controlling terminal, so the caller names it.
+
+set -eu
+
+token=${OSC7577_TOKEN:-}
+if [ -z "$token" ]; then exit 0; fi
+
+if [ "$#" -lt 3 ]; then
+    printf 'usage: %s PID TTY ARG...\n' "$0" >&2
+    exit 2
+fi
+
+pid=$1
+tty=$2
+shift 2
+
+sha256() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 | cut -d' ' -f1
+    else
+        sha256sum | cut -d' ' -f1
+    fi
+}
+
+argv=
+for arg in "$@"; do
+    encoded=$(printf '%s' "$arg" | base64 | tr -d '\n')
+    argv=${argv:+$argv,}$encoded
+done
+
+body="pid=$pid:time=$(date +%s):argv=$argv"
+mac=$(printf '%s' "$body:$token" | sha256)
+
+printf '\033]7577;%s:mac=%s\033\134' "$body" "$mac" >"$tty"
