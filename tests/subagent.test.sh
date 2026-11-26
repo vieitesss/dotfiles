@@ -472,7 +472,7 @@ expect_contains 'build'
 expect_contains 'harness pi'
 expect_contains 'harness agy'
 expect_contains 'model gemini-4-neon-medium'
-expect_contains 'build                    harness agy        model gemini-4-neon-low                    effort low'
+expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
 expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
 expect_contains 'model opencode-go/muse-spark-1.3-contributor'
@@ -499,24 +499,25 @@ BRIEF
 expect_status 0
 # The tag embeds the launcher's pid, so match around it.
 checks=$((checks + 1))
-case "$(cat "$fixture_agy_prompt" 2>/dev/null)" in
+case "$(cat "$fixture_prompt" 2>/dev/null)" in
     *"[subagent-build-"*" · widget · build]"*) ;;
     *) fail "the prompt does not carry [subagent-build-<pid> · widget · build]:
-$(cat "$fixture_agy_prompt" 2>/dev/null)" ;;
+$(cat "$fixture_prompt" 2>/dev/null)" ;;
 esac
-expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
+expect_pi_option --model opencode-go/deepseek-v4.1-flash
+expect_pi_option --thinking high
+expect_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
 # shellcheck disable=SC2016 # literal $RECADO_MANAGER in the prompt text.
-expect_agy_prompt_contains 'Report through recado to recado://local/manager (`$RECADO_MANAGER` in your environment).'
+expect_prompt_contains 'Report through recado to recado://local/manager (`$RECADO_MANAGER` in your environment).'
 # shellcheck disable=SC2016
-expect_agy_prompt_contains 'recado send "$RECADO_MANAGER" --kind complete'
+expect_prompt_contains 'recado send "$RECADO_MANAGER" --kind complete'
 # shellcheck disable=SC2016
-expect_agy_prompt_contains 'recado ask "$RECADO_MANAGER"'
-expect_agy_prompt_contains "Add the widget."
-expect_agy_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
-expect_agy_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
-expect_agy_prompt_contains 'The brief is your approved plan.'
-expect_agy_prompt_contains 'commit your work on the branch'
-expect_agy_env RECADO_MANAGER 'recado://local/manager'
+expect_prompt_contains 'recado ask "$RECADO_MANAGER"'
+expect_prompt_contains "Add the widget."
+expect_prompt_contains 'Use the read and edit tools for files (not python heredocs or bash cat).'
+expect_prompt_contains 'in codemode, summarize or filter in JS so each call returns under ~10 KB (matching lines or <=80-line slices, never raw multi-file dumps).'
+expect_prompt_contains 'The brief is your approved plan.'
+expect_prompt_contains 'commit your work on the branch'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build.md\""
 expect_contains '"window":"win-1"'
 expect_contains '"block":"blk-1"'
@@ -571,12 +572,12 @@ run_subagent launch --stage build --item widget <<'BRIEF'
 Add the widget.
 BRIEF
 expect_status 0
-expect_agy_prompt_contains 'tdd/SKILL.md'
-expect_agy_prompt_contains 'coding/SKILL.md'
-expect_file_not_contains "$fixture_agy_prompt" "agy prompt" 'principles/SKILL.md'
-expect_agy_prompt_contains 'run lint, typecheck, and tests scoped to what you touched'
-expect_agy_prompt_contains 'commit a failing regression test before the fix'
-expect_agy_prompt_contains 'finish once the scoped automated gates are green and report the exact gate commands and outputs'
+expect_prompt_contains 'tdd/SKILL.md'
+expect_prompt_contains 'coding/SKILL.md'
+expect_file_not_contains "$fixture_prompt" "prompt file" 'principles/SKILL.md'
+expect_prompt_contains 'run lint, typecheck, and tests scoped to what you touched'
+expect_prompt_contains 'commit a failing regression test before the fix'
+expect_prompt_contains 'finish once the scoped automated gates are green and report the exact gate commands and outputs'
 
 rm -f "$fixture_prompt"
 run_subagent launch --stage refine --item widget <<'BRIEF'
@@ -592,12 +593,12 @@ BRIEF
 expect_status 0
 expect_agy_prompt_contains 'unslop/SKILL.md'
 
-rm -f "$fixture_agy_prompt"
+rm -f "$fixture_prompt"
 run_subagent launch --stage research --item widget <<'BRIEF'
 Find out how the widget is built.
 BRIEF
 expect_status 0
-expect_agy_prompt_contains 'why/SKILL.md'
+expect_prompt_contains 'why/SKILL.md'
 
 rm -rf "$fixture_tmp"
 
@@ -883,7 +884,7 @@ Second round.
 BRIEF
 expect_status 0
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/widget-build-r2.md\""
-expect_agy_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
+expect_prompt_contains "$fixture_repo/.agents/reports/widget-build-r2.md"
 
 : > "$fixture_repo/.agents/reports/widget-build-r2.md"
 run_subagent launch --stage build --item widget <<'BRIEF'

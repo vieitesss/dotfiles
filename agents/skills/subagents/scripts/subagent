@@ -170,9 +170,9 @@ model_value_known() { # model_value_known TEXT: non-empty, no whitespace
 load_profile() { # load_profile ROLE: set profile_harness, profile_model, profile_effort
     case $1 in
         builder)
-            profile_harness=agy
-            profile_model=gemini-4-neon-low
-            profile_effort=low
+            profile_harness=pi
+            profile_model=opencode-go/deepseek-v4.1-flash
+            profile_effort=high
             ;;
         writer)
             profile_harness=agy
