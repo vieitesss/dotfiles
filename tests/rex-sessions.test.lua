@@ -123,8 +123,14 @@ local function run(options)
     actions[definition.name] = definition.run
   end
 
+  local fake_os = setmetatable({
+    getenv = function(key)
+      if key == "REX_SERVER" then return "unix:///fake/server.sock" end
+      return os.getenv(key)
+    end,
+  }, { __index = os })
   local chunk = assert(loadfile(os.getenv("REX_CONFIG_DIR") .. "/sessions.lua"))
-  setfenv(chunk, setmetatable({ rex = fake }, { __index = _G }))
+  setfenv(chunk, setmetatable({ rex = fake, os = fake_os }, { __index = _G }))
   chunk()
   check("loading does not prompt", result.prompt, nil)
   local name = options.action or "rex_sessions"
@@ -205,9 +211,11 @@ check("sessions before projects", remote.prompt.items[2].id, "rpi:session:remote
 check("remote home omitted from title", find(remote.prompt.items, "rpi:path:/home/pi/project").title, "project")
 
 local from_rpi = run{ server = "rpi", alias = true }
+check("remote current host succeeds", from_rpi.ok, true)
 check("remote current host first", from_rpi.prompt.items[1].detail, "rpi")
 check("other hosts follow", from_rpi.prompt.items[3].detail, "mac")
 local from_alias = run{ server = "alias", alias = true }
+check("alias context succeeds", from_alias.ok, true)
 check("alias context resolves to its host", from_alias.prompt.items[1].detail, "rpi")
 
 local unreachable = run{ remote = true, unreachable = true }
