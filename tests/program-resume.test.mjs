@@ -1,26 +1,34 @@
 // Test for pi/agent/extensions/program-resume.ts. Run: node --test tests/program-resume.test.mjs
 //
 // Covers the part that touches no terminal: the report it writes to stdout,
-// the argument list it reopens pi with, the token it keeps across reloads,
-// when it reports, and the Rex rule it has to agree with. Both report vectors
-// are the ones the protocol spec (rev 0.5) spells out with the token below.
+// the command it reopens pi with, the token it keeps across reloads, when it
+// reports, and the Rex rule it has to agree with. Both report vectors are the
+// ones the protocol spec (rev 0.5) spells out with the token below.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-	droppedFlags,
-	keptFlags,
 	mac,
 	makeReporter,
 	report,
-	resumeArgv,
+	resumeCommand,
 	takeToken,
 } from "../pi/agent/extensions/program-resume.ts";
 
 const token = "dummy-token-replace-me";
 const sessionFile = "/home/user/.pi/agent/sessions/session.jsonl";
+
+/** The argv a report asks Rex to reopen, decoded out of the report itself. */
+function reportedArgv(osc) {
+	const body = osc.slice("\x1b]7577;".length, -"\x1b\\".length);
+	const field = body.split(":").find((entry) => entry.startsWith("argv="));
+	return field
+		.slice("argv=".length)
+		.split(",")
+		.map((element) => Buffer.from(element, "base64").toString("utf8"));
+}
 
 test("reports the Neovim example of the spec byte for byte", () => {
 	assert.equal(
@@ -41,77 +49,35 @@ test("signs the clear example of the spec", () => {
 	);
 });
 
-test("reopens on the session file, keeping only the flags that shape the run", () => {
-	assert.deepEqual(
-		resumeArgv(
-			["--model", "anthropic/opus", "-c", "--session", "/old.jsonl", "-t", "read,grep", "--plan", "--", "fix the bug"],
-			sessionFile,
-		),
-		["pi", "--session", sessionFile, "--model", "anthropic/opus", "-t", "read,grep"],
-	);
+test("reopens pi on the session file, with no flag at all", () => {
+	assert.deepEqual(resumeCommand(sessionFile), ["pi", "--session", sessionFile]);
 });
 
-test("keeps the other run-shaping flags, and never a secret or the output mode", () => {
-	assert.deepEqual(
-		resumeArgv(
-			[
-				"--api-key",
-				"sk-secret",
-				"--skill",
-				"/skills/one",
-				"--offline",
-				"-e",
-				"/extensions/one.ts",
-				"-e",
-				"/extensions/two.ts",
-				"--session",
-				"/old.jsonl",
-				"--mode",
-				"json",
-			],
-			"/sessions/new.jsonl",
-		),
-		[
-			"pi",
-			"--session",
-			"/sessions/new.jsonl",
-			"--skill",
-			"/skills/one",
-			"--offline",
-			"-e",
-			"/extensions/one.ts",
-			"-e",
-			"/extensions/two.ts",
-		],
-	);
-});
-
-test("drops every session-picking and naming flag, and the values they take", () => {
-	for (const argv of [
-		["-c"],
-		["--continue"],
-		["-r"],
-		["--resume"],
-		["--session", "/old.jsonl"],
-		["--session-id", "0190a1b2"],
-		["--fork", "/forked.jsonl"],
-		["-n", "a name"],
-		["--name", "a name"],
-	]) {
-		assert.deepEqual(resumeArgv([...argv, "--verbose"], sessionFile), ["pi", "--session", sessionFile, "--verbose"], argv.join(" "));
+test("reports pi --session <file> whatever process.argv holds", () => {
+	const written = [];
+	const saved = process.argv;
+	const reporter = makeReporter({
+		token,
+		pid: 74877,
+		now: () => 1795543200000,
+		exists: () => true,
+		write: (text) => written.push(text),
+	});
+	try {
+		// The regression: a flag reported here can never match the flags Rex
+		// reads back from the OS, because pi sets process.title.
+		process.argv = ["node", "/usr/local/bin/pi", "--model", "anthropic/opus", "--verbose"];
+		reporter(sessionFile);
+		process.argv = ["node", "/usr/local/bin/pi", "-e", "/extensions/one.ts", "--no-tools"];
+		reporter("/sessions/second.jsonl");
+	} finally {
+		process.argv = saved;
 	}
-});
 
-test("never keeps a value on a flag that takes none", () => {
-	assert.deepEqual(
-		resumeArgv(["--offline=1", "--verbose=1", "--model=anthropic/opus"], sessionFile),
-		["pi", "--session", sessionFile, "--model=anthropic/opus"],
-	);
-});
-
-test("keeps --verbose, which takes no value", () => {
-	assert.equal(keptFlags.get("--verbose"), 0);
-	assert.deepEqual(resumeArgv(["--verbose"], sessionFile), ["pi", "--session", sessionFile, "--verbose"]);
+	assert.deepEqual(written.map(reportedArgv), [
+		["pi", "--session", sessionFile],
+		["pi", "--session", "/sessions/second.jsonl"],
+	]);
 });
 
 test("reports the token once per process, and takes it out of the environment", () => {
@@ -136,7 +102,6 @@ test("waits for the session file, and reports each one once", () => {
 	const files = [];
 	const reporter = makeReporter({
 		token,
-		argv: ["--model", "anthropic/opus"],
 		pid: 74877,
 		now: () => 1795543200000,
 		exists: (path) => onDisk.has(path),
@@ -151,7 +116,7 @@ test("waits for the session file, and reports each one once", () => {
 	onDisk.add(sessionFile);
 	reporter(sessionFile);
 	assert.deepEqual(written, [
-		report({ pid: 74877, time: 1795543200, token, argv: ["pi", "--session", sessionFile, "--model", "anthropic/opus"] }),
+		report({ pid: 74877, time: 1795543200, token, argv: ["pi", "--session", sessionFile] }),
 	]);
 
 	reporter(sessionFile);
@@ -164,23 +129,22 @@ test("waits for the session file, and reports each one once", () => {
 	onDisk.add(files[0]);
 	reporter(files[0]);
 	assert.equal(written.length, 2);
-	assert.match(written[1], /argv=cGk=,LS1zZXNzaW9u,L3Nlc3Npb25zL3NlY29uZC5qc29ubA==,/);
+	assert.match(written[1], /argv=cGk=,LS1zZXNzaW9u,L3Nlc3Npb25zL3NlY29uZC5qc29ubA==:mac=/);
 });
 
-test("the Rex rule lists the same flags, with the same values, as the reporter", () => {
+test("the Rex rule trusts the session file and lists no flags", () => {
 	const source = readFileSync(new URL("../rex/init.lua", import.meta.url), "utf8");
 	const start = source.indexOf('rex.set("resume.trust.pi"');
 	assert.notEqual(start, -1, "rex/init.lua has the resume.trust.pi rule");
 	const block = source.slice(start, source.indexOf("\n})\n", start));
 
-	const rule = new Map();
-	const entry = /\["([^"]+)"\]\s*=\s*(?:"(keep|drop)"|\{\s*"(keep|drop)",\s*values\s*=\s*(\d+)\s*\})/g;
-	for (const [, name, bareKind, kind, values] of block.matchAll(entry)) {
-		rule.set(name, { kind: bareKind ?? kind, values: values === undefined ? 0 : Number(values) });
-	}
-
-	const reported = new Map();
-	for (const [name, values] of keptFlags) reported.set(name, { kind: "keep", values });
-	for (const [name, values] of droppedFlags) reported.set(name, { kind: "drop", values });
-	assert.deepEqual(Object.fromEntries(rule), Object.fromEntries(reported));
+	assert.match(
+		block,
+		/command = \{ "pi", "--session", rex\.match\.under\(os\.getenv\("HOME"\) \.\. "\/\.pi\/agent\/sessions"\) \}/,
+	);
+	assert.equal(
+		/\["--[^"]*"\]|\["-[^"]"\]/.test(block),
+		false,
+		"the rule lists no flags: pi's process.title makes every reported flag differ",
+	);
 });
