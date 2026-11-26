@@ -4,6 +4,7 @@
  * the report through the resume.trust.pi rule in rex/init.lua.
  */
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -12,7 +13,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
  * those that carry a secret or change the output mode, and those not named
  * here.
  */
-const keptFlags = new Map<string, number>([
+export const keptFlags = new Map<string, number>([
 	["--provider", 1],
 	["--model", 1],
 	["--models", 1],
@@ -49,7 +50,29 @@ const keptFlags = new Map<string, number>([
 	["--no-approve", 0],
 	["-na", 0],
 	["--offline", 0],
+	["--verbose", 0],
 ]);
+
+/**
+ * Flags that pick a session or name it, with the number of values each one
+ * takes. The resumed run already has its session file, so they are dropped
+ * without dropping the run: Rex rejects a program started with a flag the
+ * rule does not list.
+ */
+export const droppedFlags = new Map<string, number>([
+	["-c", 0],
+	["--continue", 0],
+	["-r", 0],
+	["--resume", 0],
+	["--session", 1],
+	["--session-id", 1],
+	["--fork", 1],
+	["-n", 1],
+	["--name", 1],
+]);
+
+/** Where the token waits for the next reload of this extension. */
+const tokenKey = Symbol.for("pi.program-resume.token");
 
 /** sha256 of the body and the token, as the protocol's mac. */
 export function mac(body: string, token: string): string {
@@ -69,6 +92,27 @@ export function report(options: {
 	return `\x1b]7577;${body}:mac=${mac(body, token)}\x1b\\`;
 }
 
+/**
+ * Takes the token out of env, so the programs pi starts cannot report in this
+ * process's place, and keeps it in store: /new, /resume, /fork and /reload
+ * load this file again in this process, and only a process-wide store
+ * survives that.
+ */
+export function takeToken(
+	env: Record<string, string | undefined>,
+	holder: object,
+): string | undefined {
+	const store = holder as Record<PropertyKey, unknown>;
+	const token = env.OSC7577_TOKEN;
+	delete env.OSC7577_TOKEN;
+	if (token) {
+		store[tokenKey] = token;
+		return token;
+	}
+	const held = store[tokenKey];
+	return typeof held === "string" && held !== "" ? held : undefined;
+}
+
 /** The command that reopens pi on sessionFile, from this process's arguments. */
 export function resumeArgv(argv: string[], sessionFile: string): string[] {
 	const kept: string[] = [];
@@ -76,13 +120,19 @@ export function resumeArgv(argv: string[], sessionFile: string): string[] {
 		const arg = argv[i];
 		if (arg === "--") break;
 		if (!arg.startsWith("-")) continue;
-		const [name, inline] = arg.startsWith("--") && arg.includes("=")
-			? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
-			: [arg, undefined];
+		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		const name = equals === -1 ? arg : arg.slice(0, equals);
+		const inline = equals === -1 ? undefined : arg.slice(equals + 1);
+		const dropped = droppedFlags.get(name);
+		if (dropped !== undefined) {
+			i += dropped;
+			continue;
+		}
 		const values = keptFlags.get(name);
 		if (values === undefined) continue;
 		if (inline !== undefined) {
-			kept.push(arg);
+			// pi reads --flag=value only for flags that take a value.
+			if (values > 0) kept.push(arg);
 			continue;
 		}
 		kept.push(arg);
@@ -90,34 +140,56 @@ export function resumeArgv(argv: string[], sessionFile: string): string[] {
 			kept.push(argv[++i]);
 		}
 	}
-	return ["pi", ...kept, "--session", sessionFile];
+	return ["pi", "--session", sessionFile, ...kept];
 }
 
-export default function (pi: ExtensionAPI) {
-	// Read the token once and take it out of the environment, so the programs pi
-	// starts cannot report in this process's place.
-	const token = process.env.OSC7577_TOKEN;
-	delete process.env.OSC7577_TOKEN;
-	if (!token) return;
-
-	// A new session has no file until its first message is written, so this
-	// reports once the file exists and again whenever the process switches to
-	// another one. Rex drops the record when the process exits.
+/**
+ * Reports each session file once, and only once it exists: a new session has
+ * a path but no file until its first message is written.
+ */
+export function makeReporter(options: {
+	token: string;
+	argv: string[];
+	pid?: number;
+	now?: () => number;
+	exists?: (path: string) => boolean;
+	write?: (text: string) => void;
+}): (sessionFile: string | undefined) => void {
+	const {
+		token,
+		argv,
+		pid = process.pid,
+		now = Date.now,
+		exists = existsSync,
+		write = (text: string) => process.stdout.write(text),
+	} = options;
 	let reported: string | undefined;
-
-	const reportCurrent = (ctx: ExtensionContext) => {
-		if (ctx.mode !== "tui") return;
-		const sessionFile = ctx.sessionManager.getSessionFile();
+	return (sessionFile) => {
 		if (!sessionFile || sessionFile === reported) return;
-		process.stdout.write(
+		if (!exists(sessionFile)) return;
+		write(
 			report({
-				pid: process.pid,
-				time: Math.floor(Date.now() / 1000),
+				pid,
+				time: Math.floor(now() / 1000),
 				token,
-				argv: resumeArgv(process.argv.slice(2), sessionFile),
+				argv: resumeArgv(argv, sessionFile),
 			}),
 		);
 		reported = sessionFile;
+	};
+}
+
+export default function (pi: ExtensionAPI) {
+	const token = takeToken(process.env, globalThis);
+	if (!token) return;
+
+	// Rex drops the record when the process exits, so this reports once per
+	// session file the process opens.
+	const reportSession = makeReporter({ token, argv: process.argv.slice(2) });
+
+	const reportCurrent = (ctx: ExtensionContext) => {
+		if (ctx.mode !== "tui") return;
+		reportSession(ctx.sessionManager.getSessionFile());
 	};
 
 	pi.on("session_start", (_event, ctx) => reportCurrent(ctx));

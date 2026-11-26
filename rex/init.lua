@@ -210,6 +210,18 @@ rex.set("resume.trust.pi", {
 		["--no-approve"] = "keep",
 		["-na"] = "keep",
 		["--offline"] = "keep",
+		["--verbose"] = "keep",
+		-- Session-picking and naming flags: the resumed run already has its
+		-- session file, so a pane started with one of these is still resumed.
+		["-c"] = "drop",
+		["--continue"] = "drop",
+		["-r"] = "drop",
+		["--resume"] = "drop",
+		["--session"] = { "drop", values = 1 },
+		["--session-id"] = { "drop", values = 1 },
+		["--fork"] = { "drop", values = 1 },
+		["-n"] = { "drop", values = 1 },
+		["--name"] = { "drop", values = 1 },
 	},
 })
 
