@@ -194,23 +194,20 @@ rex.set("resume.trust.antigravity", {
   },
 })
 
+-- Program Resume for pi: a pane whose pi reported its session file with
+-- OSC 7577 (pi/agent/extensions/program-resume.ts) reopens on that file after
+-- the server restarts. There are no kept flags on purpose: pi sets
+-- process.title, which wipes its flags from the OS argv Rex reads, so a
+-- reported flag can never match and every pane would fail with flags_differ.
+rex.set("resume.trust.pi", {
+  command = { "pi", "--session", rex.match.under(os.getenv("HOME") .. "/.pi/agent/sessions") },
+})
+
 -- Keep last_session_watch.lua running, to record each session the app shows.
 -- It starts on every load of this file, and a new one makes the old one stop.
 -- The server's PATH has no rex: see the rexai binding above.
 rex.exec.start({ "/bin/sh", "-c",
   'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/last_session_watch.lua"' }, {
-  detach = true,
-  stdout = false,
-  stderr = false,
-  env = {
-    PATH = "/Users/vieitesprefapp/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/usr/bin:/bin:/usr/sbin:/sbin",
-  },
-})
-
--- Keep snapshot.lua running, to resume each pane's program after the server
--- restarts. Same launch as last_session_watch.lua above.
-rex.exec.start({ "/bin/sh", "-c",
-  'exec "${REX_BIN_DIR:+$REX_BIN_DIR/}rex" do --all "${XDG_CONFIG_HOME:-$HOME/.config}/rex/snapshot.lua"' }, {
   detach = true,
   stdout = false,
   stderr = false,
