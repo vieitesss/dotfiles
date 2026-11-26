@@ -18,5 +18,13 @@
         "command": "recado hook agy turn-end --hold"
       }
     ]
+  },
+  "rex-resume": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "agy-resume-hook"
+      }
+    ]
   }
 }

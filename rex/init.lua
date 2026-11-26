@@ -167,6 +167,32 @@ bind("a", "nexo_agents")
 require("sessions")
 bind("o", "rex_sessions")
 
+-- Program Resume for agy: a pane whose agy reported its conversation with
+-- OSC 7577 (see antigravity/hooks.json and scripts/agy-resume-hook) reopens
+-- on that conversation after the server restarts.
+rex.set("resume.trust.agy", {
+  command = { "agy", "--conversation", rex.match.uuid },
+  flags = {
+    ["--model"] = { "keep", values = 1 },
+    ["--effort"] = { "keep", values = 1 },
+    ["--mode"] = { "keep", values = 1 },
+    ["--agent"] = { "keep", values = 1 },
+    ["--project"] = { "keep", values = 1 },
+    ["--add-dir"] = { "keep", values = 1 },
+    ["--settings"] = { "keep", values = 1 },
+    ["--log-file"] = { "keep", values = 1 },
+    ["--dangerously-skip-permissions"] = "keep",
+    ["--sandbox"] = "keep",
+    ["--new-project"] = "keep",
+    ["--remote-agent"] = "keep",
+    ["-c"] = "drop",
+    ["--continue"] = "drop",
+    ["--conversation"] = { "drop", values = 1 },
+    ["-i"] = { "drop", values = 1 },
+    ["--prompt-interactive"] = { "drop", values = 1 },
+  },
+})
+
 -- Keep last_session_watch.lua running, to record each session the app shows.
 -- It starts on every load of this file, and a new one makes the old one stop.
 -- The server's PATH has no rex: see the rexai binding above.

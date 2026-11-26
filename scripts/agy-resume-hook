@@ -1,0 +1,86 @@
+#!/bin/sh
+
+# agy SessionStart hook: tell Rex how to reopen this conversation after the
+# server restarts. agy hands the hook a JSON object on stdin, whose
+# conversationId names the conversation the pane has open. Rex wants the
+# program's pid, tty and command line, and the hook has neither the terminal
+# nor the command line, so it walks the parent processes from itself to the
+# antigravity process behind it, then reports through program-resume-report
+# (OSC 7577).
+#
+# Hooks must answer "{}" and succeed whatever happens.
+#
+# AGY_RESUME_PS names another program to answer the ps queries, for tests.
+
+set -u
+
+ps_cmd=${AGY_RESUME_PS:-ps}
+
+# The flags that pick a conversation, and how many values each takes.
+# The rest of the command line is kept as it was.
+#
+# ps joins the arguments with spaces, so an argument that holds one comes
+# back split. Rex then marks the record untrusted and asks, rather than
+# running something else.
+keep_flags() {
+    set -f
+    kept=
+    # shellcheck disable=SC2086 # ps gives one flat command line, not words.
+    set -- $1
+    if [ "$#" -gt 0 ]; then shift; fi
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            -c | --continue | --continue=*) shift ;;
+            -i | --prompt-interactive | --conversation)
+                shift
+                if [ "$#" -gt 0 ]; then shift; fi
+                ;;
+            --prompt-interactive=* | --conversation=*) shift ;;
+            *)
+                kept="$kept $1"
+                shift
+                ;;
+        esac
+    done
+    printf '%s' "$kept"
+}
+
+# The pid of the antigravity process this hook runs under.
+antigravity_pid() {
+    pid=$$
+    depth=0
+    while [ "$pid" -gt 1 ] && [ "$depth" -lt 64 ]; do
+        line=$("$ps_cmd" -o ppid=,comm= -p "$pid")
+        [ -n "$line" ] || return 1
+        parent=$(printf '%s\n' "$line" | awk '{print $1}')
+        comm=$(printf '%s\n' "$line" | awk '{print $NF}')
+        case $parent in '' | *[!0-9]*) return 1 ;; esac
+        case ${comm##*/} in antigravity) printf '%s\n' "$pid"; return 0 ;; esac
+        depth=$((depth + 1))
+        pid=$parent
+    done
+    return 1
+}
+
+report() {
+    conversation=$(tr '\n\r\t' '   ' |
+        sed -n 's/.*"conversationId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ -n "$conversation" ] || return 0
+
+    pid=$(antigravity_pid) || return 0
+    tty=$("$ps_cmd" -o tty= -p "$pid" | tr -d ' ')
+    case $tty in '' | '??') return 0 ;; esac
+    args=$("$ps_cmd" -o args= -p "$pid")
+    [ -n "$args" ] || return 0
+
+    kept=$(keep_flags "$args")
+    set -f
+    # shellcheck disable=SC2086 # the flags are already words from ps.
+    program-resume-report "$pid" "/dev/$tty" agy $kept \
+        --conversation "$conversation"
+}
+
+report
+
+printf '{}\n'
+exit 0
