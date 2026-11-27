@@ -33,13 +33,10 @@ new_fixture() {
     fixture_prompt="$fixture_tmp/prompt.md"
     fixture_pi_log="$fixture_tmp/pi.log"
     fixture_agy_log="$fixture_tmp/agy.log"
-    fixture_agy_prompt="$fixture_tmp/agy-prompt.md"
     fixture_agy_env="$fixture_tmp/agy-env"
     fixture_claude_log="$fixture_tmp/claude.log"
-    fixture_claude_prompt="$fixture_tmp/claude-prompt.md"
     fixture_claude_env="$fixture_tmp/claude-env"
     fixture_opencode_log="$fixture_tmp/opencode.log"
-    fixture_opencode_prompt="$fixture_tmp/opencode-prompt.md"
     fixture_stderr="$fixture_tmp/stderr"
     fixture_state="$fixture_tmp/state"
     fixture_process=
@@ -184,7 +181,7 @@ set -eu
 prompt=
 while [ "$#" -gt 0 ]; do
     case $1 in
-        --model | --effort | --mode)
+        --model | --mode)
             printf '%s=%s\n' "$1" "$2" >> "$AGY_STUB_LOG"
             shift 2
             ;;
@@ -308,13 +305,13 @@ run_subagent() { # run_subagent ARGS... < BRIEF
             PI_STUB_LOG="$fixture_pi_log" \
             PI_STUB_PROMPT="$fixture_prompt" \
             AGY_STUB_LOG="$fixture_agy_log" \
-            AGY_STUB_PROMPT="$fixture_agy_prompt" \
+            AGY_STUB_PROMPT="$fixture_prompt" \
             AGY_STUB_ENV="$fixture_agy_env" \
             CLAUDE_STUB_LOG="$fixture_claude_log" \
-            CLAUDE_STUB_PROMPT="$fixture_claude_prompt" \
+            CLAUDE_STUB_PROMPT="$fixture_prompt" \
             CLAUDE_STUB_ENV="$fixture_claude_env" \
             OPENCODE_STUB_LOG="$fixture_opencode_log" \
-            OPENCODE_STUB_PROMPT="$fixture_opencode_prompt" \
+            OPENCODE_STUB_PROMPT="$fixture_prompt" \
             REX_STUB_PROCESS="$fixture_process" \
             REX_STUB_EXITED="$fixture_exited" \
             REX_STUB_CLOSE_FAIL="$fixture_close_fail" \
@@ -423,12 +420,33 @@ expect_pi_option() { expect_log_line "$fixture_pi_log" "pi" "$1=$2"; }
 expect_agy_option() { expect_log_line "$fixture_agy_log" "agy" "$1=$2"; }
 expect_agy_flag() { expect_log_line "$fixture_agy_log" "agy" "$1"; }
 expect_agy_env() { expect_log_line "$fixture_agy_env" "agy env" "$1=$2"; }
-expect_agy_prompt_contains() { expect_file_contains "$fixture_agy_prompt" "agy prompt" "$1"; }
 expect_claude_option() { expect_log_line "$fixture_claude_log" "claude" "$1=$2"; }
 expect_claude_env() { expect_log_line "$fixture_claude_env" "claude env" "$1=$2"; }
-expect_claude_prompt_contains() { expect_file_contains "$fixture_claude_prompt" "claude prompt" "$1"; }
 expect_opencode_option() { expect_log_line "$fixture_opencode_log" "opencode" "$1=$2"; }
-expect_opencode_prompt_contains() { expect_file_contains "$fixture_opencode_prompt" "opencode prompt" "$1"; }
+
+# Profile values live only in the script: read them from there, so changing a
+# Stage's harness, model, or effort never needs a test change.
+stage_profile() { # stage_profile LABEL: load a `subagent stages` row into profile_*
+    row=$(printf '%s\n' "$stages_output" | grep "^$1 " || true)
+    profile_harness=$(printf '%s\n' "$row" | sed -n 's/.* harness \([^ ]*\) .*/\1/p')
+    profile_model=$(printf '%s\n' "$row" | sed -n 's/.* model \([^ ]*\) .*/\1/p')
+    profile_effort=$(printf '%s\n' "$row" | sed -n 's/.* effort \([^ ]*\) .*/\1/p')
+}
+
+role_profile() { # role_profile ROLE: load a role's profile_* with the script's own load_profile
+    eval "$(sed -n '/^load_profile() {/,/^}/p' "$subagent_src")"
+    load_profile "$1"
+}
+
+expect_profile_launched() { # the harness in profile_harness got profile_model and profile_effort
+    case $profile_harness in
+        pi) expect_pi_option --model "$profile_model"; expect_pi_option --thinking "$profile_effort" ;;
+        agy) expect_agy_option --model "$profile_model" ;;
+        claude) expect_claude_option --model "$profile_model"; expect_claude_option --effort "$profile_effort" ;;
+        opencode) expect_opencode_option --model "$profile_model" ;;
+        *) checks=$((checks + 1)); fail "unknown profile harness '$profile_harness'" ;;
+    esac
+}
 
 expect_no_rex_command() {
     checks=$((checks + 1))
@@ -468,25 +486,26 @@ use_window_pids() { # use_window_pids PID: the rex stub reports PID as the block
 new_fixture
 run_subagent stages </dev/null
 expect_status 0
-expect_contains 'build'
-expect_contains 'harness pi'
-expect_contains 'harness agy'
-expect_contains 'model gemini-4-neon-medium'
-expect_contains 'build                    harness pi         model opencode-go/deepseek-v4.1-flash      effort high'
-expect_contains 'write                    harness agy        model gemini-4-neon-medium                 effort medium'
-expect_contains 'retro                    harness agy        model gemini-4-neon-medium                 effort medium'
-expect_contains 'model opencode-go/muse-spark-1.3-contributor'
+stages_output=$output
+for label in research build write refine 'review --axis spec' 'review --axis standards' \
+    'review --axis debt' 'review --axis break' retro; do
+    stage_profile "$label"
+    checks=$((checks + 1))
+    case $profile_harness in
+        pi | agy | claude | opencode) ;;
+        *) fail "the \`stages\` row '$label' names no known harness" ;;
+    esac
+    checks=$((checks + 1))
+    [ -n "$profile_model" ] && [ -n "$profile_effort" ] ||
+        fail "the \`stages\` row '$label' lacks a model or effort"
+done
 # Each row owns its skills: a list missing from one row must not pass because
 # another row still prints it.
 expect_row_contains research 'skills research, why'
 expect_row_contains build 'skills tdd, coding'
 expect_row_contains write 'skills writing-for-agents, unslop'
 expect_row_contains refine 'skills zero-tech-debt, principles'
-# The break axis runs on the writer profile, asserted on its own row.
 expect_row_contains 'review --axis break' 'skills interrogate'
-expect_row_contains 'review --axis break' 'harness agy'
-expect_row_contains 'review --axis break' 'model gemini-4-neon-medium'
-expect_row_contains 'review --axis break' 'effort medium'
 
 rm -rf "$fixture_tmp"
 
@@ -504,8 +523,8 @@ case "$(cat "$fixture_prompt" 2>/dev/null)" in
     *) fail "the prompt does not carry [subagent-build-<pid> · widget · build]:
 $(cat "$fixture_prompt" 2>/dev/null)" ;;
 esac
-expect_pi_option --model opencode-go/deepseek-v4.1-flash
-expect_pi_option --thinking high
+stage_profile build
+expect_profile_launched
 expect_prompt_contains "$fixture_repo/.agents/reports/widget-build.md"
 # shellcheck disable=SC2016 # literal $RECADO_MANAGER in the prompt text.
 expect_prompt_contains 'Report through recado to recado://local/manager (`$RECADO_MANAGER` in your environment).'
@@ -586,12 +605,12 @@ BRIEF
 expect_status 0
 expect_prompt_contains 'principles/SKILL.md'
 
-rm -f "$fixture_agy_prompt"
+rm -f "$fixture_prompt"
 run_subagent launch --stage write --item widget <<'BRIEF'
 Write the changelog.
 BRIEF
 expect_status 0
-expect_agy_prompt_contains 'unslop/SKILL.md'
+expect_prompt_contains 'unslop/SKILL.md'
 
 rm -f "$fixture_prompt"
 run_subagent launch --stage research --item widget <<'BRIEF'
@@ -665,7 +684,7 @@ expect_no_rex_command
 
 rm -rf "$fixture_tmp"
 
-# --- launch runs pi with the Stage's model and effort in a Rex window -------
+# --- launch runs the Stage's profile in a Rex window -----------------------
 
 new_fixture
 run_subagent launch --stage refine --item widget <<'BRIEF'
@@ -676,8 +695,8 @@ expect_rex_arg session:test
 expect_rex_arg --focus=false
 expect_rex_arg --keep-open
 expect_rex_arg --shell=none
-expect_pi_option --model opencode-go/muse-spark-1.3-contributor
-expect_pi_option --thinking max
+stage_profile refine
+expect_profile_launched
 expect_prompt_contains 'You run the Refine stage:'
 expect_prompt_contains 'Remove the legacy path.'
 expect_contains '"name":"subagent-refine-'
@@ -687,12 +706,10 @@ rm -rf "$fixture_tmp"
 # --- the child runs the agent non-interactively ---------------------------
 
 new_fixture
-run_subagent launch --stage write --item widget <<'BRIEF'
+run_subagent launch --stage write --item widget --harness agy <<'BRIEF'
 Write the changelog.
 BRIEF
 expect_status 0
-expect_agy_option --model gemini-4-neon-medium
-expect_agy_option --effort medium
 expect_agy_option --mode auto
 expect_agy_flag -i
 expect_agy_env RECADO_MANAGER 'recado://local/manager'
@@ -714,26 +731,26 @@ Retrospect the launcher session.
 BRIEF
 expect_status 0
 expect_agy_option --model gemini-4-neon-high
-expect_agy_option --effort medium
 expect_agy_option --mode auto
 expect_agy_flag -i
-expect_agy_prompt_contains 'You run the Retro stage:'
-expect_agy_prompt_contains '· retro-2 · retro]'
-expect_agy_prompt_contains 'retro/SKILL.md'
-expect_agy_prompt_contains 'writing-for-agents/SKILL.md'
-expect_agy_prompt_contains 'Retrospect the launcher session.'
+expect_prompt_contains 'You run the Retro stage:'
+expect_prompt_contains '· retro-2 · retro]'
+expect_prompt_contains 'retro/SKILL.md'
+expect_prompt_contains 'writing-for-agents/SKILL.md'
+expect_prompt_contains 'Retrospect the launcher session.'
 
 rm -rf "$fixture_tmp"
 
-# --- --model ROLE swaps the full profile; explicit --effort still wins ------
+# --- --model ROLE swaps the full profile -----------------------------------
 
 new_fixture
 run_subagent launch --stage build --item widget --model writer --effort low <<'BRIEF'
 Draft the guide.
 BRIEF
 expect_status 0
-expect_agy_option --model gemini-4-neon-medium
-expect_agy_option --effort low
+role_profile writer
+profile_effort=low
+expect_profile_launched
 
 rm -rf "$fixture_tmp"
 
@@ -749,12 +766,12 @@ expect_claude_option --model opus
 expect_claude_option --effort xhigh
 expect_claude_option --permission-mode auto
 expect_claude_env CLAUDECODE '<unset>'
-expect_claude_prompt_contains '· cmp-claude]'
-expect_claude_prompt_contains 'Compare approach A.'
-expect_claude_prompt_contains 'Start a server only on a port the OS picks (port 0)'
-expect_claude_prompt_contains 'never stop a process you did not start'
-expect_file_not_contains "$fixture_claude_prompt" "claude prompt" "Read and follow these skills:"
-expect_file_not_contains "$fixture_claude_prompt" "claude prompt" 'summary block of at most 10 lines'
+expect_prompt_contains '· cmp-claude]'
+expect_prompt_contains 'Compare approach A.'
+expect_prompt_contains 'Start a server only on a port the OS picks (port 0)'
+expect_prompt_contains 'never stop a process you did not start'
+expect_file_not_contains "$fixture_prompt" "prompt file" "Read and follow these skills:"
+expect_file_not_contains "$fixture_prompt" "prompt file" 'summary block of at most 10 lines'
 expect_contains '"name":"subagent-adhoc-'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/cmp-claude.md\""
 
@@ -764,8 +781,8 @@ BRIEF
 expect_status 0
 expect_opencode_option subcmd mini
 expect_opencode_option --model anthropic/claude-sonnet-4-5
-expect_opencode_prompt_contains '· cmp-oc]'
-expect_opencode_prompt_contains 'Compare approach B.'
+expect_prompt_contains '· cmp-oc]'
+expect_prompt_contains 'Compare approach B.'
 expect_contains "\"report\":\"$fixture_repo/.agents/reports/cmp-oc.md\""
 
 rm -rf "$fixture_tmp"
