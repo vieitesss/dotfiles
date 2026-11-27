@@ -25,7 +25,7 @@ Push every safety fact as far down this ladder as is cheap, and report where it 
 2. **Name the one safety fact.** Identify the single fact the change's safety depends on. If it holds, most downstream risks clear at once; focus legwork here before listing edge cases.
 3. **Trace past grep.** Follow what a symbol search misses: indirect callers, downstream consumers, config and manifests, data or wire formats, pinned library source and local patches, execution order (teardown, async, hooks), and other repos or symlinks that link this one. Cite real `file:line` for every claim; record an empty search explicitly.
 4. **Separate confirmed and cleared risks.** Rate each confirmed risk by real likelihood and impact. List checked areas that hold separately with their proof level.
-5. **Prove the safety fact.** Run real code — a read-only command, test, or minimal script calling the exact implementation — that fails loud if the fact is false, and capture the command and output. Mark the fact `unproven` if you cannot run it, and report the highest level reached.
+5. **Prove the safety fact.** Run real code — a read-only command, test, or minimal script calling the exact implementation — that fails loud if the fact is false, and capture the command and output. Run a probe script from inside the package under test (e.g. `npx tsx probe.ts` in that package's directory) so its imports resolve against the package's own dependencies. Mark the fact `unproven` if you cannot run it, and report the highest level reached.
 
 ## Writeup
 
