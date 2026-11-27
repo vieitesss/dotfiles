@@ -187,9 +187,9 @@ load_profile() { # load_profile ROLE: set profile_harness, profile_model, profil
             profile_effort=medium
             ;;
         critic)
-            profile_harness=pi
-            profile_model=opencode-go/muse-spark-1.3-contributor
-            profile_effort=max
+            profile_harness=agy
+            profile_model=gemini-4-neon-medium
+            profile_effort=medium
             ;;
         *) return 1 ;;
     esac
