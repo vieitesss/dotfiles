@@ -58,6 +58,19 @@ Inspect `statusCheckRollup` and read failed logs with `gh run view <run-id> --lo
 
 In `check`, report each check's status without rerunning or committing.
 
+## Reviewer loop
+
+When the user asks to loop on a bot reviewer (e.g. "loop on Copilot reviews"), each round is one thread pass in a **fresh agent**: a new agent per round, never the previous round's agent continuing. A fresh agent judges the new comments without anchoring on its own earlier fixes or rejections, and stays inside one context window.
+
+The orchestrator (the Manager, or you if you run alone) owns the loop between rounds:
+
+1. Launch a fresh agent for the round's thread pass (`drive` or `threads-only`, with the reviewer filter). It fixes, pushes, replies, resolves, and stops. It never re-requests a review or waits for one.
+2. Check its work, then close it.
+3. Re-request the bot's review on the new head (Copilot: `gh pr edit N --add-reviewer "@copilot"`) and wait for it (see Waiting).
+4. Stop when the new review on the current head adds no actionable comments, after 3 rounds, or when the bot does not respond within 30 minutes. Otherwise go to step 1.
+
+Pass each fresh agent the threads its predecessors rejected, so it flags a repeated comment as a question instead of flipping the verdict.
+
 ## Waiting
 
 Wait on running CI or external state with one background command that exits when the state changes, then end your turn so its completion notification resumes you for the next pass:
