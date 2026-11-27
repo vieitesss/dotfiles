@@ -22,7 +22,7 @@ has installed each harness's hooks or shim (for `agy`,
 | Harness    | `--model` format                        | `--effort` flag passed                |
 | ---------- | --------------------------------------- | ------------------------------------- |
 | `pi`       | `<provider>/<model>`                    | `--thinking <effort>`                 |
-| `agy`      | `<model>` (e.g. `gemini-4-neon-high`)   | `--effort <effort>` (`--mode auto`)   |
+| `agy`      | `<model>` (e.g. `gemini-4-neon-high`)   | none: the model id carries the effort (`--mode auto`) |
 | `claude`   | alias (`opus`, `sonnet`) or full id     | `--effort <effort>` (`--permission-mode auto`) |
 | `opencode` | `<provider>/<model>` (or `#variant`)    | none (encode variant in `--model` if supported) |
 
@@ -67,7 +67,7 @@ Example ad-hoc launches:
 
 ```bash
 subagent launch --item cmp-claude --harness claude --model opus --effort high < brief.md
-subagent launch --item cmp-agy --harness agy --model gemini-4-neon-high --effort medium < brief.md
+subagent launch --item cmp-agy --harness agy --model gemini-4-neon-high < brief.md
 subagent launch --item cmp-pi --harness pi --model github-copilot/gpt-6.2-sol --effort high < brief.md
 subagent launch --item cmp-oc --harness opencode --model anthropic/claude-sonnet-4-5 < brief.md
 ```

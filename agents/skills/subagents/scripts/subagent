@@ -68,7 +68,8 @@ Usage:
           or a harness-appropriate model id (e.g. provider/model for pi/opencode,
           gemini-4-neon-high for agy, opus or claude-sonnet-4-6 for claude).
       --effort overrides the thinking effort:
-          off, minimal, low, medium, high, xhigh, or max.
+          off, minimal, low, medium, high, xhigh, or max. agy ignores it:
+          each agy model id carries its effort (gemini-4-neon-high).
 
   subagent wait WINDOW [--idle-seconds SECONDS]
       Wait until WINDOW's report file is non-empty and either a completion
@@ -804,7 +805,7 @@ $brief"
             agent_cmd=(pi --append-system-prompt "$role" --model "$model" --thinking "$effort" --)
             ;;
         agy)
-            agent_cmd=(agy --model "$model" --effort "$effort" --mode auto -i)
+            agent_cmd=(agy --model "$model" --mode auto -i)
             ;;
         claude)
             agent_cmd=(claude --append-system-prompt "$role" --model "$model" --effort "$effort" --permission-mode auto --)
