@@ -1,0 +1,7 @@
+# Caveman proxy config, read from $CAVEMAN_HOME/caveman.yaml (~/.caveman).
+compat:
+  opencode-go:
+    # The built-in mount is the retired https://opencode.ai/zen/go. Pi's
+    # opencode-go OpenAI models now call .../inference/go/openai/v1. One mount
+    # per provider, so opencode-go Anthropic models stay unrouted.
+    base_url: https://opencode.ai/inference/go/openai

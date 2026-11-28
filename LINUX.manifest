@@ -32,6 +32,7 @@ agents/skills/*|~/.gemini/config/skills/*
 
 claude/statusline.sh|~/.claude/statusline.sh
 claude/hooks/caveman-session-start|~/.claude/hooks/caveman-session-start
+caveman/caveman.yaml|~/.caveman/caveman.yaml
 
 antigravity/statusline.sh|~/.gemini/antigravity-cli/statusline.sh
 antigravity/settings.json|~/.gemini/antigravity-cli/settings.json
